@@ -1,8 +1,18 @@
 // Conformance cases of area `addresses` (owner: server-orders).
 import type { AddressList, AddressSaved } from '@coffee/contract'
 import type { ConformanceCase } from './types.ts'
+import { MAX_ADDRESSES } from '@coffee/contract'
 import { expect } from 'vitest'
+import { readFixture } from '../helpers.ts'
 import { addAddressRow } from '../support/members.ts'
+
+/** `value` with every address id replaced by its 1-based rank, so it compares to a fixture. */
+function byRank<T>(value: T, ids: readonly number[]): T {
+  return JSON.parse(JSON.stringify(value), (key, v: unknown) => (
+    (key === 'id' || key === 'defaultAddressId' || key === 'orderAddressId') && typeof v === 'number'
+      ? ids.indexOf(v) + 1
+      : v)) as T
+}
 
 const HOME = {
   recipient: '林晓',
@@ -44,7 +54,52 @@ export const addressCases: ConformanceCase[] = [
       const saved = body as AddressSaved
       expect(saved.address.isDefault).toBe(true)
       expect(saved.book.orderAddressId).toBe(saved.address.id)
+      expect(byRank(saved, [saved.address.id])).toEqual(readFixture('v1/addresses/saved-first.json'))
     },
+  },
+  {
+    operationId: 'createAddress',
+    name: 'needs a region',
+    request: async ({ member }) => ({
+      path: '/v1/addresses',
+      token: (await member()).token,
+      body: { ...HOME, region: '  ' },
+    }),
+    expectError: 'region_required',
+  },
+  {
+    operationId: 'createAddress',
+    name: 'needs a detail',
+    request: async ({ member }) => ({
+      path: '/v1/addresses',
+      token: (await member()).token,
+      body: { ...HOME, detail: '' },
+    }),
+    expectError: 'detail_required',
+  },
+  {
+    operationId: 'createAddress',
+    name: 'a recipient is at most 20 characters',
+    request: async ({ member }) => ({
+      path: '/v1/addresses',
+      token: (await member()).token,
+      body: {
+        ...HOME,
+        recipient: '林'.repeat(21),
+      },
+    }),
+    expectError: 'text_too_long',
+  },
+  {
+    operationId: 'createAddress',
+    name: `at most ${MAX_ADDRESSES} addresses`,
+    request: async ({ member, prisma }) => {
+      const m = await member()
+      for (let i = 0; i < MAX_ADDRESSES; i++)
+        await addAddressRow(prisma, m.id)
+      return { path: '/v1/addresses', token: m.token, body: HOME }
+    },
+    expectError: 'address_limit',
   },
   {
     operationId: 'createAddress',
@@ -112,6 +167,16 @@ export const addressCases: ConformanceCase[] = [
     },
   },
   {
+    operationId: 'deleteAddress',
+    name: 'someone else\'s address',
+    request: async ({ member, prisma }) => {
+      const other = await member()
+      const id = await addAddressRow(prisma, other.id)
+      return { path: `/v1/addresses/${id}`, token: (await member()).token }
+    },
+    expectError: 'not_found',
+  },
+  {
     operationId: 'setDefaultAddress',
     name: 'moves the default',
     request: async ({ member, prisma }) => {
@@ -125,5 +190,11 @@ export const addressCases: ConformanceCase[] = [
       expect(list.defaultAddressId).toBe(list.items[1]?.id)
       expect(list.items.filter(a => a.isDefault)).toHaveLength(1)
     },
+  },
+  {
+    operationId: 'setDefaultAddress',
+    name: 'an unknown address',
+    request: async ({ member }) => ({ path: '/v1/addresses/999999/default', token: (await member()).token }),
+    expectError: 'not_found',
   },
 ]
