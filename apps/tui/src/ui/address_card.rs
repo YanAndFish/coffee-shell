@@ -66,8 +66,9 @@ pub fn mask_phone(phone: &str) -> String {
   }
 }
 
-/// The height from which a card shows its full layout.
-pub const FULL_ROWS: u16 = 11;
+/// The height from which a card shows its full layout (L's 9-row card; XL's 11 rows add
+/// blank rows above the actions).
+pub const FULL_ROWS: u16 = 9;
 
 /// An address card `cols` × `rows` (XL 77×11; S 5 with actions, 4 without) showing `address`; `current()` makes it the
 /// heavy amber one with `▶`. `actions` (the caller's buttons) go on the third row from the
@@ -106,7 +107,7 @@ pub fn address_card(
     .child(label(format!("  {}", address.phone), Tone::Mute))
     .child(view().flex_1())
     .child(tags);
-  // The full card (11 rows or more): a blank row, the head, region and street on two rows,
+  // The full card (9 rows or more): a blank row, the head, region and street on two rows,
   // the actions third from the bottom. A compact one (S: 5 rows with actions, 4 without):
   // the head, then region and street on one row, then the actions.
   let full = rows >= FULL_ROWS;

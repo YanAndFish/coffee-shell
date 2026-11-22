@@ -6,8 +6,11 @@ use std::ops::Range;
 
 use crate::ui::{Bp, Button};
 
-/// A full card's height (XL; L too, see [`shape`]).
+/// A full card's height at XL (77×11).
 pub const FULL_ROWS: u16 = 11;
+/// A full card's height at L (05-address.md: 9 rows, no blank rows between the street and
+/// the actions).
+pub const L_ROWS: u16 = 9;
 /// A compact card under the cursor (S, M): head, `地区 · 详细地址`, actions.
 pub const CURRENT_ROWS: u16 = 5;
 /// Any other compact card: head and `地区 · 详细地址`.
@@ -29,6 +32,8 @@ pub struct Shape {
   pub columns: usize,
   /// Each card's width.
   pub card_cols: u16,
+  /// A full card's height (XL 11, L 9; compact cards below L).
+  pub full_rows: u16,
 }
 
 impl Shape {
@@ -39,21 +44,20 @@ impl Shape {
 }
 
 /// The grid at width class `bp` in `avail` columns: two columns of full cards from L
-/// (`(avail − 2) ÷ 2` each, at most 77), one column of compact cards as wide as the
-/// content at S and M.
-///
-/// The spec draws L's cards 9 rows tall; `ui::address_card` lays a card out in full from 11
-/// rows only, so L keeps the 11-row card (it fits in 40 rows).
+/// (`(avail − 2) ÷ 2` each, at most 77; XL 11 rows, L 9), one column of compact cards as
+/// wide as the content at S and M.
 pub fn shape(bp: Bp, avail: u16) -> Shape {
   if bp >= Bp::L {
     Shape {
       columns: 2,
       card_cols: (avail.saturating_sub(COLUMN_GAP) / 2).min(MAX_CARD_COLS),
+      full_rows: if bp == Bp::Xl { FULL_ROWS } else { L_ROWS },
     }
   } else {
     Shape {
       columns: 1,
       card_cols: avail,
+      full_rows: FULL_ROWS,
     }
   }
 }
@@ -61,7 +65,7 @@ pub fn shape(bp: Bp, avail: u16) -> Shape {
 /// The height of a cell: a card (`current` or not) or the add card (`add`).
 pub fn cell_rows(shape: Shape, current: bool, add: bool) -> u16 {
   match (shape.is_grid(), add, current) {
-    (true, _, _) => FULL_ROWS,
+    (true, _, _) => shape.full_rows,
     (false, true, _) => ADD_ROWS,
     (false, false, true) => CURRENT_ROWS,
     (false, false, false) => OTHER_ROWS,
@@ -139,7 +143,8 @@ mod tests {
       shape(Bp::Xl, 156),
       Shape {
         columns: 2,
-        card_cols: 77
+        card_cols: 77,
+        full_rows: 11
       }
     );
     // Wider terminals keep the design's 77.
@@ -150,7 +155,8 @@ mod tests {
       shape(Bp::M, 98),
       Shape {
         columns: 1,
-        card_cols: 98
+        card_cols: 98,
+        full_rows: 11
       }
     );
     assert_eq!(shape(Bp::S, 80).card_cols, 80);
@@ -161,6 +167,7 @@ mod tests {
     let grid = shape(Bp::Xl, 156);
     let list = shape(Bp::S, 80);
     assert_eq!(cell_rows(grid, false, true), 11);
+    assert_eq!(cell_rows(shape(Bp::L, 128), true, false), 9);
     assert_eq!(cell_rows(list, true, false), 5);
     assert_eq!(cell_rows(list, false, false), 4);
     assert_eq!(cell_rows(list, false, true), 3);
