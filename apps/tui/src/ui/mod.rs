@@ -44,7 +44,7 @@ pub mod toggle;
 pub mod window;
 pub mod wordmark;
 
-pub use action::{action, pressable};
+pub use action::{action, pressable, track_hover};
 pub use address_card::{AddressView, add_card, address_card, mask_phone};
 pub use art::{EMPTY_SET, cup, empty_cup, steam};
 pub use button::{Button, ButtonKind, button};

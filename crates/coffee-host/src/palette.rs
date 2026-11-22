@@ -21,7 +21,7 @@
 //! | background `Reset` | `background` | kept | kept |
 //! | background `DarkGray` (a raised fill) | `card` | kept | kept |
 //! | a carrier fill (`carrier-kbd`, `carrier-selection`) | `kbd`, `selection` | none, or reverse video | (nsh reverses it) |
-//! | the bandless hover / press bands | `hover` / 18 % of `foreground` over `background` | kept | kept |
+//! | the bandless hover / press bands | `hover` (`background` while the app hides it: 鼠标追踪 off) / 18 % of `foreground` over `background` | kept | kept |
 //! | text `Reset` | `foreground`; `primary-foreground` on an accent fill | kept | kept |
 //! | text `Reset` + `DIM` | `muted-foreground`, without `DIM` | kept | kept |
 //! | text in a channel, plain or marked | its token (`INKS`), unmarked | its 16-colour role, unmarked | unmarked; `DIM` when marked |
@@ -31,7 +31,7 @@
 //! xterm cube and gray ramp (indices 16–255, which terminal themes leave alone). Every other
 //! colour (pictures, fills nsh already drew as RGB or as an index) passes through.
 
-use coffee_app::ui::theme::{Ansi16, Channel, FILLS, Fill16, HOVER_TOKEN, INKS};
+use coffee_app::ui::theme::{Ansi16, Channel, FILLS, Fill16, HOVER_TOKEN, INKS, hover_band};
 use nsh_platform_tui::ColorDepth;
 use ratatui_core::{
   buffer::{Buffer, Cell},
@@ -285,6 +285,8 @@ impl Pin {
     let bg = match cell.bg {
       Color::Reset => self.background,
       Color::DarkGray => self.card,
+      // nsh's hover band, while the app hides it (鼠标追踪 off): the ground it covers.
+      other if other == self.bands[0].0 && !hover_band() => self.background,
       other => self.accent_fill(other).unwrap_or_else(|| {
         self
           .fills
@@ -609,6 +611,16 @@ mod tests {
       Modifier::empty(),
     );
     assert_eq!(hover.bg, rgb(0x24201c));
+    // With 鼠标追踪 off the app hides it: the background shows through.
+    coffee_app::ui::theme::set_hover_band(false);
+    let hidden = pinned(
+      &pin,
+      Color::Reset,
+      Color::Rgb(26, 26, 26),
+      Modifier::empty(),
+    );
+    coffee_app::ui::theme::set_hover_band(true);
+    assert_eq!(hidden.bg, rgb(0x14110e));
     let press = pinned(
       &pin,
       Color::Reset,

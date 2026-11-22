@@ -410,7 +410,7 @@ fn cell_view(stores: Stores, shape: Shape, cell: CellModel) -> AnyElement {
       } else {
         Vec::new()
       };
-      ui::address_card(
+      let card = ui::address_card(
         view,
         shape.card_cols,
         rows,
@@ -420,6 +420,16 @@ fn cell_view(stores: Stores, shape: Shape, cell: CellModel) -> AnyElement {
           if clicks >= 2 {
             press_on(stores, AddressCursor::Card(id), "addresses.use");
           } else {
+            stores.addresses.select(AddressCursor::Card(id));
+          }
+        },
+      );
+      // 鼠标追踪 on: the mouse over a card moves the cursor there (05-address.md).
+      ui::track_hover(
+        card,
+        move || stores.settings.mouse_tracking(),
+        move || {
+          if !current {
             stores.addresses.select(AddressCursor::Card(id));
           }
         },
@@ -449,7 +459,12 @@ fn add_view(stores: Stores, shape: Shape, current: bool) -> AnyElement {
   let rows = grid::cell_rows(shape, current, true);
   let press = move || press_on(stores, AddressCursor::New, "addresses.new");
   if !current {
-    return ui::add_card(shape.card_cols, rows, press).into_element();
+    return ui::track_hover(
+      ui::add_card(shape.card_cols, rows, press),
+      move || stores.settings.mouse_tracking(),
+      move || stores.addresses.select(AddressCursor::New),
+    )
+    .into_element();
   }
   // `ui::add_card` has no cursor state (change request): the same dashed card, its line
   // amber and `▶` on the `+` row, as a card under the cursor carries it.

@@ -122,6 +122,8 @@ pub fn shell() -> impl IntoElement {
   bind_keys(stores, layout);
   expire_toasts(stores);
   trap_focus(stores);
+  // nsh's hover band shows only while 鼠标追踪 is on (components.md, "悬停").
+  effect(move || ui::theme::set_hover_band(stores.settings.mouse_tracking()));
   // The connection's start: resume a remembered key's session (once).
   effect(move || untracked(|| actions::start(&stores)));
   // A store saw the member session end: back to the login page (`登录已失效`).

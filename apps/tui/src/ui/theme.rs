@@ -378,6 +378,22 @@ pub const CARRIER_OPACITY: f32 = 0.94;
 /// The theme token nsh's own hover band is pinned to (no carrier: nsh draws the band).
 pub const HOVER_TOKEN: &str = "hover";
 
+/// Whether nsh's hover band shows (the 鼠标追踪 setting): one app per process (one per SSH
+/// session), so a process-wide flag the host's pin reads for every frame.
+static HOVER_BAND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Shows or hides nsh's hover band (components.md: rows and cards are banded on hover only
+/// while 鼠标追踪 is on). nsh draws the band on every pressable view it hovers; the host pins
+/// it to the background colour while this is off.
+pub fn set_hover_band(shown: bool) {
+  HOVER_BAND.store(shown, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether nsh's hover band shows now.
+pub fn hover_band() -> bool {
+  HOVER_BAND.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Fill {
   /// The colour nsh is given for this fill.
   pub fn color(self) -> AdaptiveColor {

@@ -211,14 +211,27 @@ fn row(stores: Stores, form: CartForm, name_cells: u16, spaced: bool, line: Cart
     },
   };
   let shown = copy::row(&line, form, usize::from(name_cells));
-  let cells = ui::cart_row(
-    shown.clone(),
-    form,
-    current,
-    move || selected,
-    move || quantity,
-    move || max,
-    actions,
+  // 鼠标追踪 on: the mouse over a row moves the cursor there (components.md, DataRow).
+  let hover = {
+    let select = at(&sku);
+    move || {
+      if !untracked(|| stores.busy()) {
+        select();
+      }
+    }
+  };
+  let cells = ui::track_hover(
+    ui::cart_row(
+      shown.clone(),
+      form,
+      current,
+      move || selected,
+      move || quantity,
+      move || max,
+      actions,
+    ),
+    move || stores.settings.mouse_tracking(),
+    hover,
   );
   // The medium form's second row when the name column is too narrow for it: across the row,
   // over the row's own (empty) second line.
