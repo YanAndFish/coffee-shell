@@ -127,6 +127,26 @@ export const cartEmptyExample: Cart = {
   }, 0, 199),
 }
 
+/**
+ * A new member's first line and no address yet (`还没有收货地址`): one 250g Yirgacheffe,
+ * 98 < 199 → +12 = 110; progress round(98 ÷ 199 × 100) = 49; gap 101 (`再买 ¥101 即可包邮`).
+ */
+export const cartNoAddressExample: Cart = {
+  lines: [
+    line('yirga', '250g', 'PO', 'STD', 1),
+  ],
+  coupon: null,
+  address: null,
+  totals: totals({
+    itemCount: 1,
+    selectedCount: 1,
+    subtotal: 98,
+    discount: 0,
+    shipping: 12,
+    total: 110,
+  }, 49, 101),
+}
+
 /** Stock fell to 2 while 3 Geisha sit in the cart: flagged, still counted until checkout. */
 export const cartProblemExample: Cart = {
   lines: [

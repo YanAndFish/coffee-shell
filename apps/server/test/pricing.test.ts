@@ -235,7 +235,7 @@ describe('the contract fixtures follow these rules', () => {
       checkOrder(value as unknown as Order, path)
   })
 
-  it.each(['v1/catalog/product-pinkb.json', 'v1/catalog/product-geisha.json'])('%s price table', (path) => {
+  it.each(fixturePaths().filter(p => p.startsWith('v1/catalog/product-')).map(p => [p] as const))('%s price table', (path) => {
     const detail = readFixture(path) as ProductDetail
     expect(detail.maxQuantity).toBe(maxQuantity(detail.stock))
     for (const cell of detail.prices) {

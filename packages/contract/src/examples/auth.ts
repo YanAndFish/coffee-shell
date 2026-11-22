@@ -58,16 +58,16 @@ export const loginNoKeyExample: AuthSession = {
   remembered: noKeyExample,
 }
 
-/** `POST /v1/auth/register` (`remember: false`, key present). */
+/**
+ * `POST /v1/auth/register` (`remember: false`, key present): 林晓 signing up on the day her
+ * account was created (`createdAt`), so the session ends 7 days after it. Every fixture names
+ * the same member (a test checks it); the TUI's fixture transport answers a register with the
+ * typed username in place of hers.
+ */
 export const registerExample: AuthSession = {
   token: EXAMPLE_TOKEN,
-  expiresAt: '2026-11-29T13:04:00.000Z',
-  user: {
-    id: 2,
-    username: 'bean_lover',
-    createdAt: '2026-11-22T13:04:00.000Z',
-    tier: tierExample,
-  },
+  expiresAt: '2026-11-08T02:00:00.000Z',
+  user: userExample,
   remembered: notRememberedExample,
 }
 
