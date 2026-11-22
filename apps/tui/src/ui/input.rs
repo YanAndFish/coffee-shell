@@ -24,10 +24,16 @@
 //!
 //! Focus: `focused()` is the caller's focus ring (the page's or the dialog's); when it turns
 //! to this field the field takes nsh's text focus, and when it turns away the field gives it
-//! up. What the frame shows is the field's real focus, and `on_focus_change(bool)` reports
-//! it (a click into the field, Esc or Tab handled by the field itself), so the caller keeps
-//! its ring in step. The command table's keys still reach the app while a field has the
-//! focus, except those the field types.
+//! up — a focus nsh gave (Tab, a click) counts as asked, so a ring that follows the field's
+//! own moves never asks for it again (three quick Tabs would otherwise end where the second
+//! request lands). A field whose ring is on it
+//! when it appears takes the focus as it mounts (`auto_focus`: an `ElementRef::focus()`
+//! before the mount does nothing, so no page needs a mount delay). What the frame shows is
+//! the field's real focus, and `on_focus_change(bool)` reports it (a click into the field,
+//! Esc or Tab handled by the field itself), so the caller keeps its ring in step.
+//! [`InputSpec::element`] lends the field's handle to the caller (to blur it from a key
+//! handler at once, `UiStore::field_focused(name, Some(handle))`). The command table's keys
+//! still reach the app while a field has the focus, except those the field types.
 
 use nsh_core::prelude::*;
 
@@ -78,6 +84,12 @@ pub struct InputSpec {
   pub masked: bool,
   /// What is typed is upper-cased.
   pub uppercase: bool,
+  /// The field's handle, when the caller wants one (to blur it from a key handler in the
+  /// same commit); the input makes its own otherwise.
+  pub element: Option<ElementRef>,
+  /// While this says so the field is disabled: Tab skips it, a click does not focus it and
+  /// nothing types into it (a submit under way, when only `?` works: keymap.md K2 / K6).
+  pub disabled: Option<std::rc::Rc<dyn Fn() -> bool>>,
 }
 
 impl InputSpec {
@@ -91,6 +103,8 @@ impl InputSpec {
       placeholder: SharedString::default(),
       masked: false,
       uppercase: false,
+      element: None,
+      disabled: None,
     }
   }
 }
@@ -109,31 +123,38 @@ pub fn input(
   on_focus_change: impl Fn(bool) + 'static,
   on_submit: impl Fn() + 'static,
 ) -> View {
-  let field_ref = element_ref();
+  let field_ref = spec.element.unwrap_or_else(element_ref);
   let has_focus = signal(false);
   let on_focus_change = std::rc::Rc::new(on_focus_change);
   let on_blur_change = on_focus_change.clone();
   let focused_by_caller = focused;
   let focused = move || has_focus.get();
-  // Follow the caller's focus on its changes only: blurring every field that is not the
-  // focused one would take the focus off the one that is.
-  let was = std::cell::Cell::new(false);
+  // The ring's focus when the field appears: it takes it as it mounts.
+  let at_mount = untracked(focused_by_caller);
+  // What the field last asked of nsh, or nsh gave it (Tab, a click): a focus nsh gave counts
+  // as asked, so the ring following it asks for nothing (a second request would land after
+  // the next Tab and pull the focus back). Requests follow the ring's changes only: blurring
+  // every field that is not the focused one would take the focus off the one that is.
+  let asked = std::rc::Rc::new(std::cell::Cell::new(at_mount));
+  let (on_focus_asked, on_blur_asked) = (asked.clone(), asked.clone());
   effect(move || {
     let now = focused_by_caller();
-    if now && !was.get() {
+    if now && !asked.get() {
       field_ref.focus();
-    } else if !now && was.get() {
+    } else if !now && asked.get() {
       field_ref.blur();
     }
-    was.set(now);
+    asked.set(now);
   });
   let uppercase = spec.uppercase;
+  let disabled = spec.disabled.clone();
   let name = spec
     .label
     .clone()
     .unwrap_or_else(|| spec.placeholder.clone());
   let field = nsh_core::element::input()
     .element_ref(&field_ref)
+    .auto_focus(at_mount)
     .label(name)
     .flex_1()
     .min_w(px(0.0))
@@ -142,6 +163,7 @@ pub fn input(
     .placeholder(spec.placeholder.to_string())
     .text_color(move || Tone::Fg.color())
     .masked(spec.masked)
+    .disabled(move || disabled.as_ref().is_some_and(|disabled| disabled()))
     .on_change(move |text: &str| {
       on_change(if uppercase {
         text.to_uppercase()
@@ -151,10 +173,12 @@ pub fn input(
     })
     .on_submit(move |_: &str| on_submit())
     .on_focus(move || {
+      on_focus_asked.set(true);
       has_focus.set(true);
       on_focus_change(true);
     })
     .on_blur(move || {
+      on_blur_asked.set(false);
       has_focus.set(false);
       on_blur_change(false);
     });

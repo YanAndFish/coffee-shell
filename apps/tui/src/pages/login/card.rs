@@ -154,7 +154,8 @@ pub fn follow_submit(session: SessionStore) {
   });
 }
 
-/// Set once the view made now is on screen: an element ref reaches its node only then.
+/// Set once the view made now is on screen: an element ref reaches its node only then (a
+/// stop is a view, which has no `auto_focus`).
 fn mounted() -> Signal<bool> {
   let mounted = signal(false);
   set_timeout(Duration::ZERO, move || mounted.set(true));
@@ -198,6 +199,8 @@ fn stop(stores: Stores, control: FormControl, focusable: bool, child: impl IntoE
     .flex_none()
     .flex_row()
     .focusable(focusable)
+    // While a submit runs only `?` works (K2): Tab skips the stop.
+    .disabled(move || session.submitting())
     .element_ref(&handle)
     .on_focus(move || {
       focus.set(true);
@@ -224,8 +227,10 @@ fn field(
 ) -> View {
   let session = stores.session;
   let ui_store = stores.ui;
-  let mounted = mounted();
-  let wanted = move || mounted.get() && session.form_focus() == Some(control);
+  // The field takes the focus as it mounts when the ring is on it (`ui::input`'s
+  // `auto_focus`), and its handle lets Esc blur it in the same commit.
+  let handle = element_ref();
+  let wanted = move || session.form_focus() == Some(control);
   // As for a stop: a blur reported after the store moved the focus away is stale. The shell
   // hears at once that the keys are the page's again.
   let held = Rc::new(Cell::new(false));
@@ -239,7 +244,12 @@ fn field(
   // blur: the keys go back to the page.
   cleanup(move || ui_store.field_blurred(name));
   ui::input(
-    spec,
+    InputSpec {
+      element: Some(handle),
+      // While a submit runs only `?` works (K2): Tab does not reach the field.
+      disabled: Some(Rc::new(move || session.submitting())),
+      ..spec
+    },
     value,
     wanted,
     || None,
@@ -249,7 +259,7 @@ fn field(
         if focused {
           held.set(true);
           session.set_form_focus(Some(control));
-          ui_store.field_focused(name, None);
+          ui_store.field_focused(name, Some(handle));
         } else if held.replace(false) {
           session.form_focus_left(control);
           ui_store.field_blurred(name);

@@ -60,9 +60,13 @@ fn coupon(stores: Stores, place: LabelPlace) -> View {
   let focused = move || {
     ui_store.focused_field() == Some(COUPON_FIELD) || ui_store.focus_requested(COUPON_FIELD)
   };
+  let handle = element_ref();
   let field = ui::input(
     InputSpec {
       place,
+      element: Some(handle),
+      // While the order is placed only `?` works (K6).
+      disabled: Some(std::rc::Rc::new(move || cart.submitting())),
       uppercase: true,
       placeholder: "试试 TTY10".into(),
       ..InputSpec::new(InputForm::Plain, Some("优惠码"))
@@ -77,7 +81,7 @@ fn coupon(stores: Stores, place: LabelPlace) -> View {
     move |focus| {
       batch(|| {
         if focus {
-          ui_store.field_focused(COUPON_FIELD, None);
+          ui_store.field_focused(COUPON_FIELD, Some(handle));
           ui_store.focus_taken(COUPON_FIELD);
         } else {
           ui_store.field_blurred(COUPON_FIELD);

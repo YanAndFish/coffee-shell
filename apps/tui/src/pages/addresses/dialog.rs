@@ -216,6 +216,7 @@ fn field(stores: Stores, ring: Ring, index: usize, place: LabelPlace) -> View {
   let ui_store = stores.ui;
   // A field closed with the focus in it reports no blur: give the keys back.
   cleanup(move || ui_store.field_blurred(name));
+  let handle = element_ref();
   ui::input(
     InputSpec {
       form: InputForm::Plain,
@@ -225,6 +226,9 @@ fn field(stores: Stores, ring: Ring, index: usize, place: LabelPlace) -> View {
       placeholder: PLACEHOLDERS[index].into(),
       masked: false,
       uppercase: false,
+      element: Some(handle),
+      // While saving only Esc works: nothing types, Tab moves nothing.
+      disabled: Some(std::rc::Rc::new(move || book.saving())),
     },
     move || {
       book
@@ -245,7 +249,7 @@ fn field(stores: Stores, ring: Ring, index: usize, place: LabelPlace) -> View {
       if focused {
         batch(|| {
           book.focus_dialog(at);
-          ui_store.field_focused(name, None);
+          ui_store.field_focused(name, Some(handle));
         });
       } else {
         ui_store.field_blurred(name);

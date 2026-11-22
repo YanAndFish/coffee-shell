@@ -46,18 +46,18 @@ fn search_box(stores: Stores) -> View {
   let catalog = stores.catalog;
   // A box removed with the focus in it gives the keys back (no blur comes then).
   cleanup(move || ui_store.field_blurred(SEARCH_FIELD));
-  // The input focuses its field when its focus ring turns to it; a field not mounted yet
-  // ignores that, so the ring turns only once the box is laid out.
-  let armed = signal(false);
+  // A box shown because `/` asked for the focus takes it as it mounts (`ui::input`'s
+  // `auto_focus`); its handle lets Esc and ⏎ blur it in the same commit.
+  let handle = element_ref();
   let wants_focus = move || {
-    armed.get()
-      && (ui_store.focus_requested(SEARCH_FIELD) || ui_store.focused_field() == Some(SEARCH_FIELD))
+    ui_store.focus_requested(SEARCH_FIELD) || ui_store.focused_field() == Some(SEARCH_FIELD)
   };
   let spec = InputSpec {
     placeholder: SEARCH_PLACEHOLDER.into(),
+    element: Some(handle),
     ..InputSpec::new(InputForm::Search, None)
   };
-  let field = ui::input(
+  ui::input(
     spec,
     move || catalog.query().search,
     wants_focus,
@@ -66,7 +66,7 @@ fn search_box(stores: Stores) -> View {
     move |focused| {
       if focused {
         batch(|| {
-          ui_store.field_focused(SEARCH_FIELD, None);
+          ui_store.field_focused(SEARCH_FIELD, Some(handle));
           ui_store.focus_taken(SEARCH_FIELD);
         });
       } else {
@@ -76,15 +76,7 @@ fn search_box(stores: Stores) -> View {
     // ⏎ leaves the box, as the page's `Esc 离开搜索` command does (the field may take ⏎
     // as its submit before the command table sees it).
     move || ui_store.leave_field(),
-  );
-  view()
-    .flex_none()
-    .on_layout(move |_: &Bounds<Points>| {
-      if !armed.get_untracked() {
-        armed.set(true);
-      }
-    })
-    .child(field)
+  )
 }
 
 /// One bean's row: `▶`, the name (bold, `acc` on the cursor row) with its tag and the
