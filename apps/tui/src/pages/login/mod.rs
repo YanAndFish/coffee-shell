@@ -2,26 +2,34 @@
 //! remembered), and where a gated checkout or `⏎ 去登录` sends a guest.
 //!
 //! Store: [`crate::stores::SessionStore`] — the form (`draft`, `set_username`,
-//! `set_password`, `toggle_remember`, `set_mode`), the submit's progress (`step`,
-//! `submitting`), `resuming`, `has_key`. Actions: `actions::submit_auth`,
-//! `actions::continue_as_guest`. Fields report their focus as [`USERNAME_FIELD`] /
-//! [`PASSWORD_FIELD`].
+//! `set_password`, `toggle_remember`, `set_mode`), the card's focus (`form_focus`), the
+//! submit's progress (`step`, `submitting`), `resuming`, `has_key`. Actions:
+//! `actions::submit_auth`, `actions::continue_as_guest`. Fields report their focus as
+//! [`USERNAME_FIELD`] / [`PASSWORD_FIELD`].
 //!
-//! The body is a placeholder (plain lines and two bare fields); the login screen replaces it.
+//! Layouts (responsive.md, "01 登录"):
+//!
+//! | width | 32 rows or more | fewer |
+//! |---|---|---|
+//! | XL ≥160 | brand column (block wordmark, cup, points; left edge col 9) + full card in 65 | one-row brand + compact card |
+//! | L 130–159 | the same, left edge col 5 | the same |
+//! | M 100–129 | one-row brand in 45 + compact card | the same |
+//! | S 80–99 | centred `◆ROAST/TTY · 标语` row over the compact card | the same |
+//!
+//! The focus starts in 用户名 (K1); see [`card`] for the focus ring.
 
+mod brand;
+mod card;
 pub mod commands;
 
 use nsh_core::{element::Screen, prelude::*};
 
-use super::{
-  PageModule,
-  placeholder::{self, Line},
-};
+use super::PageModule;
 use crate::{
   commands::Mode,
   router::{Page, Route},
-  stores::{LoginMode, Stores},
-  ui::{self, Tone},
+  stores::{LoginMode, Stores, session::FormControl},
+  ui::{self, Bp, Layout, Viewport, layout},
 };
 
 /// `登录 LOGIN`.
@@ -50,75 +58,155 @@ fn mode(stores: &Stores) -> Mode {
   }
 }
 
-fn lines(stores: Stores) -> Vec<Line> {
-  let session = stores.session;
-  let draft = session.draft();
-  let register = draft.mode == LoginMode::Register;
-  let mut lines = vec![Line::new("! 演示环境 · 请勿使用真实密码", Tone::Acc)];
-  if session.resuming() {
-    lines.push(Line::soft("⠋ 正在通过 SSH 公钥恢复登录…"));
-  }
-  lines.push(if session.has_key() {
-    let mark = if draft.remember { "[✓]" } else { "[ ]" };
-    Line::text(format!(
-      "{mark} 记住我 30 天 · 绑定当前 SSH 公钥，下次连接免密登录"
-    ))
-    .press("login.remember")
-  } else {
-    Line::soft("[ ] 记住我 30 天 · 当前连接没有 SSH 公钥，无法记住登录")
-  });
-  if let Some(error) = draft.error {
-    lines.push(Line::error(format!("✗ {error}")));
-  }
-  match session.step() {
-    Some(step) => lines.push(Line::new(
-      format!("⠋ {} · {}%", step.label(), step.percent()),
-      Tone::Acc,
-    )),
-    None if register => lines.push(Line::text("⏎ 注册并登录").press("login.register_submit")),
-    None => lines.push(Line::text("⏎ 登录").press("login.submit")),
-  }
-  lines.push(Line::text("g 访客浏览").press("login.guest"));
-  lines.push(if register {
-    Line::soft("← 已有账号，去登录").press("login.mode")
-  } else {
-    Line::soft("注册新账号 →").press("login.mode")
-  });
-  lines.push(Line::soft("Tab 切换输入 · ⏎ 提交 · ? 查看全部快捷键"));
-  lines
+/// How the page lays itself out at a terminal size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Form {
+  /// Brand column and card side by side: the column `indent` cells in, the card's column
+  /// `right` wide with the card `lead` cells in; `tall` (32 rows or more, L and XL): the
+  /// block wordmark with the cup and the full card, else the one-row forms and the compact
+  /// card.
+  Split {
+    /// Cells before the brand column.
+    indent: u16,
+    /// The card column's width.
+    right: u16,
+    /// Cells before the card in its column.
+    lead: u16,
+    /// The tall forms.
+    tall: bool,
+  },
+  /// S: the brand row over the compact card, centred.
+  Single,
 }
 
-/// The login page (placeholder body).
-pub fn render(_: &Route) -> Screen {
-  let stores = Stores::get();
-  let session = stores.session;
-  let legend = move || {
-    SharedString::from(match session.mode() {
-      LoginMode::Login => "登录 · SIGN IN",
-      LoginMode::Register => "注册 · SIGN UP",
-    })
-  };
-  ui::page(
-    "登录 LOGIN",
-    ui::panel(
-      legend,
+impl Form {
+  /// The layout for `viewport` (too small never reaches the page).
+  pub fn of(viewport: Viewport) -> Self {
+    let tall = !viewport.short();
+    match viewport.bp() {
+      Bp::TooSmall | Bp::S => Form::Single,
+      Bp::M => Form::Split {
+        indent: 1,
+        right: card::CARD_COLS + 1,
+        lead: 0,
+        tall: false,
+      },
+      Bp::L => Form::Split {
+        indent: 4,
+        right: 64,
+        lead: 2,
+        tall,
+      },
+      Bp::Xl => Form::Split {
+        indent: 8,
+        right: 64,
+        lead: 2,
+        tall,
+      },
+    }
+  }
+}
+
+fn body(stores: Stores, form: Form) -> View {
+  match form {
+    Form::Single => view()
+      .flex_1()
+      .justify_center()
+      .child(brand::line())
+      .child(layout::vspace(1))
+      .child(
+        view()
+          .flex_none()
+          .flex_row()
+          .justify_center()
+          .child(card::card(stores, true)),
+      ),
+    Form::Split {
+      indent,
+      right,
+      lead,
+      tall,
+    } => {
+      let brand = if tall {
+        brand::tall(stores)
+      } else {
+        brand::compact()
+      };
       view()
         .flex_1()
-        .child(placeholder::field(
-          USERNAME_FIELD,
-          "用户名",
-          move || session.draft().username,
-          move |text| session.set_username(text),
-          false,
-        ))
-        .child(placeholder::field(
-          PASSWORD_FIELD,
-          "密码",
-          move || session.draft().password,
-          move |text| session.set_password(text),
-          true,
-        ))
-        .child(placeholder::lines(move || lines(stores))),
-    ),
+        .flex_row()
+        .child(
+          view().flex_1().min_w(px(0.0)).justify_center().child(
+            view()
+              .flex_none()
+              .flex_row()
+              .child(layout::hspace(indent))
+              .child(brand),
+          ),
+        )
+        .child(
+          view()
+            .flex_none()
+            .w(layout::cols(right))
+            .justify_center()
+            .child(
+              view()
+                .flex_none()
+                .flex_row()
+                .child(layout::hspace(lead))
+                .child(card::card(stores, !tall)),
+            ),
+        )
+    }
+  }
+}
+
+/// The login page.
+pub fn render(_: &Route) -> Screen {
+  let stores = Stores::get();
+  let layout = Layout::get();
+  // K1: the focus starts in 用户名 (typing `g` there types a g).
+  untracked(|| stores.session.set_form_focus(Some(FormControl::Username)));
+  card::follow_submit(stores.session);
+  let form = computed(move || Form::of(layout.viewport()));
+  ui::page(
+    "登录 LOGIN",
+    view().flex_1().child(dynamic(move || {
+      let form = form.get();
+      untracked(|| body(stores, form))
+    })),
   )
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn the_form_follows_the_breakpoints() {
+    let form = |cols, rows| Form::of(Viewport::new(cols, rows));
+    assert_eq!(form(80, 24), Form::Single);
+    assert_eq!(form(99, 40), Form::Single);
+    assert!(matches!(form(100, 30), Form::Split { tall: false, .. }));
+    assert!(matches!(form(120, 40), Form::Split { tall: false, .. }));
+    assert!(matches!(
+      form(130, 40),
+      Form::Split {
+        indent: 4,
+        tall: true,
+        ..
+      }
+    ));
+    assert!(matches!(form(130, 31), Form::Split { tall: false, .. }));
+    assert!(matches!(
+      form(160, 50),
+      Form::Split {
+        indent: 8,
+        right: 64,
+        tall: true,
+        ..
+      }
+    ));
+    assert!(matches!(form(160, 30), Form::Split { tall: false, .. }));
+  }
 }
