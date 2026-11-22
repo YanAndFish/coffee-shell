@@ -15,6 +15,14 @@ fn ready(stores: &Stores) -> bool {
   stores.catalog.phase() == Phase::Ready
 }
 
+/// The list is there, or on its way (moves typed ahead apply when it arrives).
+fn movable(stores: &Stores) -> bool {
+  matches!(
+    stores.catalog.phase(),
+    Phase::Ready | Phase::Loading | Phase::Idle
+  )
+}
+
 fn failed(stores: &Stores) -> bool {
   stores.catalog.phase() == Phase::Failed
 }
@@ -72,7 +80,7 @@ pub const COMMANDS: &[Command] = &[
     PAGE,
     |stores, stroke| stores.catalog.move_cursor(delta(stroke)),
   )
-  .when(ready)
+  .when(movable)
   .footer(10),
   Command::new(
     "catalog.open",

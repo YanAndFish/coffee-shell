@@ -145,6 +145,8 @@ pub struct CatalogStore {
   query: Signal<CatalogQuery>,
   list: Remote<ProductList>,
   cursor: Signal<Option<SharedString>>,
+  /// Cursor moves typed before the first list arrived: they apply to it.
+  typed_ahead: Signal<isize>,
   filter_focus: Signal<(FilterGroup, usize)>,
 }
 
@@ -156,6 +158,7 @@ impl CatalogStore {
       query: signal(CatalogQuery::default()),
       list: Remote::new(no_items),
       cursor: signal(None),
+      typed_ahead: signal(0),
       filter_focus: signal((FilterGroup::Origin, 0)),
     }
   }
@@ -232,8 +235,18 @@ impl CatalogStore {
     self.cursor().is_some_and(|cursor| cursor == id)
   }
 
-  /// Moves the cursor `delta` rows, stopping at the ends.
+  /// Moves the cursor `delta` rows, stopping at the ends. Before the first list arrived
+  /// (still loading) the moves wait and apply to it, so keys typed ahead (`g ↓ ↓ ⏎`) land
+  /// where they would have.
   pub fn move_cursor(&self, delta: isize) {
+    if self.list.with_untracked(|list| list.is_none()) {
+      if self.list.phase_untracked().pending() {
+        self
+          .typed_ahead
+          .set(self.typed_ahead.get_untracked() + delta);
+      }
+      return;
+    }
     let selected = self.cursor.get_untracked();
     let next = self
       .list
@@ -411,7 +424,15 @@ impl CatalogStore {
   /// Applies the answer of load `revision`; an older load's answer is dropped. Whether it
   /// applied.
   pub fn finish(&self, revision: u64, result: Result<ProductList, ApiFailure>) -> bool {
-    self.list.finish(revision, result)
+    batch(|| {
+      let applied = self.list.finish(revision, result);
+      let ahead = self.typed_ahead.get_untracked();
+      if applied && ahead != 0 {
+        self.typed_ahead.set(0);
+        self.move_cursor(ahead);
+      }
+      applied
+    })
   }
 
   /// Loads the list for the current query: what [`Self::load`] runs (await it in tests).
@@ -526,6 +547,24 @@ mod tests {
       // A reload with the same query keeps the cursor on its bean.
       now_or_never(store.fetch());
       assert_eq!(store.cursor().as_deref(), Some("geisha"));
+    });
+  }
+
+  #[test]
+  fn moves_typed_before_the_first_list_apply_to_it() {
+    with_store(FixtureSet::Contract, |store| {
+      // `g ↓ ↓`: the list is still on its way.
+      let revision = store.begin();
+      store.move_cursor(1);
+      store.move_cursor(1);
+      assert_eq!(store.cursor(), None);
+      let list =
+        crate::api::now_or_never(store.session.client().list_products(&Default::default()));
+      assert!(store.finish(revision, list));
+      assert_eq!(store.cursor().as_deref(), Some("nyeri"), "the third bean");
+      // Nothing is left over for the next list.
+      now_or_never(store.fetch());
+      assert_eq!(store.cursor().as_deref(), Some("nyeri"));
     });
   }
 

@@ -3,8 +3,8 @@
 // runs these headless (texts and behaviour); `nsh test --target tui` runs the same steps on
 // the in-memory terminal, where the cell checks (layout, cursor, scrolling, widths) also run.
 import type { App } from './testkit'
-import { expect, test } from 'nsh/test'
-import { enterAsGuest, isWide, screenRows, shows, start } from './testkit'
+import { expect, open, test } from 'nsh/test'
+import { cells, enterAsGuest, isWide, screenRows, shows, start } from './testkit'
 
 /** The cells `text` takes on one line. */
 function widthOf(text: string) {
@@ -354,6 +354,29 @@ test('80×24: f opens the filter dialog; choices apply at once; Esc closes', asy
   // The page's keys again.
   await app.keyboard.press('escape')
   await app.waitFor('text:产区 全部 · 烘焙度 全部 · 排序 价格 ↓')
+})
+
+test('keys typed while the first list loads land on it: g ↓ ↓ ⏎ opens the third bean', async () => {
+  // A manual clock: the fixture answers wait for a timer, which runs only as the test says.
+  const app = await open('.', {
+    ...cells(130, 40),
+    platform: 'linux',
+    clock: {},
+  })
+  const clock = app.clock!
+  for (let i = 0; i < 40 && !app.texts().includes('离开输入'); i++)
+    await clock.runFor(50)
+  await app.keyboard.press('escape')
+  await app.keyboard.press('g')
+  expect(shows(app, '商品列表 · 载入中')).toBe(true)
+  await app.keyboard.press('down')
+  await app.keyboard.press('down')
+  for (let i = 0; i < 20 && !shows(app, '商品列表 · 8 款'); i++)
+    await clock.runFor(10)
+  await app.keyboard.press('enter')
+  for (let i = 0; i < 20 && !shows(app, '选购 / 肯尼亚 / 涅里 AA 双洗'); i++)
+    await clock.runFor(10)
+  expect(shows(app, '选购 / 肯尼亚 / 涅里 AA 双洗')).toBe(true)
 })
 
 test('a backend that is down: the error and ⏎ retry', async () => {
