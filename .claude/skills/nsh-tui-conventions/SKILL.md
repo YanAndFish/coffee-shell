@@ -152,6 +152,23 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
   that arrives before them, so the host holds all input until the engine woke and stayed quiet for 100 ms
   (`terminal::Startup`, at most 2 s). Nothing else may read stdin.
 
+## nsh 0.6.1 pitfalls (found in wave 4)
+
+- **Controls side by side keep two blank columns** ("controls read as words" in nsh's
+  `terminal_layout`): fixed-width pressables in a row (the wide nav tabs) drift two cells each.
+  Wrap each in a plain fixed-width box and let the pressable fill it.
+- **A field mounted in the commit that moves the focus off a focused control never gets it**
+  (`auto_focus` loses to the control that holds the focus). Keep the field on screen across
+  the change (the login card keeps its fields across modes) and move the focus with its ref.
+- **A page dialog is an overlay**: build it with `ui::dialog` (absolute, centred between the
+  system row and the status bar). A plain view returned to the dialog outlet takes layout room
+  under the page instead (the S filter dialog did, halving the list).
+- **A scroll view keeps a column of its own for its bar**: do not reserve one more.
+- **A native border needs at least one column of padding**, so row bands and rules start two
+  cells inside a panel's line and cannot join it (`├──┤`); docs/design records this.
+- Verify layout against the mocks cell by cell with `scripts/pty-run.py` (every `<!-- mock -->`
+  block is exact); the in-memory terminal of `nsh test --target tui` does not draw scroll bars.
+
 ## Checks before "done"
 
 Run in `apps/tui` unless noted, and paste the tails:
