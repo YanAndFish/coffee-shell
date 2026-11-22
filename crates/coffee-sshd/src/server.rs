@@ -38,6 +38,9 @@ pub const BANNER: &str = "\n  ◆ROAST/TTY 终端咖啡馆\n  演示环境 · �
 const KILL_GRACE: Duration = Duration::from_millis(1000);
 /// Keepalives detect a client that vanished without closing its connection.
 const KEEPALIVE: Duration = Duration::from_secs(30);
+/// Tries at starting a session's program, and the pause between them.
+const SPAWN_ATTEMPTS: u32 = 3;
+const SPAWN_RETRY: Duration = Duration::from_millis(150);
 /// Undoes what a session program that died may have left on the client's terminal: kitty
 /// keys, mouse, paste and focus reports, alternate scroll, a synchronized update, the
 /// alternate screen, a hidden cursor, colours.
@@ -321,23 +324,38 @@ impl Connection {
       }
     };
     let env = self.child_env(&pty);
-    let spawned = spawn_child(&self.shared.config, &pty, env);
-    let (child, pty_master) = match spawned {
-      Ok(spawned) => spawned,
-      Err(error) => {
-        tracing::error!(
-          conn = self.id,
-          bin = %self.shared.config.tui_bin.display(),
-          %error,
-          "could not start the session program"
-        );
-        Self::refuse(
-          handle,
-          channel,
-          "ROAST/TTY 暂时无法启动，请稍后再试。".into(),
-          1,
-        );
-        return;
+    // A start can fail for a moment (no process or PTY to spare under load, the program
+    // being replaced): try again shortly before giving up on the session.
+    let mut attempt = 1;
+    let (child, pty_master) = loop {
+      match spawn_child(&self.shared.config, &pty, env.clone()) {
+        Ok(spawned) => break spawned,
+        Err(error) if attempt < SPAWN_ATTEMPTS => {
+          tracing::warn!(
+            conn = self.id,
+            attempt,
+            %error,
+            "could not start the session program; trying again"
+          );
+          tokio::time::sleep(SPAWN_RETRY).await;
+          attempt += 1;
+        }
+        Err(error) => {
+          tracing::error!(
+            conn = self.id,
+            bin = %self.shared.config.tui_bin.display(),
+            attempt,
+            %error,
+            "could not start the session program"
+          );
+          Self::refuse(
+            handle,
+            channel,
+            "ROAST/TTY 暂时无法启动，请稍后再试。".into(),
+            1,
+          );
+          return;
+        }
       }
     };
     let pid = child.id().unwrap_or_default();

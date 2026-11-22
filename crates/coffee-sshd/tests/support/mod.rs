@@ -41,7 +41,30 @@ pub fn tui_bin() -> PathBuf {
   BIN
     .get_or_init(|| {
       let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-      let output = Command::new(cargo)
+      let mut build = Command::new(cargo);
+      // Without what `cargo test` sets for this test binary: some build scripts rerun
+      // when those change (`CARGO_MANIFEST_DIR`, `CARGO_PKG_NAME`, ...), which relinked
+      // coffee-tui on every switch between `cargo build` and `cargo test`, and under a
+      // test run alongside killed the sessions of the other (macOS kills a program whose
+      // binary is rewritten under it; the exec in between finds no file).
+      for (name, _) in std::env::vars_os() {
+        let name = name.to_string_lossy();
+        if name.starts_with("CARGO_PKG_")
+          || name.starts_with("CARGO_MANIFEST_")
+          || name.starts_with("CARGO_BIN_")
+          || [
+            "CARGO_CRATE_NAME",
+            "CARGO_PRIMARY_PACKAGE",
+            "CARGO_TARGET_TMPDIR",
+            "CARGO_RUSTC_CURRENT_DIR",
+            "OUT_DIR",
+          ]
+          .contains(&name.as_ref())
+        {
+          build.env_remove(name.as_ref());
+        }
+      }
+      let output = build
         .args([
           "build",
           "-p",
@@ -113,6 +136,10 @@ pub struct TestServer {
 
 impl TestServer {
   pub async fn start(tui_bin: PathBuf, tune: impl FnOnce(&mut Config)) -> Self {
+    // The server's log on stderr (uncaptured) when asked for, e.g. COFFEE_SSH_LOG=info.
+    if std::env::var_os("COFFEE_SSH_LOG").is_some() {
+      coffee_sshd::init_logging();
+    }
     let dir = temp_dir("server");
     let mut config = Config::from_vars(|_| None, None).unwrap();
     config.addr = "127.0.0.1:0".parse().unwrap();

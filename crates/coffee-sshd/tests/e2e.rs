@@ -389,6 +389,22 @@ async fn a_crashed_program_leaves_a_clear_message() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_program_that_cannot_start_is_explained() {
+  let dir = temp_dir("missing");
+  let server = TestServer::start(dir.join("no-such-program"), |_| {}).await;
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let mut terminal = Terminal::open(&handle, 80, 24).await;
+  assert!(terminal.wait_closed(WAIT).await);
+  assert!(
+    terminal.raw_text().contains("暂时无法启动"),
+    "{}",
+    terminal.raw_text()
+  );
+  assert_eq!(terminal.exit_status, Some(1));
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_silent_connection_is_cut_off_at_the_login_deadline() {
   use tokio::io::AsyncReadExt;
   let dir = temp_dir("silent");
@@ -633,14 +649,26 @@ async fn measure_twenty_sessions() {
   let before = children_of(server_pid);
   let server_rss_before = usage(server_pid).map_or(0, |(rss, _)| rss);
 
+  // With a backend behind the server, also time the products' arrival
+  // (e.g. COFFEE_SPIKE_WAIT='耶加雪菲 孔加').
+  let content = std::env::var("COFFEE_SPIKE_WAIT").ok();
   let mut tasks = Vec::new();
   for _ in 0..SESSIONS {
+    let content = content.clone();
     tasks.push(tokio::spawn(async move {
       let start = Instant::now();
       let (handle, _) = connect(addr, Login::Keyless).await;
       let mut terminal = Terminal::open(&handle, 160, 50).await;
       assert!(terminal.wait_text("◆ROAST/TTY", WAIT).await);
-      (start.elapsed(), handle, terminal)
+      let frame = start.elapsed();
+      if let Some(content) = &content {
+        assert!(
+          terminal.wait_text(content, WAIT).await,
+          "{}",
+          terminal.text()
+        );
+      }
+      (frame, start.elapsed(), handle, terminal)
     }));
   }
   let mut sessions = Vec::new();
@@ -649,6 +677,8 @@ async fn measure_twenty_sessions() {
   }
   let mut startup: Vec<Duration> = sessions.iter().map(|(elapsed, ..)| *elapsed).collect();
   startup.sort();
+  let mut loaded: Vec<Duration> = sessions.iter().map(|(_, loaded, ..)| *loaded).collect();
+  loaded.sort();
 
   tokio::time::sleep(Duration::from_secs(2)).await;
   let children: Vec<u32> = children_of(server_pid)
@@ -689,6 +719,14 @@ async fn measure_twenty_sessions() {
     startup[SESSIONS * 95 / 100],
     startup[SESSIONS - 1]
   );
+  if let Some(content) = &content {
+    println!(
+      "| connect → {content:?} on screen | p50 {:?} · p95 {:?} · max {:?} |",
+      loaded[SESSIONS / 2],
+      loaded[SESSIONS * 95 / 100],
+      loaded[SESSIONS - 1]
+    );
+  }
   println!(
     "| RSS per coffee-tui | min {:.1} MB · mean {:.1} MB · max {:.1} MB |",
     min(&rss),
