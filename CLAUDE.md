@@ -11,7 +11,8 @@ ssh client ─ coffee-sshd (russh: any key or none, PTY, session limits)
 ```
 
 Why one process per session, the auth model, Ctrl+C, colour pinning and limits: `docs/adr/0001-ssh-session-model.md`.
-Screens, keymap, copy, states, responsive rules and tokens: `docs/design/` (start at its `README.md`).
+Screens, keymap, copy, states, responsive rules and tokens: `docs/design/` (start at its `README.md`); product and
+API decisions of phase 2: `docs/design/decisions.md`. The API contract and its conventions: `packages/contract/README.md`.
 
 ## Map
 
@@ -21,7 +22,7 @@ Screens, keymap, copy, states, responsive rules and tokens: `docs/design/` (star
 | `crates/coffee-host` | bin `coffee-tui`: runs `coffee_app::App` in the current terminal | pins theme colours, colour depth, Ctrl+C twice                                    |
 | `crates/coffee-sshd` | bin `coffee-sshd`: SSH front end, one PTY child per session      | end-to-end tests in `tests/`                                                      |
 | `crates/coffee-api`  | serde DTOs of the backend API (no nsh)                           | tested against the contract fixtures                                              |
-| `apps/server`        | `@coffee/server`: Koa + Prisma + SQLite                          | `HOST`/`PORT` (127.0.0.1:3000), DB `apps/server/.data/coffee.db`                  |
+| `apps/server`        | `@coffee/server`: Koa + Prisma + SQLite                          | `routes/<area>.ts` + `services/<area>.ts`; DB `apps/server/.data/coffee.db`       |
 | `packages/contract`  | `@coffee/contract`: zod → `openapi.json` + `fixtures/v1/*.json`  | single source of the API; `FooSchema` / type `Foo`; money in integer yuan         |
 | `docs/design`        | screens, keymap, copy, responsive rules, tokens                  | `raw/` are exported originals: read-only                                          |
 | `docs/adr`           | architecture decisions                                           |                                                                                   |
@@ -62,15 +63,18 @@ CI (`.github/workflows/ci.yml`, ubuntu-24.04) runs the jobs `node`, `rust`, `nsh
 - **Stores** are `Copy` structs of private signals (`SessionStore`, `CatalogStore`, `ToastStore`, `Router`; Cart,
   Address, Orders, Settings come in phase 2), bundled in `stores::Stores` (`Stores::provide()` in the root,
   `Stores::get()` in a body); change them through their methods. A page never writes another page's state.
-- **The TUI never computes money.** Prices, discounts, shipping and totals come from the backend as given.
+- **The TUI never computes money.** Prices, discounts, shipping and totals come from the backend as given (not even
+  unit × quantity: the detail page reads `PriceCell.totals`).
 - Async work starts from events, effects or resources, with explicit loading / empty / error states.
 - Component bodies run once; only bindings (closures) re-run. Read signals inside closures, not in the body.
 
 ## Contract first
 
-1. Change the zod schema in `packages/contract`, regenerate `openapi.json` and `fixtures/v1/*.json` (commit both).
-2. Mirror the DTO in `crates/coffee-api`; its tests deserialize every fixture.
-3. Implement the route in `apps/server`; vitest checks real responses against the schema.
+1. Change the zod schema / `defineEndpoint` in `packages/contract`, regenerate `openapi.json` and `fixtures/v1/**`
+   (commit both). Error codes, statuses and messages live in one table (`ERRORS`).
+2. Mirror the DTO in `crates/coffee-api`; its tests round-trip every fixture (an unmapped fixture fails).
+3. Implement the handler in `apps/server/src/services/<area>.ts` (the route is one `route()` line: auth, headers and
+   input validation come from the contract); add a case to `test/conformance/<area>.ts`.
 4. Use it from `apps/tui/src/api` and a store. See `.claude/skills/add-api-endpoint`.
 
 ## UI rules

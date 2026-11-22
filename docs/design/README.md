@@ -21,6 +21,7 @@
 | [data.md](data.md)                             | 8 款商品、SKU 维度、计价 / 优惠 / 运费 / 订单号规则、示例数据               |
 | [states.md](states.md)                         | 画面 × 状态清单、动效清单                                                   |
 | [responsive.md](responsive.md)                 | 断点表与每个画面在各断点、矮屏下的变化                                      |
+| [decisions.md](decisions.md)                   | 第二阶段的产品决定（U1–U7）与接口层补充决定（P-…）                          |
 
 源文件：`raw/canvas/Main.dc.html`（六个画面、对话框、Toast、帮助的标记和全部脚本；其余 `*.dc.html` 只是起始页不同）、`raw/design-system/`（README、tokens、20 个组件说明）。
 
