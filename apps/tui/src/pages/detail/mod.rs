@@ -238,16 +238,18 @@ fn ready(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyElement
 /// it; the brewing inset stays at its foot) beside the SKU panel.
 fn two_columns(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyElement {
   let (shape, short) = (key.shape, key.short);
+  // The padding goes inside the scroll view, so its bar (when the terminal is too short)
+  // stands against the panel's line, not inside the text's margin.
   let info = ui::panel_plain(
     view()
       .flex_1()
       .min_h(px(0.0))
-      .px(layout::pad_cols(2))
       .child(layout::vspace(1))
       .child(
         scroll().flex_1().min_h(px(0.0)).child(
           view()
             .flex_none()
+            .px(layout::pad_cols(2))
             .child(info::back_row(stores, &detail))
             .child(layout::vspace(1))
             .child(info::title_block(&detail))
@@ -258,7 +260,12 @@ fn two_columns(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyE
             .child(layout::vspace(1)),
         ),
       )
-      .child(info::brew(&detail))
+      .child(
+        view()
+          .flex_none()
+          .px(layout::pad_cols(2))
+          .child(info::brew(&detail)),
+      )
       .child(layout::vspace(1)),
   );
   let sku = view()
