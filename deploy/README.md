@@ -39,8 +39,10 @@ docker compose -f deploy/compose.yaml logs -f gateway     # sessions, fingerprin
 `deploy/smoke-test.sh` (with `COMPOSE_UP_ARGS=--build`, or with `COFFEE_GATEWAY_IMAGE`/`COFFEE_SERVER_IMAGE` naming
 images built beforehand) starts the pair with a throwaway key and checks the SSH banner, that the backend is not
 published and refuses calls without the key, that a key-less stock `ssh` session shows the products from the backend
-(not the built-in sample data), that the session's `coffee-tui` is gone after the client leaves, and that a restarted
-backend migrates and seeds nothing twice. Then it removes everything.
+(not the built-in sample data), that a stock `ssh` session with a throwaway key registers, adds a bag, saves an
+address, checks out and gets a receipt (`scripts/e2e/run.py --gateway 127.0.0.1:2222 smoke`; its text screenshots
+go to `.data/e2e-smoke/`), that the sessions' `coffee-tui` are gone after the clients leave, and that a restarted
+backend migrates and seeds nothing twice. Then it removes everything. It needs `python3` and `ssh` on the host.
 
 ## Build the images alone
 
@@ -95,8 +97,9 @@ Ghostty, foot, Alacritty, WezTerm, rio, `*-direct`) or from a `*-256color` termi
 rest get 256 colours. Set `COFFEE_COLORS=truecolor` to force 24-bit colour for everyone only when you know the
 clients' terminals support it.
 
-Each idle session is one `coffee-tui` of 15–20 MB RSS (see the ADR's phase 2 measurement); size the gateway container for
-`COFFEE_SSH_MAX_SESSIONS` of them plus the gateway.
+Each session is one `coffee-tui`: about 23 MB RSS on the login page and 35–38 MB after browsing a product and the
+cart (ADR 0001, "第二阶段完成后复测"). Size the gateway container for `COFFEE_SSH_MAX_SESSIONS` of them at 40 MB each
+(64 × 40 MB ≈ 2.6 GB) plus the gateway (under 10 MB).
 
 ## Backend settings (environment)
 

@@ -8,9 +8,11 @@
 # Starts the pair with a throwaway COFFEE_INTERNAL_KEY and checks: the gateway answers
 # with its SSH banner; the backend is not published and refuses calls without the key; a
 # stock `ssh` session (no key) shows the product list served by the backend, not the
-# built-in sample data; the session's coffee-tui is gone after the client leaves; a
+# built-in sample data; a stock `ssh` session with a key registers, adds a bean, saves an
+# address, checks out and gets its receipt (scripts/e2e/run.py's `smoke` flow; its screens
+# land in .data/e2e-smoke/); the sessions' coffee-tui are gone after the clients leave; a
 # restarted backend starts again on the same database without migrating or seeding twice.
-# Everything (containers, networks, volumes) is removed at the end.
+# Everything (containers, networks, volumes) is removed at the end. Needs python3 and ssh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -74,7 +76,11 @@ if grep -q '样例数据' "$screen"; then
 fi
 "${compose[@]}" logs --no-color gateway | grep -E 'session (started|ended)'
 
-step "the session's coffee-tui is gone after the client left"
+step "a stock ssh session with a key buys: register → add → address → checkout → receipt"
+python3 scripts/e2e/run.py --gateway "127.0.0.1:$port" --out .data/e2e-smoke smoke
+grep -h -E '订单号|实付|演示订单' .data/e2e-smoke/smoke/*-receipt.txt | sed -E 's/[[:space:]]+/ /g'
+
+step "the sessions' coffee-tui are gone after the clients left"
 gone=
 for _ in $(seq 1 10); do
   if ! "${compose[@]}" top gateway | grep -q coffee-tui; then

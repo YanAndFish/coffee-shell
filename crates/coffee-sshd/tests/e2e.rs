@@ -653,7 +653,10 @@ fn children_of(parent: u32) -> Vec<u32> {
 /// The measurement behind `docs/adr/0001-ssh-session-model.md`: 20 concurrent sessions
 /// of the real `coffee-tui`. Against a running `coffee-sshd` when `COFFEE_SPIKE_ADDR`
 /// and `COFFEE_SPIKE_PID` are set, else an in-process server (`COFFEE_TUI_BIN` picks
-/// the program, e.g. a release build).
+/// the program, e.g. a release build). The first frame is the login page (its demo
+/// notice); with `COFFEE_SPIKE_WAIT` (text of the product list, e.g. `耶加雪菲 孔加`)
+/// each session also walks as a guest: list → the first product's detail → `a` → cart,
+/// and the memory and idle CPU are measured with every session resting on its cart.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "measurement for docs/adr/0001; run with --ignored --nocapture"]
 async fn measure_twenty_sessions() {
@@ -689,16 +692,52 @@ async fn measure_twenty_sessions() {
       let start = Instant::now();
       let (handle, _) = connect(addr, Login::Keyless).await;
       let mut terminal = Terminal::open(&handle, 160, 50).await;
-      assert!(terminal.wait_text("◆ROAST/TTY", WAIT).await);
+      assert!(terminal.wait_text("演示环境", WAIT).await);
       let frame = start.elapsed();
+      let mut loaded = frame;
       if let Some(content) = &content {
+        let status = |t: &Terminal, hint: &str| {
+          t.parser
+            .screen()
+            .contents_between(49, 0, 49, 160)
+            .contains(hint)
+        };
+        // Each key waits for its effect: Esc and `g` read in one go would be Alt+g.
+        let steps: [(&[u8], &str, bool); 5] = [
+          (b"", "离开输入", true),
+          (b"\x1b", "访客浏览", true),
+          (b"g", content.as_str(), false),
+          // The SKU line shows once the detail has loaded: `a` before that adds nothing.
+          (b"\r", "SKU RT-", false),
+          (b"a", "已加入购物车", false),
+        ];
+        for (keys, until, on_status) in steps {
+          if !keys.is_empty() {
+            terminal.send(keys).await;
+          }
+          assert!(
+            terminal
+              .wait_for(WAIT, |t| if on_status {
+                status(t, until)
+              } else {
+                t.text().contains(until)
+              })
+              .await,
+            "{}",
+            terminal.text()
+          );
+          if until == content.as_str() {
+            loaded = start.elapsed();
+          }
+        }
+        terminal.send(b"2").await;
         assert!(
-          terminal.wait_text(content, WAIT).await,
+          terminal.wait_text("购物车 CART", WAIT).await,
           "{}",
           terminal.text()
         );
       }
-      (frame, start.elapsed(), handle, terminal)
+      (frame, loaded, handle, terminal)
     }));
   }
   let mut sessions = Vec::new();
@@ -742,16 +781,23 @@ async fn measure_twenty_sessions() {
 
   println!("| measure | value |");
   println!("|---|---|");
-  println!("| sessions | {SESSIONS} concurrent, 160×50, keyless |");
   println!(
-    "| startup (connect → first frame) | p50 {:?} · p95 {:?} · max {:?} |",
+    "| sessions | {SESSIONS} concurrent, 160×50, keyless{} |",
+    if content.is_some() {
+      ", each walked list → detail → add → cart"
+    } else {
+      ", on the login page"
+    }
+  );
+  println!(
+    "| startup (connect → first frame, the login page) | p50 {:?} · p95 {:?} · max {:?} |",
     startup[SESSIONS / 2],
     startup[SESSIONS * 95 / 100],
     startup[SESSIONS - 1]
   );
   if let Some(content) = &content {
     println!(
-      "| connect → {content:?} on screen | p50 {:?} · p95 {:?} · max {:?} |",
+      "| connect → list with {content:?} (through Esc, g) | p50 {:?} · p95 {:?} · max {:?} |",
       loaded[SESSIONS / 2],
       loaded[SESSIONS * 95 / 100],
       loaded[SESSIONS - 1]

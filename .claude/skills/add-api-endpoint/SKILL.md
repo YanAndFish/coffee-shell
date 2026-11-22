@@ -58,7 +58,8 @@ money, error details) and the endpoint table: `packages/contract/README.md`. Dec
 4. Prisma (7.9.1) changes: edit `prisma/schema.prisma`, then create the migration against a scratch database
    (`DATABASE_URL=file:/tmp/x.db npx prisma migrate dev --name …`, then `npx prisma generate`), update the seed
    (`prisma/seed.ts`, idempotent). `pnpm --filter @coffee/server db:migrate` (= `prisma migrate deploy`) and
-   `db:seed` apply them, and `pnpm dev` runs both on every start. The database is `apps/server/.data/coffee.db`
+   `db:seed` apply them, and `pnpm dev` runs both on every start (the e2e driver migrates a fresh template database
+   per run). The server refuses to start on a missing, unmigrated or locked database (`src/startup.ts`). The database is `apps/server/.data/coffee.db`
    (git-ignored; `DATABASE_URL=file:...` overrides). **`db:reset` is for humans only**: Prisma refuses
    `migrate reset` when an AI agent runs it - never work around that guard; ask the user to run it.
 5. Tests: add a case to `test/conformance/<area>.ts` (the harness calls the real app, parses the answer with the
@@ -83,7 +84,14 @@ money, error details) and the endpoint table: `packages/contract/README.md`. Dec
 pnpm --filter @coffee/contract generate && git status --short packages/contract   # fixtures committed?
 pnpm check && pnpm test
 cd apps/tui && nsh check && nsh test
+pnpm test:e2e:real          # from the root: the shop's flows over the real backend, sshd and ssh (~2 min)
 ```
+
+The end-to-end flows (`scripts/e2e/flows.py`, steps in `shop.py`) are the only tests that run the TUI against the real
+server: when the endpoint changes what a shopper sees or can do, extend the flow that covers it (or add one to
+`FLOWS` and `DEFAULT`) and run it with `python3 scripts/e2e/run.py <flow>`. Flows read the screen (`t.wait(...)`), may
+read the flow's database (`stack.sql(...)`) and check money against `shop.quote()`, an independent copy of the
+rules: a pricing change updates both `services/pricing.ts` and `quote()`. What they cover: `docs/acceptance.md`.
 
 With `pnpm dev` running, `curl -H "X-Internal-Key: $KEY" http://127.0.0.1:3000/v1/<path>` cannot work because the
 key is random per run - test the route through vitest, or start the server alone with your own key
