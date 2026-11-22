@@ -13,6 +13,9 @@
 //! `▐text▌` (`ink` bold; reverse video in monochrome). An unavailable SKU option is
 //! `disabled` and struck through, its note says `缺货`, and presses skip it. The source's
 //! `.t-filter` list is [`super::toggle::radio`].
+//!
+//! A chip's box is exactly [`chip_width`] cells: nsh 0.6.1 lays out the bare row of its
+//! pieces one cell wider than it draws, which doubled the one-cell gap between options.
 
 use nsh_core::prelude::*;
 
@@ -61,7 +64,8 @@ pub fn chip(
 ) -> View {
   let text_content: SharedString = text_content.into();
   let shown = chip_inner(&text_content, pad);
-  pressable()
+  let width = chip_width(&text_content, pad) as u16;
+  let chip = pressable()
     .flex_none()
     .label(text_content)
     .on_press(move || {
@@ -89,7 +93,14 @@ pub fn chip(
           .child(label("]", Tone::Line))
           .into_element()
       }
-    }))
+    }));
+  // The pressable is laid out a cell wider than it draws: the box around it holds the
+  // width the chip draws.
+  view()
+    .flex_none()
+    .w(layout::cols(width))
+    .overflow_hidden()
+    .child(chip)
 }
 
 /// A segmented row of `options`, the `selected()` one solid; a press on option `i` runs
@@ -103,7 +114,7 @@ pub fn segmented(
   view()
     .flex_none()
     .flex_row()
-    .gap(layout::cols(1))
+    .gap(layout::gap_cols(1))
     .children(options.iter().enumerate().map(move |(index, option)| {
       chip(
         *option,

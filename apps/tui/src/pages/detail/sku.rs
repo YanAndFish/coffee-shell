@@ -19,9 +19,9 @@ use crate::{
     product::{max_quantity, weight_available},
   },
   ui::{
-    Button, ButtonKind, ChipPad, StepperForm, Tone, chip, chip::chip_width, group_label, label,
-    layout, rule, sku_option, stepper, stepper::STEPPER_CELLS, stock_note, strong,
-    text::display_width, toned, toned_strong,
+    Button, ButtonKind, ChipPad, StepperForm, Tone, chip, group_label, label, layout, rule,
+    sku_option, stepper, stepper::STEPPER_CELLS, stock_note, strong, text::display_width, toned,
+    toned_strong,
   },
 };
 
@@ -64,23 +64,6 @@ pub fn unit_line(quantity: u8, unit: u32) -> String {
   format!("{quantity} × {}", format::yuan(unit))
 }
 
-/// One chip in a box exactly as wide as it draws (`chip_width`): nsh 0.6.1 lays a bare
-/// [`chip`] out one cell wider than it draws, which doubles the one-cell gap between options
-/// (`ui::segmented` shows it as well).
-fn option_chip(
-  text_content: String,
-  pad: ChipPad,
-  selected: impl Fn() -> bool + Copy + 'static,
-  available: impl Fn() -> bool + Copy + 'static,
-  on_press: impl Fn() + 'static,
-) -> View {
-  view()
-    .flex_none()
-    .w(layout::cols(chip_width(&text_content, pad) as u16))
-    .overflow_hidden()
-    .child(chip(text_content, pad, selected, available, on_press))
-}
-
 /// Options one cell apart.
 fn option_row(chips: impl IntoIterator<Item = View>) -> View {
   view()
@@ -108,7 +91,7 @@ fn weights(product: ProductStore, detail: Rc<ProductDetail>, inline: bool) -> An
         let selected = move || product.selection().weight == weight;
         let choose = move || product.select_weight(weight);
         if inline {
-          option_chip(
+          chip(
             format!("{} {note}", weight.label()),
             ChipPad::Padded,
             selected,
@@ -129,7 +112,7 @@ fn grinds(product: ProductStore) -> View {
       .into_iter()
       .zip(GRIND_LABELS)
       .map(move |(grind, name)| {
-        option_chip(
+        chip(
           name.to_owned(),
           ChipPad::Tight,
           move || product.selection().grind == grind,
@@ -146,7 +129,7 @@ fn packs(product: ProductStore) -> View {
       .into_iter()
       .zip(PACK_LABELS)
       .map(move |(pack, name)| {
-        option_chip(
+        chip(
           name.to_owned(),
           ChipPad::Padded,
           move || product.selection().pack == pack,
