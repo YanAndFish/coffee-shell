@@ -1,16 +1,33 @@
 {
   "name": "@coffee/server",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "ROAST/TTY backend (Koa + Prisma + SQLite). Placeholder.",
-  "exports": {
-    ".": "./src/index.ts"
+  "description": "ROAST/TTY backend (Koa + Prisma + SQLite). A demo shop, not a real one.",
+  "engines": {
+    "node": ">=26"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "postinstall": "prisma generate",
+    "dev": "prisma migrate deploy && prisma db seed && node --watch src/main.ts",
+    "build": "tsdown",
+    "start": "node dist/main.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "db:reset": "prisma migrate reset --force && prisma db seed"
   },
   "dependencies": {
-    "@coffee/contract": "workspace:*"
+    "@coffee/contract": "workspace:*",
+    "@koa/router": "^15.7.1",
+    "@prisma/adapter-better-sqlite3": "7.9.1",
+    "@prisma/client": "7.9.1",
+    "koa": "^3.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/koa": "^3.0.3",
+    "prisma": "7.9.1"
   }
 }

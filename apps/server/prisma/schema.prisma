@@ -1,0 +1,56 @@
+// ROAST/TTY backend data model. SQLite has no enums or arrays: list columns hold JSON
+// text that `src/services/` validates with zod. Money is integer yuan.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  runtime             = "nodejs"
+  moduleFormat        = "esm"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// One coffee bean on the shelf (design: `P` in docs/design/raw/canvas/Main.dc.html).
+model Product {
+  /// Stable id, e.g. `yirga`.
+  id             String   @id
+  /// Display order (0-based); lists are sorted by it.
+  position       Int      @unique
+  /// SKU code used in order lines, e.g. `YIR`.
+  code           String   @unique
+  name           String
+  /// Latin subtitle, e.g. `Ethiopia · Yirgacheffe Konga G1`.
+  subtitle       String
+  /// Origin country or `拼配`.
+  origin         String
+  region         String
+  farm           String
+  /// Altitude as displayed, e.g. `1,950–2,200 m`.
+  altitude       String
+  variety        String
+  process        String
+  harvest        String
+  /// 1 (light) to 5 (dark).
+  roast          Int
+  /// Badge such as `新产季`, or null.
+  tag            String?
+  /// JSON `string[]` of tasting notes.
+  notes          String
+  /// JSON `[number × 6]`, 0..=10: 酸度 甜感 醇厚 苦度 余韵 香气.
+  flavor         String
+  /// Cupping score, e.g. 87.5.
+  score          Float
+  /// Price of 250 g in integer yuan; other weights derive from it.
+  basePrice      Int
+  stock          Int
+  /// Brew recipe as displayed, e.g. `1:15 · 92°C · 2′30″`.
+  brew           String
+  description    String
+  /// JSON `string[]` of weight keys (`100g` `250g` `500g` `1kg`) that are sold out.
+  soldOutWeights String   @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
