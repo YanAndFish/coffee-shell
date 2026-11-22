@@ -85,21 +85,23 @@ impl Form {
     let tall = !viewport.short();
     match viewport.bp() {
       Bp::TooSmall | Bp::S => Form::Single,
+      // The page has the whole width (the shell keeps no margins on it): 01-login.md's
+      // columns are the screen's.
       Bp::M => Form::Split {
-        indent: 1,
-        right: card::CARD_COLS + 1,
+        indent: 2,
+        right: card::CARD_COLS + 2,
         lead: 0,
         tall: false,
       },
       Bp::L => Form::Split {
-        indent: 4,
-        right: 64,
+        indent: 5,
+        right: 65,
         lead: 2,
         tall,
       },
       Bp::Xl => Form::Split {
-        indent: 8,
-        right: 64,
+        indent: 9,
+        right: 65,
         lead: 2,
         tall,
       },
@@ -192,7 +194,7 @@ mod tests {
     assert!(matches!(
       form(130, 40),
       Form::Split {
-        indent: 4,
+        indent: 5,
         tall: true,
         ..
       }
@@ -201,8 +203,8 @@ mod tests {
     assert!(matches!(
       form(160, 50),
       Form::Split {
-        indent: 8,
-        right: 64,
+        indent: 9,
+        right: 65,
         tall: true,
         ..
       }
