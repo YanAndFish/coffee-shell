@@ -129,8 +129,16 @@ pub fn input(
   let on_blur_change = on_focus_change.clone();
   let focused_by_caller = focused;
   let focused = move || has_focus.get();
+  // Disabled (a submit under way), the field gives the focus up; when it is enabled again
+  // with the ring still on it, it takes the focus back.
+  let disabled = spec.disabled.clone();
+  let is_disabled = move || disabled.as_ref().is_some_and(|disabled| disabled());
+  let wanted = {
+    let is_disabled = is_disabled.clone();
+    move || focused_by_caller() && !is_disabled()
+  };
   // The ring's focus when the field appears: it takes it as it mounts.
-  let at_mount = untracked(focused_by_caller);
+  let at_mount = untracked(&wanted);
   // What the field last asked of nsh, or nsh gave it (Tab, a click): a focus nsh gave counts
   // as asked, so the ring following it asks for nothing (a second request would land after
   // the next Tab and pull the focus back). Requests follow the ring's changes only: blurring
@@ -138,7 +146,7 @@ pub fn input(
   let asked = std::rc::Rc::new(std::cell::Cell::new(at_mount));
   let (on_focus_asked, on_blur_asked) = (asked.clone(), asked.clone());
   effect(move || {
-    let now = focused_by_caller();
+    let now = wanted();
     if now && !asked.get() {
       field_ref.focus();
     } else if !now && asked.get() {
@@ -147,7 +155,6 @@ pub fn input(
     asked.set(now);
   });
   let uppercase = spec.uppercase;
-  let disabled = spec.disabled.clone();
   let name = spec
     .label
     .clone()
@@ -163,7 +170,7 @@ pub fn input(
     .placeholder(spec.placeholder.to_string())
     .text_color(move || Tone::Fg.color())
     .masked(spec.masked)
-    .disabled(move || disabled.as_ref().is_some_and(|disabled| disabled()))
+    .disabled(is_disabled)
     .on_change(move |text: &str| {
       on_change(if uppercase {
         text.to_uppercase()
