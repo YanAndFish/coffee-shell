@@ -369,6 +369,12 @@ pub const FILLS: [FillSpec; 2] = [
   },
 ];
 
+/// The opacity of a carrier fill: opaque enough for nsh to draw it as its exact colour (a
+/// "tone" fill, from 60 %), not opaque enough to be the ground its text is read against or a
+/// pressable box's "stands out" fill (both only at 100 %). So text on a carrier band reads as
+/// on the window, and a pressable row with a band keeps its text colours.
+pub const CARRIER_OPACITY: f32 = 0.94;
+
 /// The theme token nsh's own hover band is pinned to (no carrier: nsh draws the band).
 pub const HOVER_TOKEN: &str = "hover";
 
@@ -377,8 +383,8 @@ impl Fill {
   pub fn color(self) -> AdaptiveColor {
     match self {
       Fill::Surface => surface(),
-      Fill::Kbd => token("carrier-kbd", theme().card),
-      Fill::Selection => token("carrier-selection", theme().card),
+      Fill::Kbd => token("carrier-kbd", theme().card).opacity(CARRIER_OPACITY),
+      Fill::Selection => token("carrier-selection", theme().card).opacity(CARRIER_OPACITY),
       Fill::Acc => acc(),
       Fill::Acc2 => acc2(),
       Fill::Danger => danger(),

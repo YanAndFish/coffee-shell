@@ -128,23 +128,20 @@ pub fn data_row(
   cells: Vec<AnyElement>,
   on_press: impl Fn(u32) + 'static,
 ) -> View {
-  // The press is on a box of no fill: nsh paints the text of a pressable box with a
-  // saturated fill in that fill's accent (a primary button's look).
-  view()
+  // Pressable and banded at once: a pressable box lays out the same with or without its band
+  // (a band that is no control would reach across the panel's padding and move the row).
+  row_frame()
     .flex_none()
     .focusable(false)
     .on_press(move |event: &PressEvent| on_press(event.clicks))
+    .bg(band(current.clone()))
+    .child(cursor(current))
     .child(
-      row_frame()
-        .bg(band(current.clone()))
-        .child(cursor(current))
-        .child(
-          columns
-            .iter()
-            .zip(cells)
-            .map(|(&column, content)| cell(column, content))
-            .collect::<Vec<_>>(),
-        ),
+      columns
+        .iter()
+        .zip(cells)
+        .map(|(&column, content)| cell(column, content))
+        .collect::<Vec<_>>(),
     )
 }
 
@@ -268,9 +265,12 @@ pub fn cart_row(
   } = actions;
   let dim = move || !checked();
   let fixed = |cells: u16| view().flex_none().w(layout::cols(cells));
-  let row = view()
+  view()
+    .flex_none()
     .flex_row()
     .px_2()
+    .focusable(false)
+    .on_press(move |event: &PressEvent| press(event.clicks))
     .bg(band(current.clone()))
     .child(cursor(current.clone()))
     .child(
@@ -317,12 +317,7 @@ pub fn cart_row(
           .on_press(remove)
           .child(label("✕", Tone::Mute)),
       ),
-    );
-  view()
-    .flex_none()
-    .focusable(false)
-    .on_press(move |event: &PressEvent| press(event.clicks))
-    .child(row)
+    )
 }
 
 /// An order's status.

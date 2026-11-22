@@ -153,35 +153,30 @@ pub fn radio(
 ) -> View {
   let tone = move || if selected() { Tone::Acc } else { Tone::Soft };
   let text_content: SharedString = text_content.into();
-  // The fill is on a box inside the pressable one: nsh paints the text of a pressable
-  // box with a saturated fill in that fill's accent.
-  let band = view().flex_1().flex_row().bg(move || {
-    if selected() {
-      Fill::Selection.color()
-    } else {
-      AdaptiveColor::TRANSPARENT
-    }
-  });
   pressable()
     .flex_none()
     .flex_row()
     .label(text_content.clone())
     .on_press(on_select)
+    .bg(move || {
+      if selected() {
+        Fill::Selection.color()
+      } else {
+        AdaptiveColor::TRANSPARENT
+      }
+    })
     .child(
-      band
-        .child(
-          toned(
-            {
-              let name = text_content;
-              move || SharedString::from(format!("{} {name}", radio_glyph(selected())))
-            },
-            tone,
-          )
-          .style_when(selected, |s| s.font_weight(FontWeight::BOLD)),
-        )
-        .child(view().flex_1())
-        .child(count.map(|count| label(count, Tone::Mute))),
+      toned(
+        {
+          let name = text_content;
+          move || SharedString::from(format!("{} {name}", radio_glyph(selected())))
+        },
+        tone,
+      )
+      .style_when(selected, |s| s.font_weight(FontWeight::BOLD)),
     )
+    .child(view().flex_1())
+    .child(count.map(|count| label(count, Tone::Mute)))
 }
 
 /// A focus mark: `›` in the cell left of a control while `focused()`.
