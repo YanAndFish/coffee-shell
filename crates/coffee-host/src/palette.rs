@@ -2,32 +2,36 @@
 //!
 //! nsh 0.6.1 draws an app's colours as the terminal's ANSI meanings
 //! (`nsh_platform_tui`'s `palette.rs`): a saturated colour becomes the accent of its
-//! hue band (`Yellow` for amber, `Green` for mint, `Red` for coral), near-neutral text
-//! the default foreground (`Reset`), secondary text `Reset` + `DIM`, and, without
-//! surfaces (no OSC 11 background given to it, the "bandless" look this host asks
-//! for), a raised or sunken fill the standard gray (`DarkGray`) and an opaque
-//! saturated fill its exact RGB. The user's terminal theme then decides what amber is.
+//! hue band (`Yellow` for amber, `Green` for mint, `Red` for coral, `Cyan`, `Blue`,
+//! `Magenta`), near-neutral text the default foreground (`Reset`), secondary text `Reset` +
+//! `DIM`, and, without surfaces (no OSC 11 background given to it, the "bandless" look
+//! this host asks for), a fill on a box under three rows the standard gray (`DarkGray`) when
+//! it is neutral and its exact RGB (or xterm index) when it is opaque and saturated. The
+//! user's terminal theme would then decide what amber is, and every brown of the design would
+//! be one "dim".
 //!
-//! [`Pin`] walks the rendered ratatui buffer and puts the theme's values back
-//! (`apps/tui/theme.json`, read through `coffee_app::THEME_JSON`):
+//! The app sends each design token on a **carrier** that survives that mapping
+//! (`coffee_app::ui::theme`: [`INKS`] for text, [`FILLS`] for fills): a channel (an ANSI
+//! meaning), optionally *marked* with the italic attribute the design never uses, or an
+//! exact carrier colour for a fill. [`Pin`] walks the rendered ratatui buffer and puts the
+//! tokens back (`apps/tui/theme.json`, read through `coffee_app::THEME_JSON`):
 //!
-//! | nsh draws | pinned to |
-//! |---|---|
-//! | background `Reset` | `background` |
-//! | background `DarkGray` (a card, popover, border fill) | `card` |
-//! | `Yellow` / `LightYellow` | `primary` |
-//! | `Green` / `LightGreen` | `success` |
-//! | `Red` / `LightRed` | `destructive` |
-//! | text `Reset` + `DIM` | `muted-foreground`, without `DIM` |
-//! | text `Reset` | `foreground`; `primary-foreground` on a light fill |
-//! | the bandless hover / press bands (10 % / 18 % white over black) | the same mixes of `background` toward `foreground` |
+//! | nsh draws | true colour / 256 colours | 16 colours | monochrome |
+//! |---|---|---|---|
+//! | background `Reset` | `background` | kept | kept |
+//! | background `DarkGray` (a raised fill) | `card` | kept | kept |
+//! | a carrier fill (`carrier-kbd`, `carrier-selection`) | `kbd`, `selection` | none, or reverse video | (nsh reverses it) |
+//! | the bandless hover / press bands | `hover` / 18 % of `foreground` over `background` | kept | kept |
+//! | text `Reset` | `foreground`; `primary-foreground` on an accent fill | kept | kept |
+//! | text `Reset` + `DIM` | `muted-foreground`, without `DIM` | kept | kept |
+//! | text in a channel, plain or marked | its token (`INKS`), unmarked | its 16-colour role, unmarked | unmarked; `DIM` when marked |
+//! | nsh's own focus mark (plain `Blue`) | `primary`; a reversed focus band becomes a `selection` band | `Yellow` | kept |
 //!
-//! At 24-bit colour the values are exact; at 256 colours each is the nearest entry of
-//! the xterm cube and gray ramp (indices 16–255, which terminal themes leave alone).
-//! 16 colours and monochrome are left to the terminal: there the ANSI meanings are the
-//! point. Every other colour (pictures, fills nsh already drew as RGB or as an index)
-//! passes through.
+//! At 24-bit colour the values are exact; at 256 colours each is the nearest entry of the
+//! xterm cube and gray ramp (indices 16–255, which terminal themes leave alone). Every other
+//! colour (pictures, fills nsh already drew as RGB or as an index) passes through.
 
+use coffee_app::ui::theme::{Ansi16, Channel, FILLS, Fill16, HOVER_TOKEN, INKS};
 use nsh_platform_tui::ColorDepth;
 use ratatui_core::{
   buffer::{Buffer, Cell},
@@ -48,6 +52,12 @@ pub struct Palette {
   pub primary_foreground: Rgb,
   pub success: Rgb,
   pub destructive: Rgb,
+  /// `hover`: the band under a hovered row or button.
+  pub hover: Rgb,
+  /// Each text tone's value, in the order of [`INKS`].
+  pub inks: [Rgb; INKS.len()],
+  /// Each carrier fill's value and carrier, in the order of [`FILLS`].
+  pub fills: [(Rgb, Rgb); FILLS.len()],
 }
 
 impl Palette {
@@ -67,6 +77,14 @@ impl Palette {
         .ok_or_else(|| format!("theme.json: no dark `{name}`"))?;
       parse_hex(text).ok_or_else(|| format!("theme.json: `{name}` is not #rrggbb: {text}"))
     };
+    let mut inks = [[0; 3]; INKS.len()];
+    for (slot, spec) in inks.iter_mut().zip(INKS) {
+      *slot = color(spec.token)?;
+    }
+    let mut fills = [([0; 3], [0; 3]); FILLS.len()];
+    for (slot, spec) in fills.iter_mut().zip(FILLS) {
+      *slot = (color(spec.token)?, color(spec.carrier)?);
+    }
     Ok(Self {
       background: color("background")?,
       foreground: color("foreground")?,
@@ -76,12 +94,23 @@ impl Palette {
       primary_foreground: color("primary-foreground")?,
       success: color("success")?,
       destructive: color("destructive")?,
+      hover: color(HOVER_TOKEN)?,
+      inks,
+      fills,
     })
   }
 
   /// The palette of `coffee_app::THEME_JSON`.
   pub fn app() -> Result<Self, String> {
     Self::from_theme_json(coffee_app::THEME_JSON)
+  }
+
+  /// The value of the token named `name` among the text tones, if it is one.
+  pub fn ink(&self, name: &str) -> Option<Rgb> {
+    INKS
+      .iter()
+      .position(|spec| spec.token == name)
+      .map(|at| self.inks[at])
   }
 }
 
@@ -100,9 +129,36 @@ pub fn parse_hex(text: &str) -> Option<Rgb> {
 const HOVER_SHARE: f32 = 0.10;
 const PRESS_SHARE: f32 = 0.18;
 
+/// The ANSI meaning of a foreground nsh drew: which channel it is.
+fn channel(color: Color, dim: bool) -> Option<Channel> {
+  Some(match color {
+    Color::Reset if dim => Channel::Muted,
+    Color::Reset => Channel::Default,
+    Color::Yellow | Color::LightYellow => Channel::Yellow,
+    Color::Green | Color::LightGreen => Channel::Green,
+    Color::Red | Color::LightRed => Channel::Red,
+    Color::Cyan | Color::LightCyan => Channel::Cyan,
+    Color::Blue | Color::LightBlue => Channel::Blue,
+    Color::Magenta | Color::LightMagenta => Channel::Magenta,
+    _ => return None,
+  })
+}
+
+/// The 16-colour terminal colour of a role.
+fn ansi16(role: Ansi16) -> Color {
+  match role {
+    Ansi16::Default => Color::Reset,
+    Ansi16::Gray => Color::DarkGray,
+    Ansi16::Yellow => Color::Yellow,
+    Ansi16::Green => Color::Green,
+    Ansi16::Red => Color::Red,
+  }
+}
+
 /// The theme's colours at one colour depth, ready to replace nsh's meanings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pin {
+  depth: ColorDepth,
   background: Color,
   foreground: Color,
   muted: Color,
@@ -111,6 +167,12 @@ pub struct Pin {
   ink: Color,
   success: Color,
   destructive: Color,
+  selection: Color,
+  /// Each text tone at this depth (in the order of [`INKS`]).
+  inks: [Color; INKS.len()],
+  /// Each carrier fill as nsh draws it at this depth, and its token (in the order of
+  /// [`FILLS`]).
+  fills: [(Color, Color); FILLS.len()],
   /// nsh's bandless hover and press bands, and what they become.
   bands: [(Color, Color); 2],
   /// Fills whose text reads in the dark ink rather than the foreground.
@@ -118,81 +180,206 @@ pub struct Pin {
 }
 
 impl Pin {
-  /// The pin of `palette` at `depth`; `None` at 16 colours and without colours, which
-  /// stay the terminal's.
+  /// The pin of `palette` at `depth`. At 16 colours and without colours only the carriers
+  /// change (into the 16-colour roles, or attributes): the rest is the terminal's.
   pub fn new(palette: Palette, depth: ColorDepth) -> Option<Self> {
-    let at = |rgb: Rgb| -> Option<Color> {
+    let exact = matches!(depth, ColorDepth::TrueColor | ColorDepth::Ansi256);
+    let at = |rgb: Rgb| -> Color {
       match depth {
-        ColorDepth::TrueColor => Some(Color::Rgb(rgb[0], rgb[1], rgb[2])),
-        ColorDepth::Ansi256 => Some(Color::Indexed(nearest_256(rgb))),
-        _ => None,
+        ColorDepth::TrueColor => Color::Rgb(rgb[0], rgb[1], rgb[2]),
+        ColorDepth::Ansi256 => Color::Indexed(nearest_256(rgb)),
+        _ => Color::Reset,
       }
     };
-    let band = |share: f32| {
-      let gray = (255.0 * share).round() as u8;
-      Some((
-        at([gray; 3])?,
-        at(mix(palette.background, palette.foreground, share))?,
-      ))
-    };
+    let band = |share: f32| (at([(255.0 * share).round() as u8; 3]), share);
+    let (hover, press) = (band(HOVER_SHARE), band(PRESS_SHARE));
+    let mut inks = [Color::Reset; INKS.len()];
+    for ((slot, spec), rgb) in inks.iter_mut().zip(INKS).zip(palette.inks) {
+      *slot = if exact { at(rgb) } else { ansi16(spec.ansi16) };
+    }
+    // nsh draws a carrier fill as itself at the depth, and at 16 colours as its hue's accent.
+    let mut fills = [(Color::Reset, Color::Reset); FILLS.len()];
+    for (slot, (token, carrier)) in fills.iter_mut().zip(palette.fills) {
+      let drawn = if exact {
+        at(carrier)
+      } else {
+        hue_band(carrier)
+      };
+      *slot = (drawn, at(token));
+    }
+    let selection = FILLS
+      .iter()
+      .zip(palette.fills)
+      .find(|(spec, _)| spec.token == "selection")
+      .map_or(palette.card, |(_, (token, _))| token);
+    let accent = |rgb: Rgb, sixteen: Color| if exact { at(rgb) } else { sixteen };
     Some(Self {
-      background: at(palette.background)?,
-      foreground: at(palette.foreground)?,
-      muted: at(palette.muted_foreground)?,
-      card: at(palette.card)?,
-      primary: at(palette.primary)?,
-      ink: at(palette.primary_foreground)?,
-      success: at(palette.success)?,
-      destructive: at(palette.destructive)?,
-      bands: [band(HOVER_SHARE)?, band(PRESS_SHARE)?],
+      depth,
+      background: at(palette.background),
+      foreground: at(palette.foreground),
+      muted: at(palette.muted_foreground),
+      card: at(palette.card),
+      primary: accent(palette.primary, Color::Yellow),
+      ink: at(palette.primary_foreground),
+      success: accent(palette.success, Color::Green),
+      destructive: accent(palette.destructive, Color::Red),
+      selection: at(selection),
+      inks,
+      fills,
+      bands: [
+        (hover.0, at(palette.hover)),
+        (
+          press.0,
+          at(mix(palette.background, palette.foreground, press.1)),
+        ),
+      ],
       light_fills: [
-        at(palette.primary)?,
-        at(palette.success)?,
-        at(palette.destructive)?,
+        at(palette.primary),
+        at(palette.success),
+        at(palette.destructive),
       ],
     })
   }
 
-  /// The theme colour standing for nsh's accent `color`, if it is one.
-  fn accent(&self, color: Color) -> Option<Color> {
+  /// The theme colour standing for nsh's accent `color` as a fill, if it is one.
+  fn accent_fill(&self, color: Color) -> Option<Color> {
     match color {
-      Color::Yellow | Color::LightYellow => Some(self.primary),
+      Color::Yellow | Color::LightYellow | Color::Blue | Color::LightBlue => Some(self.primary),
       Color::Green | Color::LightGreen => Some(self.success),
       Color::Red | Color::LightRed => Some(self.destructive),
       _ => None,
     }
   }
 
+  /// The tone of `channel`, plain or marked.
+  fn ink_of(&self, channel: Channel, marked: bool) -> Option<(usize, Color)> {
+    INKS
+      .iter()
+      .position(|spec| spec.channel == channel && spec.marked == marked)
+      .map(|at| (at, self.inks[at]))
+  }
+
   /// Pins one cell's colours.
   pub fn cell(&self, cell: &mut Cell) {
+    match self.depth {
+      ColorDepth::TrueColor | ColorDepth::Ansi256 => self.exact_cell(cell),
+      ColorDepth::Ansi16 => self.sixteen_cell(cell),
+      _ => self.mono_cell(cell),
+    }
+  }
+
+  fn exact_cell(&self, cell: &mut Cell) {
+    let marked = cell.modifier.contains(Modifier::ITALIC);
+    // nsh's focus band (a focused field's row: reversed in its blue accent) reads as a
+    // second primary button; the design's focus is the field's heavy amber frame, so the
+    // band becomes the cursor's selection band under plain text.
+    if !marked
+      && matches!(cell.fg, Color::Blue | Color::LightBlue)
+      && cell.modifier.contains(Modifier::REVERSED)
+    {
+      cell.modifier.remove(Modifier::REVERSED);
+      cell.fg = self.foreground;
+      cell.bg = self.selection;
+      return;
+    }
     let bg = match cell.bg {
       Color::Reset => self.background,
       Color::DarkGray => self.card,
-      other => self.accent(other).unwrap_or_else(|| {
+      other => self.accent_fill(other).unwrap_or_else(|| {
         self
-          .bands
+          .fills
           .iter()
+          .chain(&self.bands)
           .find(|(from, _)| *from == other)
           .map_or(other, |(_, to)| *to)
       }),
     };
-    let fg = match cell.fg {
-      Color::Reset if cell.modifier.contains(Modifier::DIM) => {
+    let dim = cell.modifier.contains(Modifier::DIM);
+    let fg = match channel(cell.fg, dim) {
+      Some(channel) if marked => match self.ink_of(channel, true) {
+        Some((_, color)) => {
+          cell.modifier.remove(Modifier::ITALIC | Modifier::DIM);
+          color
+        }
+        None => cell.fg,
+      },
+      Some(Channel::Muted) => {
         cell.modifier.remove(Modifier::DIM);
         self.muted
       }
       // The default text on an accent fill (a primary button's label): nsh leaves it
       // to the terminal's foreground, the design draws it in the dark ink.
-      Color::Reset
+      Some(Channel::Default)
         if !cell.modifier.contains(Modifier::REVERSED) && self.light_fills.contains(&bg) =>
       {
         self.ink
       }
-      Color::Reset => self.foreground,
-      other => self.accent(other).unwrap_or(other),
+      Some(Channel::Default) => self.foreground,
+      // nsh's own focus marks: the brand accent.
+      Some(Channel::Blue) => self.primary,
+      Some(channel) => self
+        .ink_of(channel, false)
+        .map_or(cell.fg, |(_, color)| color),
+      None => cell.fg,
     };
     cell.bg = bg;
     cell.fg = fg;
+  }
+
+  fn sixteen_cell(&self, cell: &mut Cell) {
+    let marked = cell.modifier.contains(Modifier::ITALIC);
+    if let Some((_, spec)) = self
+      .fills
+      .iter()
+      .zip(FILLS)
+      .find(|((from, _), _)| *from == cell.bg)
+    {
+      cell.bg = Color::Reset;
+      if spec.ansi16 == Fill16::Reverse {
+        cell.modifier.insert(Modifier::REVERSED);
+      }
+    }
+    if matches!(cell.bg, Color::Blue | Color::LightBlue) {
+      cell.bg = Color::Yellow;
+    }
+    let dim = cell.modifier.contains(Modifier::DIM);
+    let Some(channel) = channel(cell.fg, dim) else {
+      return;
+    };
+    if marked {
+      if let Some((at, color)) = self.ink_of(channel, true) {
+        cell.modifier.remove(Modifier::ITALIC);
+        if INKS[at].channel != Channel::Muted {
+          cell.modifier.remove(Modifier::DIM);
+          cell.fg = color;
+        }
+      }
+      return;
+    }
+    match channel {
+      // A small box of a carrier fill that nsh drew as a reversed band of the carrier's hue
+      // (a key cap): reverse video in the terminal's own colours.
+      Channel::Cyan | Channel::Magenta if cell.modifier.contains(Modifier::REVERSED) => {
+        cell.fg = Color::Reset;
+      }
+      Channel::Blue => cell.fg = Color::Yellow,
+      Channel::Cyan | Channel::Magenta => {
+        if let Some((_, color)) = self.ink_of(channel, false) {
+          cell.fg = color;
+        }
+      }
+      _ => {}
+    }
+  }
+
+  fn mono_cell(&self, cell: &mut Cell) {
+    // Colours are gone (nsh strips them); a marked tone still says it is one of the
+    // design's faint lines, outlines or disabled texts, which are never bold (nsh makes its
+    // blue accent bold in monochrome, and the blue channel carries `line-soft`).
+    if cell.modifier.contains(Modifier::ITALIC) {
+      cell.modifier.remove(Modifier::ITALIC | Modifier::BOLD);
+      cell.modifier.insert(Modifier::DIM);
+    }
   }
 
   /// Pins every cell of `buffer`.
@@ -211,6 +398,37 @@ impl Pin {
   pub fn ink(&self) -> Color {
     self.ink
   }
+}
+
+/// The accent nsh 0.6.1 reads a saturated colour as (its `HUE_BANDS`: hue upper bounds in
+/// degrees).
+pub fn hue_band(rgb: Rgb) -> Color {
+  const BANDS: [(f32, Color); 6] = [
+    (15.0, Color::Red),
+    (75.0, Color::Yellow),
+    (165.0, Color::Green),
+    (200.0, Color::Cyan),
+    (265.0, Color::Blue),
+    (335.0, Color::Magenta),
+  ];
+  let [r, g, b] = rgb.map(f32::from);
+  let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+  if max <= min {
+    return Color::Reset;
+  }
+  let chroma = max - min;
+  let sector = if max == r {
+    ((g - b) / chroma).rem_euclid(6.0)
+  } else if max == g {
+    (b - r) / chroma + 2.0
+  } else {
+    (r - g) / chroma + 4.0
+  };
+  let hue = sector * 60.0;
+  BANDS
+    .iter()
+    .find(|(bound, _)| hue < *bound)
+    .map_or(Color::Red, |(_, color)| *color)
 }
 
 /// `from` moved toward `to` by `share`, per channel, rounded as nsh rounds its bands.
@@ -278,24 +496,51 @@ fn distance(a: Rgb, b: Rgb) -> f32 {
 
 #[cfg(test)]
 mod tests {
+  use coffee_app::ui::theme::Tone;
+
   use super::*;
 
   fn palette() -> Palette {
     Palette::app().unwrap()
   }
 
-  fn cell(fg: Color, bg: Color, modifier: Modifier) -> Cell {
+  fn pin(depth: ColorDepth) -> Pin {
+    Pin::new(palette(), depth).unwrap()
+  }
+
+  fn pinned(pin: &Pin, fg: Color, bg: Color, modifier: Modifier) -> Cell {
     let mut cell = Cell::new("x");
     cell.fg = fg;
     cell.bg = bg;
     cell.modifier = modifier;
+    pin.cell(&mut cell);
     cell
   }
 
-  fn pinned(pin: &Pin, fg: Color, bg: Color, modifier: Modifier) -> Cell {
-    let mut cell = cell(fg, bg, modifier);
-    pin.cell(&mut cell);
-    cell
+  fn rgb(hex: u32) -> Color {
+    Color::Rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
+  }
+
+  /// What nsh draws a tone's carrier as: its channel's meaning, italic when marked.
+  fn carrier(tone: Tone) -> (Color, Modifier) {
+    let spec = tone.spec();
+    let fg = match spec.channel {
+      Channel::Default | Channel::Muted => Color::Reset,
+      Channel::Yellow => Color::Yellow,
+      Channel::Green => Color::Green,
+      Channel::Red => Color::Red,
+      Channel::Cyan => Color::Cyan,
+      Channel::Blue => Color::Blue,
+      Channel::Magenta => Color::Magenta,
+    };
+    let mut modifier = Modifier::empty();
+    if spec.channel == Channel::Muted {
+      modifier |= Modifier::DIM;
+    }
+    if spec.marked {
+      modifier |= Modifier::ITALIC;
+    }
+    (fg, modifier)
   }
 
   #[test]
@@ -309,6 +554,13 @@ mod tests {
     assert_eq!(palette.primary_foreground, [0x1a, 0x14, 0x0d]);
     assert_eq!(palette.success, [0x8c, 0xc7, 0xa1]);
     assert_eq!(palette.destructive, [0xf0, 0x8a, 0x6c]);
+    assert_eq!(palette.hover, [0x24, 0x20, 0x1c]);
+    assert_eq!(palette.ink("line-strong"), Some([0x4a, 0x40, 0x36]));
+    assert_eq!(palette.ink("dim"), Some([0x5a, 0x4d, 0x3f]));
+    assert_eq!(palette.ink("disabled"), Some([0x7d, 0x72, 0x64]));
+    assert_eq!(palette.ink("success-border"), Some([0x3e, 0x5a, 0x48]));
+    assert_eq!(palette.ink("destructive-border"), Some([0x6b, 0x44, 0x36]));
+    assert_eq!(palette.ink("border"), Some([0x3b, 0x33, 0x2a]));
   }
 
   #[test]
@@ -321,90 +573,87 @@ mod tests {
   }
 
   #[test]
-  fn true_color_restores_the_exact_tokens() {
-    let pin = Pin::new(palette(), ColorDepth::TrueColor).unwrap();
-    let none = Modifier::empty();
-    let text = pinned(&pin, Color::Reset, Color::Reset, none);
-    assert_eq!(
-      (text.fg, text.bg),
-      (Color::Rgb(0xec, 0xe4, 0xd6), Color::Rgb(0x14, 0x11, 0x0e))
-    );
-    let amber = pinned(&pin, Color::Yellow, Color::Reset, none);
-    assert_eq!(amber.fg, Color::Rgb(0xf0, 0xb4, 0x5a));
-    let mint = pinned(&pin, Color::Green, Color::Reset, none);
-    assert_eq!(mint.fg, Color::Rgb(0x8c, 0xc7, 0xa1));
-    let coral = pinned(&pin, Color::LightRed, Color::Reset, none);
-    assert_eq!(coral.fg, Color::Rgb(0xf0, 0x8a, 0x6c));
-    let muted = pinned(
-      &pin,
-      Color::Reset,
-      Color::Reset,
-      Modifier::DIM | Modifier::BOLD,
-    );
-    assert_eq!(muted.fg, Color::Rgb(0xa3, 0x96, 0x84));
-    assert_eq!(
-      muted.modifier,
-      Modifier::BOLD,
-      "DIM gives way to the exact colour"
-    );
-    let card = pinned(&pin, Color::Reset, Color::DarkGray, none);
-    assert_eq!(card.bg, Color::Rgb(0x1b, 0x17, 0x13));
-    assert_eq!(card.fg, Color::Rgb(0xec, 0xe4, 0xd6));
+  fn true_color_restores_every_tone_exactly() {
+    let pin = pin(ColorDepth::TrueColor);
+    for (spec, [r, g, b]) in INKS.iter().zip(palette().inks) {
+      if spec.tone == Tone::Ink {
+        continue;
+      }
+      let (fg, modifier) = carrier(spec.tone);
+      let cell = pinned(&pin, fg, Color::Reset, modifier | Modifier::BOLD);
+      assert_eq!(cell.fg, Color::Rgb(r, g, b), "{:?}", spec.tone);
+      assert_eq!(cell.bg, rgb(0x14110e), "{:?}", spec.tone);
+      assert_eq!(
+        cell.modifier,
+        Modifier::BOLD,
+        "{:?}: no mark, no DIM",
+        spec.tone
+      );
+    }
   }
 
   #[test]
-  fn a_label_on_an_amber_fill_takes_the_dark_ink() {
-    let pin = Pin::new(palette(), ColorDepth::TrueColor).unwrap();
-    // nsh draws a primary button's opaque fill as its exact RGB, its label as Reset.
-    let button = pinned(
-      &pin,
-      Color::Reset,
-      Color::Rgb(240, 180, 90),
-      Modifier::empty(),
-    );
-    assert_eq!(button.bg, Color::Rgb(240, 180, 90));
-    assert_eq!(button.fg, Color::Rgb(0x1a, 0x14, 0x0d));
-    // Reversed text keeps the foreground: the terminal swaps the pinned pair.
-    let selected = pinned(&pin, Color::Reset, Color::Reset, Modifier::REVERSED);
-    assert_eq!(selected.fg, Color::Rgb(0xec, 0xe4, 0xd6));
-    assert_eq!(selected.modifier, Modifier::REVERSED);
-  }
-
-  #[test]
-  fn hover_and_press_bands_follow_the_theme() {
-    let pin = Pin::new(palette(), ColorDepth::TrueColor).unwrap();
-    let palette = palette();
+  fn carrier_fills_and_bands_become_their_tokens() {
+    let pin = pin(ColorDepth::TrueColor);
+    let kbd = pinned(&pin, Color::Reset, rgb(0x008787), Modifier::BOLD);
+    assert_eq!((kbd.fg, kbd.bg), (rgb(0xece4d6), rgb(0x221d18)));
+    let selection = pinned(&pin, Color::Yellow, rgb(0x870087), Modifier::BOLD);
+    assert_eq!((selection.fg, selection.bg), (rgb(0xf0b45a), rgb(0x30271a)));
+    let card = pinned(&pin, Color::Reset, Color::DarkGray, Modifier::empty());
+    assert_eq!((card.fg, card.bg), (rgb(0xece4d6), rgb(0x1b1713)));
+    // nsh's bandless hover band is the design's `hover`.
     let hover = pinned(
       &pin,
       Color::Reset,
       Color::Rgb(26, 26, 26),
       Modifier::empty(),
     );
-    let [r, g, b] = mix(palette.background, palette.foreground, HOVER_SHARE);
-    assert_eq!(hover.bg, Color::Rgb(r, g, b));
+    assert_eq!(hover.bg, rgb(0x24201c));
     let press = pinned(
       &pin,
       Color::Reset,
       Color::Rgb(46, 46, 46),
       Modifier::empty(),
     );
-    let [r, g, b] = mix(palette.background, palette.foreground, PRESS_SHARE);
+    let [r, g, b] = mix(palette().background, palette().foreground, PRESS_SHARE);
     assert_eq!(press.bg, Color::Rgb(r, g, b));
   }
 
   #[test]
-  fn other_colors_pass_through() {
-    let pin = Pin::new(palette(), ColorDepth::TrueColor).unwrap();
-    for color in [
-      Color::Rgb(1, 2, 3),
-      Color::Indexed(42),
+  fn a_label_on_an_accent_fill_takes_the_dark_ink() {
+    let pin = pin(ColorDepth::TrueColor);
+    let button = pinned(&pin, Color::Reset, rgb(0xf0b45a), Modifier::empty());
+    assert_eq!((button.fg, button.bg), (rgb(0x1a140d), rgb(0xf0b45a)));
+    let mint = pinned(&pin, Color::Reset, rgb(0x8cc7a1), Modifier::empty());
+    assert_eq!(mint.fg, rgb(0x1a140d));
+    // Reversed text keeps the foreground: the terminal swaps the pinned pair.
+    let selected = pinned(&pin, Color::Reset, Color::Reset, Modifier::REVERSED);
+    assert_eq!(selected.fg, rgb(0xece4d6));
+    assert_eq!(selected.modifier, Modifier::REVERSED);
+  }
+
+  #[test]
+  fn nsh_focus_marks_take_the_brand_accent() {
+    let pin = pin(ColorDepth::TrueColor);
+    let mark = pinned(&pin, Color::Blue, Color::Reset, Modifier::BOLD);
+    assert_eq!(mark.fg, rgb(0xf0b45a));
+    // A focused field's reversed blue band becomes plain text on the selection band.
+    let band = pinned(
+      &pin,
       Color::Blue,
-      Color::Cyan,
-      Color::Magenta,
-    ] {
-      let cell = pinned(&pin, color, color, Modifier::ITALIC);
+      Color::Reset,
+      Modifier::REVERSED | Modifier::UNDERLINED,
+    );
+    assert_eq!((band.fg, band.bg), (rgb(0xece4d6), rgb(0x30271a)));
+    assert_eq!(band.modifier, Modifier::UNDERLINED);
+  }
+
+  #[test]
+  fn other_colors_pass_through() {
+    let pin = pin(ColorDepth::TrueColor);
+    for color in [Color::Rgb(1, 2, 3), Color::Indexed(42), Color::Gray] {
+      let cell = pinned(&pin, color, color, Modifier::empty());
       assert_eq!((cell.fg, cell.bg), (color, color));
-      assert_eq!(cell.modifier, Modifier::ITALIC);
     }
     let dim_accent = pinned(&pin, Color::Yellow, Color::Reset, Modifier::DIM);
     assert_eq!(
@@ -416,21 +665,36 @@ mod tests {
 
   #[test]
   fn ansi256_takes_the_nearest_cube_and_ramp_entries() {
-    let pin = Pin::new(palette(), ColorDepth::Ansi256).unwrap();
+    let pin = pin(ColorDepth::Ansi256);
     let amber = pinned(&pin, Color::Yellow, Color::Reset, Modifier::empty());
-    // #f0b45a → (255, 175, 95), xterm 215.
-    assert_eq!(amber.fg, Color::Indexed(215));
+    // #f0b45a → (255, 175, 95), xterm 215; #14110e → (18, 18, 18), xterm 233.
+    assert_eq!(
+      (amber.fg, amber.bg),
+      (Color::Indexed(215), Color::Indexed(233))
+    );
     assert_eq!(xterm_rgb(215), [255, 175, 95]);
-    // #14110e → the gray ramp's (18, 18, 18), xterm 233.
-    assert_eq!(amber.bg, Color::Indexed(233));
-    let mint = pinned(&pin, Color::Green, Color::Reset, Modifier::empty());
-    // #8cc7a1 → (135, 215, 175), xterm 115.
-    assert_eq!(mint.fg, Color::Indexed(115));
-    for (fg, bg) in [(amber.fg, amber.bg), (mint.fg, mint.bg)] {
-      for color in [fg, bg] {
-        assert!(matches!(color, Color::Indexed(16..=255)), "{color:?}");
+    for (spec, value) in INKS.iter().zip(palette().inks) {
+      if spec.tone == Tone::Ink {
+        continue;
       }
+      let (fg, modifier) = carrier(spec.tone);
+      let cell = pinned(&pin, fg, Color::Reset, modifier);
+      assert_eq!(
+        cell.fg,
+        Color::Indexed(nearest_256(value)),
+        "{:?}",
+        spec.tone
+      );
+      assert!(
+        matches!(cell.fg, Color::Indexed(16..=255)),
+        "{:?}",
+        spec.tone
+      );
     }
+    // A carrier fill: nsh draws the exact cube entry of the carrier.
+    let carrier_kbd = Color::Indexed(nearest_256([0, 135, 135]));
+    let kbd = pinned(&pin, Color::Reset, carrier_kbd, Modifier::empty());
+    assert_eq!(kbd.bg, Color::Indexed(nearest_256([0x22, 0x1d, 0x18])));
   }
 
   #[test]
@@ -457,22 +721,84 @@ mod tests {
   }
 
   #[test]
-  fn sixteen_colors_and_mono_stay_the_terminals() {
-    assert!(Pin::new(palette(), ColorDepth::Ansi16).is_none());
-    assert!(Pin::new(palette(), ColorDepth::Monochrome).is_none());
+  fn sixteen_colors_map_the_carriers_to_their_roles() {
+    let pin = pin(ColorDepth::Ansi16);
+    for spec in INKS {
+      if matches!(spec.tone, Tone::Ink | Tone::Mute | Tone::Placeholder) {
+        continue;
+      }
+      let (fg, modifier) = carrier(spec.tone);
+      let cell = pinned(&pin, fg, Color::Reset, modifier);
+      assert_eq!(cell.fg, ansi16(spec.ansi16), "{:?}", spec.tone);
+      assert!(!cell.modifier.contains(Modifier::ITALIC), "{:?}", spec.tone);
+    }
+    // Muted tones keep nsh's DIM; the placeholder loses only its mark.
+    let placeholder = pinned(
+      &pin,
+      Color::Reset,
+      Color::Reset,
+      Modifier::DIM | Modifier::ITALIC,
+    );
+    assert_eq!(
+      (placeholder.fg, placeholder.modifier),
+      (Color::Reset, Modifier::DIM)
+    );
+    // A key cap nsh drew as a reversed band of the carrier's hue: plain reverse video.
+    let cap = pinned(&pin, Color::Cyan, Color::Reset, Modifier::REVERSED);
+    assert_eq!((cap.fg, cap.modifier), (Color::Reset, Modifier::REVERSED));
+    // The selection band behind hued text: no fill.
+    let row = pinned(&pin, Color::Yellow, Color::Magenta, Modifier::BOLD);
+    assert_eq!((row.fg, row.bg), (Color::Yellow, Color::Reset));
+    // A key cap's fill behind hued text: reverse video.
+    let kbd = pinned(&pin, Color::Yellow, Color::Cyan, Modifier::empty());
+    assert_eq!(kbd.bg, Color::Reset);
+    assert!(kbd.modifier.contains(Modifier::REVERSED));
+    // nsh's focus blue is the amber.
+    let focus = pinned(&pin, Color::Blue, Color::Reset, Modifier::empty());
+    assert_eq!(focus.fg, Color::Yellow);
+    // The standard meanings stay the terminal's.
+    let amber = pinned(&pin, Color::Yellow, Color::Reset, Modifier::empty());
+    assert_eq!((amber.fg, amber.bg), (Color::Yellow, Color::Reset));
+  }
+
+  #[test]
+  fn monochrome_turns_marks_into_dim() {
+    let pin = pin(ColorDepth::Monochrome);
+    let line = pinned(
+      &pin,
+      Color::Reset,
+      Color::Reset,
+      Modifier::ITALIC | Modifier::CROSSED_OUT,
+    );
+    assert_eq!(line.modifier, Modifier::DIM | Modifier::CROSSED_OUT);
+    let bold = pinned(
+      &pin,
+      Color::Reset,
+      Color::Reset,
+      Modifier::ITALIC | Modifier::BOLD,
+    );
+    assert_eq!(bold.modifier, Modifier::DIM, "a marked tone is never bold");
+    let plain = pinned(&pin, Color::Reset, Color::Reset, Modifier::REVERSED);
+    assert_eq!(plain.modifier, Modifier::REVERSED);
+  }
+
+  #[test]
+  fn hue_bands_follow_nsh() {
+    assert_eq!(hue_band([0, 135, 135]), Color::Cyan);
+    assert_eq!(hue_band([135, 0, 135]), Color::Magenta);
+    assert_eq!(hue_band([0xf0, 0xb4, 0x5a]), Color::Yellow);
+    assert_eq!(hue_band([0xf0, 0x8a, 0x6c]), Color::Red);
+    assert_eq!(hue_band([0x8c, 0xc7, 0xa1]), Color::Green);
+    assert_eq!(hue_band([0, 0x87, 0xff]), Color::Blue);
+    assert_eq!(hue_band([9, 9, 9]), Color::Reset);
   }
 
   #[test]
   fn a_whole_buffer_is_pinned() {
     use ratatui_core::layout::Rect;
-    let pin = Pin::new(palette(), ColorDepth::TrueColor).unwrap();
+    let pin = pin(ColorDepth::TrueColor);
     let mut buffer = Buffer::empty(Rect::new(0, 0, 3, 2));
     pin.buffer(&mut buffer);
-    assert!(
-      buffer
-        .content
-        .iter()
-        .all(|cell| cell.bg == Color::Rgb(0x14, 0x11, 0x0e))
-    );
+    assert!(buffer.content.iter().all(|cell| cell.bg == rgb(0x14110e)));
   }
 }

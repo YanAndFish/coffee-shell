@@ -46,11 +46,13 @@ pub mod ui;
 use std::sync::OnceLock;
 
 use nsh_core::prelude::*;
+pub use ui::gallery::UiGallery;
 
 /// What a TSX entry may import from `coffee-app/native`; also makes `pub fn registry()`.
 #[native_module("coffee-app/native")]
 fn native(registry: &mut Registry) {
   registry.register::<App>();
+  registry.register::<UiGallery>();
 }
 
 /// The settings of the one SSH session this process serves.
