@@ -165,8 +165,19 @@ pub fn receipt_ship_to(order: &Order) -> String {
   )
 }
 
-/// The receipt's demo notice (D7).
+/// The receipt's demo notice (D7), also over the checkout button.
 pub const DEMO_ORDER: &str = "! 演示订单 · 没有真实扣款，也不会发货";
+
+/// [`DEMO_ORDER`] in `cells` columns: one row when it fits (37 cells), else broken after
+/// the comma with the second row under the text (the L and M checkout columns, 34 and 30
+/// wide): never cut, the notice is the point.
+pub fn demo_order_rows(cells: usize) -> &'static [&'static str] {
+  if display_width(DEMO_ORDER) <= cells {
+    &[DEMO_ORDER]
+  } else {
+    &["! 演示订单 · 没有真实扣款，", "  也不会发货"]
+  }
+}
 
 /// The address block's words without an address: a guest's, a member's without one.
 pub const GUEST_ADDRESS: &str = "登录后选择收货地址";
@@ -192,6 +203,18 @@ mod tests {
     include_str!("../../../../../packages/contract/fixtures/v1/cart/cart-problem.json");
   const PLACED: &str =
     include_str!("../../../../../packages/contract/fixtures/v1/orders/placed.json");
+
+  #[test]
+  fn the_demo_notice_breaks_after_the_comma() {
+    assert_eq!(demo_order_rows(39), [DEMO_ORDER]);
+    assert_eq!(demo_order_rows(37), [DEMO_ORDER]);
+    for cells in [30, 34, 36] {
+      let rows = demo_order_rows(cells);
+      assert_eq!(rows.len(), 2);
+      assert!(rows.iter().all(|row| display_width(row) <= cells));
+      assert_eq!(rows.concat().replace("，  ", "，"), DEMO_ORDER);
+    }
+  }
 
   #[test]
   fn rows_read_as_the_mock() {
