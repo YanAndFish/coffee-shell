@@ -388,6 +388,8 @@ test('a problem line says why, and the checkout is refused with the server\'s re
   await app.keyboard.press('2')
   await app.waitFor('text:结算 CHECKOUT')
   await waitForPart(app, '! 库存不足 · 仅剩 2 份')
+  // An error reads by its `!` and bold, not by its colour alone (monochrome, 16 colours).
+  expect(app.spanStyle('text:! 库存不足 · 仅剩 2 份').fontWeight).toBe(700)
   await app.keyboard.press('c')
   await app.waitFor('text:下单失败')
   expect(shows(app, '波奎特 瑰夏 库存不足，购物车没有变化')).toBe(true)

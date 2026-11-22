@@ -214,7 +214,7 @@ fn address(stores: Stores, one_row: bool) -> View {
         let ship = ship.get();
         untracked(|| match ship {
           ShipTo::Guest => label(copy::GUEST_ADDRESS, Tone::Mute).into_element(),
-          ShipTo::Nowhere => label(copy::NO_ADDRESS, Tone::Danger)
+          ShipTo::Nowhere => strong(copy::NO_ADDRESS, Tone::Danger)
             .truncate()
             .into_element(),
           ShipTo::Address(address) => {
@@ -342,7 +342,7 @@ pub fn compact(stores: Stores, shape: Shape) -> View {
             let ship = ship.get();
             untracked(|| match ship {
               ShipTo::Guest => label(copy::GUEST_ADDRESS, Tone::Mute).truncate(),
-              ShipTo::Nowhere => label(copy::NO_ADDRESS, Tone::Danger).truncate(),
+              ShipTo::Nowhere => strong(copy::NO_ADDRESS, Tone::Danger).truncate(),
               ShipTo::Address(address) => {
                 label(copy::ship_to_line(&address), Tone::Soft).truncate()
               }
