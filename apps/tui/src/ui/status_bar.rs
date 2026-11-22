@@ -4,14 +4,14 @@
 //!  选购 BROWSE  ↑↓ 移动  ⏎ 详情  t 重试        演示环境 · 不是真实商店   ? 帮助
 //! ```
 //!
-//! The mode block in bold `acc` on the key-cap band, then the page's key hints (each
-//! pressable, as the key), then the persistent demo notice and the help hint.
+//! The mode block (`ink` bold on an `acc` fill), then the page's key hints (each pressable,
+//! as the key), then the persistent demo notice and the help hint.
 //!
-//! The design draws the mode as `ink` on an `acc` fill. nsh's terminal backend maps a dark
-//! neutral text colour such as `ink` to the terminal's own foreground, which is light on a
-//! dark terminal: light on amber does not read. So the block keeps the brand colour on the
-//! text and stands on the neutral band instead. It owns the bottom row:
-//! nsh's own toasts and search line would draw there, so the app never uses them.
+//! nsh draws the label in the terminal's default text colour; `coffee-host` pins default
+//! text on an amber fill to `ink` (truecolor `#1a140d` on `#f0b45a`, 256 colours 233 on
+//! 215), and nsh draws the fill reversed at 16 colours and in mono, so it reads at every
+//! colour depth. The bar owns the bottom row: nsh's own toasts and search line would draw
+//! there, so the app never uses them.
 
 use nsh_core::{element::AccessibilityRole, prelude::*};
 
@@ -70,12 +70,12 @@ pub fn status_bar(
     .items_center()
     .bg(theme::surface)
     .child(
-      view().flex_none().px_2().bg(theme::kbd_bg).child(
+      view().flex_none().px_2().bg(theme::acc).child(
         text(move || {
           let mode = mode.get();
           SharedString::from(format!("{} {}", mode.zh, mode.en))
         })
-        .text_color(theme::acc)
+        .text_color(theme::ink)
         .font_weight(FontWeight::BOLD),
       ),
     )

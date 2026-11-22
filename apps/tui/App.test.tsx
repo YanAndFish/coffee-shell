@@ -65,6 +65,22 @@ async function screenRows(app: Awaited<ReturnType<typeof start>>): Promise<strin
   })
 }
 
+interface Cell { symbol: string, fg: string, bg: string, modifiers: string[] }
+
+/** The in-memory terminal's cells, row by row; `null` headless, where nothing is drawn. */
+async function screenCells(app: Awaited<ReturnType<typeof start>>): Promise<Cell[][] | null> {
+  let bytes: Uint8Array
+  try {
+    bytes = await app.screenshot()
+  }
+  catch {
+    return null
+  }
+  if (bytes.length === 0)
+    return null
+  return (JSON.parse(new TextDecoder().decode(bytes)) as { rows: Cell[][] }).rows
+}
+
 /** The product name right after the `▶` cursor. */
 function cursorRow(texts: string[]) {
   return texts[texts.indexOf('▶') + 1]
@@ -101,6 +117,28 @@ test('160×50: the whole catalog, every column', async () => {
   expect(texts).toContain('¥98')
   expect(texts).toContain('●○○○○')
   expect(cursorRow(texts)).toBe('耶加雪菲 孔加 [新产季]')
+})
+
+test('the status bar\'s mode block is a filled pill: ink on amber, bold', async () => {
+  const app = await start(100, 30)
+  await app.waitFor('text:商品列表 · 8 款')
+  const cells = await screenCells(app)
+  if (!cells)
+    return
+  // nsh keeps an opaque accent fill as its exact colour and leaves the label in the
+  // terminal's default text colour; coffee-host pins default text on that fill to `ink`
+  // (crates/coffee-host/src/palette.rs), and draws it reversed at 16 colours and in mono.
+  const bottom = cells[cells.length - 1]
+  // ` 选购 BROWSE `: a cell of padding each side; 选 and 购 take two cells (the second blank).
+  const block = bottom.slice(0, 13)
+  expect(block.map(cell => cell.symbol).join('')).toBe(' 选 购  BROWSE ')
+  for (const cell of block)
+    expect(cell.bg).toBe('#f0b45a')
+  for (const cell of block.filter(cell => cell.symbol.trim() !== '')) {
+    expect(cell.fg).toBe('reset')
+    expect(cell.modifiers).toContain('bold')
+  }
+  expect(bottom[13].bg).not.toBe('#f0b45a')
 })
 
 test('100×30: no score column, one-line rows', async () => {
