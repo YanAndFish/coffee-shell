@@ -10,12 +10,15 @@ against the fixtures they generate, so drift fails a test on one side or the oth
 
 ## 1. Contract (`packages/contract`)
 
-1. Add/extend the zod schemas for the request and response in `packages/contract/src/`. Money is integer fen or a
-   decimal string as the existing schemas do - follow them; the server computes all amounts.
-   <!-- TODO(integration): confirm money representation and schema file layout -->
-2. Register the route (method, path under `/v1`, schemas) so it appears in `openapi.json`.
-3. Add example values and regenerate: `pnpm --filter @coffee/contract generate` writes `openapi.json` and
-   `fixtures/v1/<name>.json`. Commit both. <!-- TODO(integration): confirm the script name -->
+1. One module per area: `packages/contract/src/<area>.ts` (see `products.ts`). Schemas are `FooSchema` with
+   `export type Foo = z.infer<typeof FooSchema>`, objects are `z.strictObject`. Money is **integer yuan**
+   (`price250: z.int().nonnegative()`); the server computes all amounts.
+2. Export `<area>Components` (named schemas) and `<area>Endpoints = defineEndpoints([...])` (method, path under
+   `/v1`, request/success schemas), and append both to the lists in `src/api.ts` so they reach `openapi.json`.
+3. Add example values in `src/examples/<area>.ts` and regenerate: `pnpm --filter @coffee/contract generate` writes
+   `openapi.json` and `fixtures/v1/<name>.json`. Commit both; `pnpm --filter @coffee/contract check:generated`
+   fails when they are stale. (pnpm 12 runs one script per `pnpm --filter <pkg> <script>`: chain separate
+   commands with `&&`.)
 4. Errors use the shared error shape (`fixtures/v1/error.json`).
 
 ## 2. Rust DTO (`crates/coffee-api`)
@@ -33,15 +36,21 @@ against the fixtures they generate, so drift fails a test on one side or the oth
    are refused. The server listens on `HOST`/`PORT` (127.0.0.1:3000) only.
 3. Money rules live here only: unit price = round(base × {0.45, 1, 1.9, 3.6}) + packaging (0/20); quantity 1–9 and
    ≤ stock; `TTY10` = 10 % off; shipping ¥12, free from ¥199 after discount; checkout is one transaction.
-4. Prisma changes: edit `prisma/schema.prisma`, then `pnpm --filter @coffee/server db:migrate` and update the seed
-   (`db:seed`). `db:reset` rebuilds from scratch. Runtime data lives in `.data/` (git-ignored).
-5. A vitest test calls the route and parses the real response with the contract schema.
+4. Prisma (7.9.1) changes: edit `prisma/schema.prisma`, add a migration under `prisma/migrations/`, update the
+   seed (`prisma/seed.ts`); `pnpm --filter @coffee/server db:migrate` (= `prisma migrate deploy`) and `db:seed`
+   apply them, and `pnpm dev` runs both on every start. The database is `apps/server/.data/coffee.db`
+   (git-ignored; `DATABASE_URL=file:...` overrides). **`db:reset` is for humans only**: Prisma refuses
+   `migrate reset` when an AI agent runs it - never work around that guard; ask the user to run it.
+5. A vitest test (`apps/server/test/routes.test.ts`, helpers in `test/helpers.ts`) calls the route and parses
+   the real response with the contract schema.
 
 ## 4. TUI client (`apps/tui/src/api`, `apps/tui/src/stores`)
 
-1. Add a client function returning the `coffee_api` DTO; it sends `X-Internal-Key` from `session_env()`.
-2. Call it from a store method; expose results as signals with explicit loading/error states.
-3. Tests use a stubbed network answering with the fixture.
+1. Add a request through `api::ApiClient` (it sends `X-Internal-Key` from `session_env()` and decodes into the
+   `coffee_api` DTO with `api::decode`); the store's `SessionStore` holds the client.
+2. Call it from a store method; expose results as signals with explicit loading/empty/error states.
+3. Add the fixture to `apps/tui/src/api/fixtures.rs` so the fixture transport (`COFFEE_API_URL=fixture:`, and the
+   tests' default) answers it; tests then run against the committed fixtures.
 
 ## 5. Verify
 

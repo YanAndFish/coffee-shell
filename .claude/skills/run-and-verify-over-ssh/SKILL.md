@@ -9,24 +9,31 @@ description: Run the whole ROAST/TTY demo locally (backend + coffee-sshd + coffe
 
 ```sh
 pnpm install
-pnpm --filter @coffee/server db:reset     # first time: migrate + seed the 8 beans into .data/
-pnpm dev                                  # builds coffee-tui + coffee-sshd, starts backend + sshd
+pnpm dev        # builds coffee-tui + coffee-sshd, migrates + seeds the backend, starts backend + sshd
 ```
+
+The backend's `dev` script runs `prisma migrate deploy` and the (idempotent) seed on every start, so a fresh
+checkout needs no database step. `db:reset` is for humans only: Prisma refuses `migrate reset` from an AI agent.
 
 `pnpm dev` (`scripts/dev.mjs`) prints `✓ ready — connect with: ssh -p 2222 localhost` once the backend answers
 `/v1/health` and sshd listens. It fails with a clear message when a piece is missing (no `dev` script in
-`apps/server`, cargo build failure, port in use, sshd exiting). Ctrl+C stops both. `--skip-build` reuses the built
-binaries. Run it in the background for automation (`run_in_background`), then wait for the ready line.
+`apps/server`, cargo build failure, port in use, sshd exiting). Ctrl+C stops both. `pnpm dev --skip-build` reuses
+the built binaries. Run it in the background for automation (`run_in_background`), then wait for the ready line.
+Each session starts `target/debug/coffee-tui` afresh, so `cargo build -p coffee-host` is enough to try a TUI change
+without restarting `pnpm dev`.
 
-Environment it honours: `HOST`/`PORT` (backend), `COFFEE_SSH_ADDR` (127.0.0.1:2222), `COFFEE_SSH_HOST_KEY`
-(`.data/ssh_host_ed25519_key`), `COFFEE_COLORS`. The internal key is random per run and never printed.
-<!-- TODO(integration): confirm db:reset seeds, and that coffee-sshd reads exactly these variables -->
+Environment it sets or passes on: `HOST`/`PORT` (backend, 127.0.0.1:3000), `COFFEE_SSH_ADDR` (127.0.0.1:2222),
+`COFFEE_SSH_HOST_KEY` (`.data/ssh_host_ed25519_key`), and it gives sshd `COFFEE_TUI_BIN`, `COFFEE_API_URL` and a
+random per-run `COFFEE_INTERNAL_KEY` (never printed). Everything else in your environment reaches `coffee-sshd`
+too: `COFFEE_COLORS`, `COFFEE_SSH_MAX_SESSIONS`, `COFFEE_SSH_MAX_SESSIONS_PER_IP`, `COFFEE_SSH_IDLE_TIMEOUT`,
+`COFFEE_SSH_AUTH_TIMEOUT`, `COFFEE_SSH_LOG` (see `deploy/README.md`).
 
 ## 2. Connect by hand
 
-`pnpm ssh` (= `ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null localhost`). Try both with
-your key and without (`-o PubkeyAuthentication=no -o IdentitiesOnly=yes -o IdentityFile=/dev/null`): both must get in
-without a password.
+`pnpm ssh` (= `ssh -p 2222 -o SendEnv=COLORTERM -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+localhost`). Try both with your key and without (`-o PubkeyAuthentication=no -o IdentitiesOnly=yes`): both must get
+in without a password prompt, after the banner `◆ROAST/TTY 终端咖啡馆 / 演示环境 · 不是真实商店 ...`. Never touch
+`~/.ssh`. Quitting takes Ctrl+C **twice** (the first shows `再按一次 Ctrl+C 退出`).
 
 ## 3. Verify without a human: `scripts/pty-run.py`
 
@@ -47,14 +54,22 @@ python3 scripts/pty-run.py --size 60x20 --step 'until=终端太小' --step resiz
 python3 scripts/pty-run.py --size 100x30 --step 'until=选购' --step key=down*2 --step key=enter \
   --step wait=0.5 --step snap --step key=esc -- $SSH
 
-# Colour depths (exported to the session by sshd):
-python3 scripts/pty-run.py --size 100x30 --env COFFEE_COLORS=mono -- $SSH
+# Colour depth over SSH: the session gets 24-bit colour only from a forwarded COLORTERM
+# (pty-run sets COLORTERM=truecolor for its child unless --colorterm says otherwise):
+python3 scripts/pty-run.py --size 100x30 --raw /tmp/x.raw --step 'until=ROAST/TTY' \
+  -- pnpm ssh                      # sends COLORTERM; grep the raw bytes: 38;2; = truecolor, 38;5; = 256
+
+# Forcing a depth: sshd only forwards LANG, LC_* and COLORTERM from the client, so COFFEE_COLORS must be set on
+# the server (`COFFEE_COLORS=mono pnpm dev --skip-build`), or test the TUI alone:
+python3 scripts/pty-run.py --size 100x30 --env COFFEE_COLORS=mono --env COFFEE_API_URL=fixture: \
+  -- target/debug/coffee-tui
 ```
 
 Steps: `wait=S`, `until=TEXT`, `gone=TEXT`, `text=STR`, `key=NAME[*N]` (enter, esc, tab, up, ctrl-c, ...),
 `resize=COLSxROWS`, `exit=S`, `snap`. `--expect TEXT` makes the exit status fail when TEXT is missing; `--frame`
-draws the screen's border; `--raw FILE` keeps the bytes. Without SSH: `-- target/debug/coffee-tui`.
-<!-- TODO(integration): confirm whether coffee-sshd forwards COFFEE_COLORS from the client env or only its own -->
+draws the screen's border; `--raw FILE` keeps the bytes (colours are only there: the printed screen drops them).
+Without SSH: `-- target/debug/coffee-tui` (`--env COFFEE_API_URL=fixture:` / `fixture:empty` / `fixture:down` for
+the committed fixtures; the header then shows `◇ 样例数据`).
 
 ## 4. Check the sizes and states
 
@@ -64,12 +79,16 @@ lists the page's keys, nothing is cut mid-character, CJK columns line up.
 ## 5. Check cleanup
 
 ```sh
-python3 scripts/pty-run.py --size 100x30 --step 'until=ROAST/TTY' --step key=ctrl-c --step key=ctrl-c \
-  --step exit=5 -- $SSH                    # quitting ends the SSH session
+python3 scripts/pty-run.py --size 100x30 --step 'until=ROAST/TTY' --step key=ctrl-c --step 'until=再按一次' \
+  --step key=ctrl-c --step exit=5 -- $SSH  # quitting ends the SSH session (status 0)
 pgrep -fl coffee-tui                       # after the client is gone: no children left (allow 2 s)
 ```
 
-Killing the client (pty-run hangs up at the end) must also end its `coffee-tui` within 2 seconds.
+Killing the client (`kill -9` the `ssh` process) must also end its `coffee-tui` within 2 seconds (sshd logs
+`session ended: client left ... how="hangup"`). When done, stop `pnpm dev` (Ctrl+C, or SIGINT to `pnpm dev` and
+`node scripts/dev.mjs`) and prove nothing is left:
+`pgrep -fl "scripts/dev.mjs|coffee-sshd|coffee-tui|src/main.ts"` prints nothing and ports 3000/2222 are free
+(`lsof -nP -iTCP:3000 -iTCP:2222 -sTCP:LISTEN`).
 
 ## 6. Automated end-to-end tests
 
