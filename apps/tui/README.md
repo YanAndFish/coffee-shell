@@ -65,7 +65,7 @@ is active there and enabled (`commands::resolve`), in one `batch`. The order is 
 
 The status bar shows the active, enabled commands with a footer rank for the width class: `footer(rank)` (all
 widths), `footer_full(rank)` (M/L/XL), `footer_s(rank)` (S), `short("f 筛选")` for the S label; at most
-`Bp::footer_hints()` (S 4, M 5, L/XL 7) and what the row holds. A press on a hint runs `commands::press`. A command
+`Bp::footer_hints()` (S 4, M 6, L/XL 7) and what the row holds. A press on a hint runs `commands::press`. A command
 with `Key::hint(..)` (no strokes) is a hint only: its key is handled elsewhere (Tab by nsh, `4` by the global
 command) and a press runs it.
 

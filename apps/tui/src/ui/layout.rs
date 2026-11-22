@@ -83,7 +83,7 @@ impl Bp {
     match self {
       Bp::TooSmall => 0,
       Bp::S => 4,
-      Bp::M => 5,
+      Bp::M => 6,
       Bp::L | Bp::Xl => 7,
     }
   }
@@ -231,7 +231,7 @@ mod tests {
   #[test]
   fn hints_shrink_with_the_width() {
     assert_eq!(Bp::S.footer_hints(), 4);
-    assert!(Bp::M.footer_hints() > Bp::S.footer_hints());
+    assert_eq!(Bp::M.footer_hints(), 6, "keymap.md: M shows 6 hints");
     assert_eq!(Bp::Xl.footer_hints(), 7);
   }
 }

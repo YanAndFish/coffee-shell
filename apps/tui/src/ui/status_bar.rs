@@ -72,6 +72,8 @@ pub struct StatusRight {
   pub mouse: Option<bool>,
   /// The cart total, already formatted (`¥426.00`); `None`: not shown.
   pub total: Option<SharedString>,
+  /// The total without its `购物车` word (M when the row is short of room; always on S).
+  pub bare_total: bool,
   /// The help hint (`‹?› 帮助`).
   pub help: Option<Hint>,
 }
@@ -83,6 +85,7 @@ impl StatusRight {
       Self {
         mouse: None,
         total: self.total.clone(),
+        bare_total: true,
         help: None,
       }
     } else {
@@ -92,7 +95,7 @@ impl StatusRight {
 
   /// The cells it takes with its right margin (`cart` on S: just the amount).
   pub fn width(&self, bp: Bp) -> usize {
-    let short = bp <= Bp::S;
+    let short = bp <= Bp::S || self.bare_total;
     let mut groups = Vec::new();
     if self.mouse.is_some() {
       groups.push(display_width("● 鼠标"));
@@ -230,7 +233,7 @@ pub fn mode_line(
     .child(hints_row(hints, on_hint))
     .child(dynamic(move || {
       shown().map(|right| {
-        let short = layout.bp() <= Bp::S;
+        let short = layout.bp() <= Bp::S || right.bare_total;
         let mut groups: Vec<AnyElement> = Vec::new();
         if let Some(on) = right.mouse {
           groups.push(
@@ -290,6 +293,7 @@ mod tests {
     let right = StatusRight {
       mouse: Some(true),
       total: Some("¥426.00".into()),
+      bare_total: false,
       help: Some(hint("?", "帮助")),
     };
     // `● 鼠标   购物车 ¥426.00   ‹?› 帮助 `

@@ -91,26 +91,38 @@ pub fn bar(
       right: StatusRight {
         mouse: None,
         total,
+        bare_total: true,
         help: None,
       },
     };
   }
   let help = help.then(help_hint);
   let wanted = commands::footer(ctx, bp, usize::MAX, enabled).len();
+  // components.md: short of room, `● 鼠标` goes first, then the word `购物车` (the amount
+  // stays), then the total.
   let sides = [
     StatusRight {
       mouse: Some(mouse),
       total: total.clone(),
+      bare_total: false,
+      help,
+    },
+    StatusRight {
+      mouse: None,
+      total: total.clone(),
+      bare_total: false,
       help,
     },
     StatusRight {
       mouse: None,
       total,
+      bare_total: true,
       help,
     },
     StatusRight {
       mouse: None,
       total: None,
+      bare_total: false,
       help,
     },
   ];
@@ -123,7 +135,7 @@ pub fn bar(
     .iter()
     .map(|right| (right, fitted(right)))
     .find(|(_, hints)| hints.len() == wanted)
-    .unwrap_or_else(|| (&sides[2], fitted(&sides[2])));
+    .unwrap_or_else(|| (&sides[3], fitted(&sides[3])));
   Bar {
     hints: hints.into_iter().map(ui_hint).collect(),
     right: right.clone(),
@@ -221,9 +233,11 @@ mod tests {
 
   #[test]
   fn the_right_side_gives_way_to_the_hints() {
-    // 100 columns: five hints; the right side fits whole.
+    // 100 columns: six hints (keymap.md); the right side keeps the amount alone.
     let m = browse(Bp::M, 100);
-    assert_eq!(m.hints.len(), 5);
+    assert_eq!(m.hints.len(), 6);
+    assert_eq!(m.right.mouse, None);
+    assert!(m.right.bare_total && m.right.total.is_some());
     assert!(right_fits(100, BROWSE, &m.hints, &m.right, Bp::M));
     // A long mode and five hints on 100 columns: the mouse state goes first.
     let long = Mode {
@@ -238,7 +252,7 @@ mod tests {
       )
     };
     let address = bar(&ctx, Bp::M, 100, long, true, "¥1,426.00", member);
-    assert_eq!(address.hints.len(), 5, "{:?}", labels(&address));
+    assert_eq!(address.hints.len(), 6, "{:?}", labels(&address));
     assert_eq!(address.right.mouse, None);
     assert!(address.right.help.is_some());
     assert!(right_fits(100, long, &address.hints, &address.right, Bp::M));

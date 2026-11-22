@@ -784,12 +784,19 @@ mod tests {
       resolve(&ctx, "enter", failed).map(|c| c.id),
       Some("catalog.retry")
     );
-    let receipt = |c: &Command| c.id != "cart.checkout";
+    let receipt = |c: &Command| !matches!(c.id, "cart.checkout" | "cart.retry");
     let ctx = KeyContext::on(Page::Cart);
     assert_eq!(
       resolve(&ctx, "enter", receipt).map(|c| c.id),
       Some("cart.continue")
     );
+    // A cart that never loaded: ⏎ retries, c checks nothing out.
+    let failed_cart = |c: &Command| !matches!(c.id, "cart.checkout" | "cart.continue");
+    assert_eq!(
+      resolve(&ctx, "enter", failed_cart).map(|c| c.id),
+      Some("cart.retry")
+    );
+    assert_eq!(resolve(&ctx, "c", failed_cart).map(|c| c.id), None);
   }
 
   #[test]
@@ -921,7 +928,11 @@ mod tests {
         "/ 搜索"
       ]
     );
-    assert_eq!(set(KeyContext::on(Catalog), Bp::M, &ready).len(), 5);
+    // M: six (keymap.md: `/ 搜索` goes).
+    assert_eq!(
+      labels(set(KeyContext::on(Catalog), Bp::M, &ready)),
+      ["↑↓ 移动", "⏎ 详情", "a 加入", "f 产区", "r 烘焙", "s 排序"]
+    );
     assert_eq!(
       labels(set(KeyContext::on(Catalog), Bp::S, &ready)),
       ["↑↓ 移动", "⏎ 详情", "a 加入", "f 筛选"]
@@ -943,7 +954,13 @@ mod tests {
       ["←→ 选择", "a 加入", "b 购买", "Esc 返回"]
     );
     // 购物车 and 回执.
-    let shopping = ["cart.continue", "cart.orders", "cart.tabs", "cart.search"];
+    let shopping = [
+      "cart.continue",
+      "cart.orders",
+      "cart.tabs",
+      "cart.search",
+      "cart.retry",
+    ];
     assert_eq!(
       labels(set(KeyContext::on(Cart), Bp::Xl, &shopping)),
       [
@@ -966,6 +983,7 @@ mod tests {
       "cart.remove",
       "cart.undo",
       "cart.checkout",
+      "cart.retry",
     ];
     assert_eq!(
       labels(set(KeyContext::on(Cart), Bp::Xl, &receipt)),

@@ -21,6 +21,11 @@ fn shopping(stores: &Stores) -> bool {
   !stores.cart.has_receipt()
 }
 
+/// A cart to check out: not the receipt, not a cart that never loaded (⏎ retries that).
+fn can_check_out(stores: &Stores) -> bool {
+  shopping(stores) && !failed(stores)
+}
+
 fn receipt(stores: &Stores) -> bool {
   stores.cart.has_receipt()
 }
@@ -98,21 +103,22 @@ pub const COMMANDS: &[Command] = &[
   )
   .when(has_lines),
   Command::new(
+    "cart.retry",
+    Key::new("⏎", &["enter"]),
+    "⏎ 重试",
+    PAGE,
+    |stores, _| stores.cart.load(),
+  )
+  .when(failed)
+  .footer(5),
+  Command::new(
     "cart.checkout",
     Key::new("c", &["c", "enter"]),
     "c 结算",
     PAGE,
-    // A cart that never loaded: ⏎ retries (the error state's `⏎ 重试`; a command of its own
-    // would need the core's command tests to know it, see the report).
-    |stores, _| {
-      if failed(stores) {
-        stores.cart.load();
-      } else {
-        actions::checkout(stores);
-      }
-    },
+    |stores, _| actions::checkout(stores),
   )
-  .when(shopping)
+  .when(can_check_out)
   .footer(60),
   Command::new(
     "cart.back",

@@ -363,6 +363,7 @@ pub fn UiGallery() -> impl IntoElement {
       move || StatusRight {
         mouse: Some(true),
         total: Some("¥426.00".into()),
+        bare_total: false,
         help: Some(Hint {
           id: "help",
           key: "?",
@@ -750,6 +751,7 @@ fn status_page() -> AnyElement {
   let right = || StatusRight {
     mouse: Some(false),
     total: Some("¥0.00".into()),
+    bare_total: false,
     help: Some(Hint {
       id: "help",
       key: "?",
@@ -774,6 +776,7 @@ fn status_page() -> AnyElement {
         move || StatusRight {
           mouse: Some(true),
           total: Some("¥426.00".into()),
+          bare_total: false,
           help: right().help,
         },
         |_| {},
