@@ -272,7 +272,9 @@ impl ProductStore {
 
   // --- Opening ------------------------------------------------------------------------
 
-  /// Shows product `id`: loads it unless it is the one shown (the selection then stays).
+  /// Shows product `id`: loads it unless it is the one shown or already loading (the
+  /// selection then stays). The load starts in this call (the state is loading at once),
+  /// so a second call in the same commit is a no-op instead of a second request.
   pub fn open(&self, id: &str) {
     if self
       .id
@@ -292,11 +294,16 @@ impl ProductStore {
 
   /// Loads the product shown: what [`Self::load`] runs (await it in tests).
   pub async fn fetch(self) {
+    let revision = self.detail.begin();
+    self.request(revision).await;
+  }
+
+  /// Asks for the product shown; the answer applies while `revision` is the latest.
+  async fn request(self, revision: u64) {
     let Some(id) = self.id.get_untracked() else {
       return;
     };
     let client = self.session.client();
-    let revision = self.detail.begin();
     let result = client.product(&id).await;
     let initial = result.as_ref().ok().map(initial_selection);
     if self.detail.finish(revision, result)
@@ -306,10 +313,12 @@ impl ProductStore {
     }
   }
 
-  /// Loads (or retries) the product shown, in a task of the root's owner.
+  /// Loads (or retries) the product shown, in a task of the root's owner. The state turns
+  /// loading now, not when the task first runs.
   pub fn load(&self) {
     let store = *self;
-    self.session.spawn(store.fetch());
+    let revision = self.detail.begin();
+    self.session.spawn(store.request(revision));
   }
 
   /// Opens product `id` for a test without spawning: sets it and fetches it.
@@ -503,8 +512,12 @@ mod tests {
     let line = store.line().unwrap();
     assert_eq!((line.product_id.as_str(), line.quantity), ("geisha", 2));
     assert!(store.can_buy());
-    now_or_never(store.open_now("yirga"));
-    assert_eq!(store.phase(), Phase::Failed, "no detail fixture for yirga");
+    now_or_never(store.open_now("no-such-bean"));
+    assert_eq!(
+      store.phase(),
+      Phase::Failed,
+      "an unknown product is not found"
+    );
     assert!(!store.can_buy());
     owner.dispose();
   }
