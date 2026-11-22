@@ -13,9 +13,10 @@ use crate::{
   stores::{
     Stores,
     catalog::{FilterGroup, ROAST_BANDS, SORTS},
+    ui::Overlay,
   },
   ui::{
-    self, Button, ButtonKind, ChipPad, Layout, Tone, action, chip, label, layout, panel, radio,
+    self, Button, ButtonKind, ChipPad, DialogSize, Tone, action, chip, label, layout, panel, radio,
     section_head, segmented,
   },
 };
@@ -285,30 +286,28 @@ fn dialog_content(stores: Stores) -> View {
     .child(right)
 }
 
-/// The S-width filter dialog (`筛选 FILTER`, 60×16, narrowed to the terminal), centred where
-/// the shell shows dialogs. ⏎ / space choose at once; there is no apply button.
+/// The S-width filter dialog (`筛选 FILTER`, 60×16, narrowed to the terminal), an overlay
+/// centred between the system row and the status bar over the list (`ui::dialog`, as every
+/// dialog). ⏎ / space choose at once; there is no apply button.
 pub fn dialog() -> AnyElement {
   let stores = Stores::get();
-  let layout = Layout::get();
-  // The close button runs what Esc runs.
-  let close = move || press(&stores, "filter.close");
-  // The size follows the terminal (rebuilt on a resize; the focus lives in the store).
-  let size = computed(move || ui::dialog::dialog_size(DIALOG_COLS, DIALOG_ROWS, layout.viewport()));
-  dynamic(move || {
-    let (cols, rows) = size.get();
-    view()
-      .flex_1()
-      .items_center()
-      .justify_center()
-      .child(ui::dialog_box(
-        "筛选 FILTER",
-        cols,
-        rows,
-        DIALOG_PAD,
-        dialog_content(stores),
-        vec![Button::new(ButtonKind::Default, "Esc", "关闭").on_press(close)],
-      ))
-  })
+  ui::dialog(
+    move || stores.ui.is_open(Overlay::FilterDialog),
+    "筛选 FILTER",
+    DialogSize {
+      cols: DIALOG_COLS,
+      rows: DIALOG_ROWS,
+      pad: DIALOG_PAD,
+    },
+    move || dialog_content(stores).into_element(),
+    // The close button runs what Esc runs.
+    move || {
+      vec![
+        Button::new(ButtonKind::Default, "Esc", "关闭")
+          .on_press(move || press(&stores, "filter.close")),
+      ]
+    },
+  )
 }
 
 #[cfg(test)]

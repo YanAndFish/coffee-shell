@@ -330,6 +330,13 @@ test('80×24: f opens the filter dialog; choices apply at once; Esc closes', asy
   if (rows) {
     expect(rows.some(row => row.includes('╔═ 筛选 FILTER'))).toBe(true)
     expect(rows.some(row => row.includes('› ◉ 全部'))).toBe(true)
+    // An overlay over the list, not a box under it: the list keeps its 20 rows (its
+    // bottom line just over the status bar) and the dialog's top line is on the list's.
+    expect(rows[rows.length - 2]).toMatch(/^╰─+╯$/)
+    const top = rows.findIndex(row => row.includes('╔═ 筛选 FILTER'))
+    expect(top).toBeGreaterThan(2)
+    expect(top).toBeLessThan(8)
+    expect(rows[top]).toMatch(/^│[^\n\r\u2028\u2029\u2557]*\u2557.*│$/)
     // The status bar's mode.
     expect(rows[rows.length - 1]).toContain('筛选 FILTER')
   }
