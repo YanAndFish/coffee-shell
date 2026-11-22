@@ -13,7 +13,10 @@
       "primary-foreground": "#1a140d",
       "destructive": "#f08a6c",
       "success": "#8cc7a1",
-      "soft": "#d9cfbf"
+      "soft": "#d9cfbf",
+      "kbd-bg": "#221d18",
+      "line-strong": "#4a4036",
+      "dim": "#5a4d3f"
     }
   }
 }

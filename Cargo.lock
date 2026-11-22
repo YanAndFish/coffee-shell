@@ -290,6 +290,9 @@ dependencies = [
  "coffee-api",
  "nsh-base",
  "nsh-core",
+ "serde",
+ "serde_json",
+ "unicode-width",
 ]
 
 [[package]]

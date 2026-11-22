@@ -16,11 +16,29 @@
 //! - [`APP_ID`] and [`THEME_JSON`]: `nsh.json`'s `"id"` and `"theme"` (dark only), which a
 //!   host that mounts the root itself applies with `Root::app_id`, `Root::tokens` and
 //!   `Root::appearance(Appearance::Dark)` (`nsh run`/`nsh test` do that from `nsh.json`).
-//! - The API types: `coffee_api` (re-exported as [`api`]).
+//! - The API types: `coffee_api`'s, re-exported in [`api`] (which adds the client).
+//!
+//! # Layout
+//!
+//! - [`ui`]: the only module that touches `nsh_base` or theme tokens: styled terminal
+//!   components, breakpoints ([`ui::layout`]) and display widths ([`ui::text`]).
+//! - [`shell`]: header, page stack, status bar, too-small guard, key bindings.
+//! - [`pages`]: one page per [`router::Route`]; phase 1 implements the catalog.
+//! - [`stores`]: `Copy` structs of private signals, provided by [`App`].
+//! - [`commands`]: the one table of actions: keys, status bar hints, (later) help.
+//! - [`router`]: the routes of the page stack.
+//! - [`api`]: the DTOs and the backend client (live or fixtures).
+
+pub mod api;
+pub mod commands;
+pub mod pages;
+pub mod router;
+pub mod shell;
+pub mod stores;
+pub mod ui;
 
 use std::sync::OnceLock;
 
-use nsh_base::theme;
 use nsh_core::prelude::*;
 
 /// What a TSX entry may import from `coffee-app/native`; also makes `pub fn registry()`.
@@ -54,9 +72,6 @@ pub const APP_ID: &str = "dev.yafh.coffee";
 /// `nsh.json` `"theme"` names. Read it with `nsh_base::Theme::from_json`.
 pub const THEME_JSON: &str = include_str!("../theme.json");
 
-/// The backend API's DTOs.
-pub use coffee_api as api;
-
 static SESSION_ENV: OnceLock<SessionEnv> = OnceLock::new();
 
 /// Stores this process's session settings. Call it once, before the UI starts.
@@ -72,17 +87,13 @@ pub fn session_env() -> Option<&'static SessionEnv> {
   SESSION_ENV.get()
 }
 
-/// The root component: a static placeholder screen until the shop's pages land.
+/// The root component: provides the layout and the stores, then the shell (header, page
+/// stack, status bar, too-small guard). A host mounts it with `Root::of::<App>()`.
 #[component]
 pub fn App() -> impl IntoElement {
-  view()
-    .flex_1()
-    .bg(move || theme().background)
-    .text_color(move || theme().foreground)
-    .items_center()
-    .justify_center()
-    .child(text("◆ROAST/TTY").font_weight(FontWeight::BOLD))
-    .child(text("演示环境 · 不是真实商店").text_color(move || theme().muted_foreground))
+  ui::Layout::provide();
+  stores::Stores::provide();
+  shell::shell()
 }
 
 #[cfg(test)]
