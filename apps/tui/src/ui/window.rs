@@ -27,6 +27,11 @@ pub fn title_text(viewport: Viewport) -> String {
   format!("roast@tty: ~/shop — {}×{}", viewport.cols, viewport.rows)
 }
 
+/// The column of the centred demo notice in a system row `cols` wide (100 columns and more).
+pub fn notice_column(cols: u16) -> u16 {
+  cols.saturating_sub(25) / 2
+}
+
 /// The content's margins at `bp`: (columns each side, blank rows above and below).
 pub fn content_margins(bp: Bp) -> (u16, u16) {
   match bp {
@@ -61,13 +66,14 @@ pub fn system_row(
     .bg(Fill::Surface.color())
     // From 100 columns the path on the left and the notice centred; below, no path and the
     // notice on the left (responsive.md, "系统行").
+    // The notice starts at ⌊(cols − 25) ÷ 2⌋ (README, "格子换算": a half cell rounds down;
+    // two equal fills would give the odd cell to the left one).
     .child(dynamic(move || {
       let viewport = layout.viewport();
       (viewport.cols >= 100).then(|| {
         view()
-          .flex_1()
-          .min_w(px(0.0))
-          .basis(px(0.0))
+          .flex_none()
+          .w(layout::cols(notice_column(viewport.cols) - 1))
           .child(label(title_text(viewport), Tone::Mute))
       })
     }))
@@ -105,6 +111,9 @@ mod tests {
       "roast@tty: ~/shop — 160×50"
     );
     assert_eq!(display_width(DEMO_NOTICE), 25);
+    // 160 columns: the mock's column 67 (67.5 rounds down).
+    assert_eq!(notice_column(160), 67);
+    assert!(notice_column(100) > display_width("roast@tty: ~/shop — 100×30") as u16);
     assert_eq!(content_margins(Bp::Xl), (2, 1));
     assert_eq!(content_margins(Bp::S), (0, 0));
   }

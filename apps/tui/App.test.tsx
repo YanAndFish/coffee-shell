@@ -310,6 +310,10 @@ test('the system row: the size, the demo notice, the key and the clock', async (
   const rows = await screenRows(app)
   if (rows)
     expect(rows[0]).toMatch(/^ roast@tty: ~\/shop — 160×50 +! 演示环境 · 不是真实商店 +● 公钥已识别 · \d\d:\d\d $/)
+  const cells = await screenCells(app)
+  // The notice centred, the odd half cell rounded down: the mock's column 67.
+  if (cells)
+    expect(column(cells[0], '!')).toBe(67)
 
   // Under 100 columns the path goes; without a key, `○ 未提供公钥`.
   const small = await start(80, 24)
