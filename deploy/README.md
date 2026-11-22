@@ -47,5 +47,9 @@ client sees a changed host key after a restart.
 | `COFFEE_SSH_AUTH_TIMEOUT`        | `30`                         | seconds a connection may take to log in                     |
 | `COFFEE_SSH_LOG`                 | `info,russh=warn`            | log filter (`tracing` syntax); logs go to stderr            |
 
+Clients send only `LANG`, `LC_*` and `COLORTERM` into a session. OpenSSH does not forward `COLORTERM` unless the
+client asks (`ssh -o SendEnv=COLORTERM`), so most sessions get 256 colours; set `COFFEE_COLORS=truecolor` here to
+force 24-bit colour for everyone when you know the clients' terminals support it.
+
 Each idle session is one `coffee-tui` of about 16 MB RSS (see the ADR's measurement); size the
 container for `COFFEE_SSH_MAX_SESSIONS` of them plus the gateway.
