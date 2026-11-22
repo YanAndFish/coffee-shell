@@ -11,6 +11,8 @@
 //!   ┌────────────┐       ✓ 8 款当季单品与意式拼配               …
 //! ```
 
+use std::time::Duration;
+
 use nsh_core::prelude::*;
 
 use crate::{
@@ -47,10 +49,32 @@ fn taglines() -> View {
     .child(ui::label(SUBLINE, Tone::Mute))
 }
 
+/// How long the steam keeps moving after the last key or edit: a session parked on the login
+/// page then costs nothing (the steam stops on its first frame and moves again with the next
+/// key).
+pub const STEAM_IDLE: Duration = Duration::from_secs(20);
+
+/// Whether someone used the page in the last [`STEAM_IDLE`]: a key the shell heard, an edit
+/// of the form, a move of its focus.
+fn awake(stores: Stores) -> Signal<bool> {
+  let session = stores.session;
+  let awake = signal(true);
+  effect(move || {
+    stores.ui.activity();
+    session.draft();
+    session.form_focus();
+    untracked(|| awake.set(true));
+    let sleep = set_timeout(STEAM_IDLE, move || awake.set(false));
+    cleanup(move || sleep.cancel());
+  });
+  awake
+}
+
 /// The tall brand block (21 rows): the block wordmark, two blank rows, the taglines, two
 /// blank rows, the steam over the cup with the points level with its rows 0, 2, 4 and 6.
 pub fn tall(stores: Stores) -> View {
   let settings = stores.settings;
+  let awake = awake(stores);
   let points = view()
     .flex_none()
     .children(POINTS.iter().enumerate().map(|(i, p)| {
@@ -65,7 +89,7 @@ pub fn tall(stores: Stores) -> View {
     .child(layout::vspace(2))
     .child(taglines())
     .child(layout::vspace(2))
-    .child(ui::steam(move || settings.animations()))
+    .child(ui::steam(move || settings.animations() && awake.get()))
     .child(
       view()
         .flex_none()

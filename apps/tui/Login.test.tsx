@@ -444,3 +444,28 @@ test('three quick Tabs from 用户名 end on 登录, not stuck in 密码', async
   await app.keyboard.press('enter')
   await app.waitFor('text:✗ 请输入用户名')
 })
+
+test('the steam rests after 20 s without a key and moves again with the next one', async () => {
+  // A manual clock: the steam's frames (400 ms) and its idle timer run as the test says.
+  const app = await open('.', {
+    ...cells(160, 50),
+    platform: 'linux',
+    clock: {},
+    storage: { 'coffee.transport': 'fixture:' },
+  })
+  const clock = app.clock!
+  for (let i = 0; i < 40 && !app.texts().includes('离开输入'); i++)
+    await clock.runFor(50)
+  // Frame 1 draws its middle wisp twice (top and bottom rows), frame 0 once.
+  const wisp = '     )  (   ) '
+  const wisps = () => app.texts().filter(text => text === wisp).length
+  await clock.runFor(21000)
+  // At rest: the first frame, and it stays.
+  expect(wisps()).toBe(1)
+  await clock.runFor(1300)
+  expect(wisps()).toBe(1)
+  // A key (it types into 用户名) wakes it: the next frame 400 ms on.
+  await app.keyboard.press('x')
+  await clock.runFor(450)
+  expect(wisps()).toBe(2)
+})
