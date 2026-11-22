@@ -1,13 +1,21 @@
 {
   "name": "@coffee/contract",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "ROAST/TTY API contract (zod -> openapi.json + fixtures). Placeholder.",
+  "description": "ROAST/TTY API contract: zod schemas -> openapi.json + fixtures.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./openapi.json": "./openapi.json",
+    "./fixtures/*": "./fixtures/*"
   },
   "scripts": {
+    "generate": "node scripts/generate.ts",
+    "check:generated": "node scripts/generate.ts --check",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
   }
 }
