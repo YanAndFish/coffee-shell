@@ -136,7 +136,10 @@ fn search_entry(stores: Stores, layout: Layout, header: HeaderLayout) -> View {
       )
       .number_of_lines(1),
     );
+  // Presses land on the entry itself: its frame's line runs (clipped on screen) would
+  // otherwise take those meant for the page under them.
   let entry = pressable()
+    .pointer_events(PointerEvents::BoxOnly)
     .label("搜索商品")
     .on_press(move || press(stores, "app.search"));
   let entry = match header.search {
@@ -258,13 +261,20 @@ pub fn header(stores: Stores, layout: Layout) -> impl IntoElement {
       .w_full()
       .label("顶栏")
       .child(top(stores, layout, header))
-      .child(ui::nav_rule(
-        &TABS,
-        move || stores.router.tab(),
-        move || vec![0, cart.item_count(), 0, 0],
-        header.tabs_start(),
-        move || header.wide,
-      ))
+      // The bottom line takes no presses (its runs are wider than the screen).
+      .child(
+        view()
+          .flex_none()
+          .w_full()
+          .pointer_events(PointerEvents::None)
+          .child(ui::nav_rule(
+            &TABS,
+            move || stores.router.tab(),
+            move || vec![0, cart.item_count(), 0, 0],
+            header.tabs_start(),
+            move || header.wide,
+          )),
+      )
   })
 }
 

@@ -464,7 +464,7 @@ test('status-bar hints per page: 7 at 160 columns, 4 and help at 80', async () =
   expect(hint(wide, 'r 烘焙')).toBe(false)
   let rows = await screenRows(wide)
   if (rows)
-    expect(rows[49]).toMatch(/● 鼠标 {3}购物车 ¥[\d,]+\.\d\d {3}. \? . 帮助 $/)
+    expect(rows[49]).toMatch(/● 鼠标 {3}购物车 ¥[\d,]+\.\d\d +\? +帮助 $/)
 
   const small = await start(80, 24, { transport: 'fixture:member', key: true })
   await small.waitFor('text:商品列表 · 8 款 · 推荐')
@@ -482,7 +482,7 @@ test('status-bar hints per page: 7 at 160 columns, 4 and help at 80', async () =
   if (rows) {
     // The demo notice moved to the system row: the bar holds four hints, help and the total.
     expect(rows[23]).not.toContain('演示环境')
-    expect(rows[23]).toMatch(/^▐ 选 购 {2}BROWSE ▌ .*移动 .*详情 .*加入 .*筛选 .*帮助 +¥[\d,]+\.\d\d $/)
+    expect(rows[23]).toMatch(/^▐ 选购 BROWSE ▌ .*移动 .*详情 .*加入 .*筛选 .*帮助 +¥[\d,]+\.\d\d $/)
   }
   await small.keyboard.press('4')
   await small.waitUntil(() => showsPart(small, '我的 PROFILE'))
@@ -657,15 +657,13 @@ test('Esc: the overlay first, then the field, then the page, then nothing', asyn
 test('a press on a status-bar hint or a tab runs its command', async () => {
   const app = await start(160, 50)
   await browseAsGuest(app)
-  // While a toast shows, a press on the status bar is reported covered by the toast's
-  // frame (`ui::toast`): wait for it to go.
-  await app.waitUntil(() => !showsPart(app, '以访客身份浏览'))
+  // The toast showing (`以访客身份浏览`) takes no presses.
+  expect(showsPart(app, '以访客身份浏览')).toBe(true)
   await app.press('label:a 加入')
   await app.waitFor('text:已加入购物车')
-  await app.waitUntil(() => !showsPart(app, '已加入购物车'))
   await app.press('label:? 帮助')
   await app.waitFor('text:快捷键 KEYMAP')
-  await app.press('label:Esc 关闭')
+  await app.press('label:Esc 关闭 >> nth=1')
   await app.waitUntil(() => !showsPart(app, '快捷键 KEYMAP'))
   await app.press('text:地址本')
   await app.waitUntil(() => showsPart(app, '地址本 ADDRESS'))
@@ -684,7 +682,7 @@ test('80×24: the frame of the S layout', async () => {
     expect(rows[0]).toContain('! 演示环境 · 不是真实商店')
     expect(rows[1]).toContain('◆ROAST/TTY')
     expect(rows[2]).toMatch(/^─+━+─+$/)
-    expect(rows[23].startsWith('▐ 选 购  BROWSE ▌')).toBe(true)
+    expect(rows[23].startsWith('▐ 选购 BROWSE ▌')).toBe(true)
   }
   // `f` at S opens the filter dialog.
   await app.keyboard.press('f')
