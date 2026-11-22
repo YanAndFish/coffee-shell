@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = [
+  "apps/tui",
+  "crates/coffee-api",
+  "crates/coffee-host",
+  "crates/coffee-sshd"
+]
+# `nsh` writes the sources of the app's runners and hosts under `apps/tui/.nsh/`
+# (each with a Cargo.toml of its own); they are never members of this workspace.
+exclude = [ "apps/tui/.nsh" ]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[workspace.dependencies]
+# nsh crates are pinned exactly to the nsh CLI version (`nsh --version`).
+nsh-core = "=0.6.1"
+nsh-base = "=0.6.1"
+nsh-platform-tui = { version = "=0.6.1", default-features = false }
+# The terminal stack nsh-platform-tui 0.6.1 is built on; `ratatui_crossterm::crossterm`
+# re-exports the matching crossterm (0.29).
+ratatui-core = "0.1.2"
+ratatui-crossterm = "0.1.2"
+
+coffee-app = { path = "apps/tui" }
+coffee-api = { path = "crates/coffee-api" }

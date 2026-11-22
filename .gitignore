@@ -1,0 +1,21 @@
+# Rust / Cargo (also apps/tui/target, where nsh builds its runners)
+target/
+
+# nsh: generated runner sources, type declarations, logs and build output
+.nsh/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Data and secrets
+*.db
+*.db-journal
+*.sqlite
+.env*
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/

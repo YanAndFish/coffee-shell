@@ -1,0 +1,21 @@
+[package]
+name = "coffee-host"
+description = "Runs the coffee-app root in a terminal (one process per SSH session)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "coffee-tui"
+path = "src/bin/coffee-tui.rs"
+
+[dependencies]
+coffee-app.workspace = true
+nsh-base.workspace = true
+nsh-platform-tui = { workspace = true, features = [
+  "run-app",
+  "net"
+] }
+ratatui-core.workspace = true
+ratatui-crossterm.workspace = true

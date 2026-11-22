@@ -1,0 +1,13 @@
+[package]
+name = "coffee-sshd"
+description = "ROAST/TTY SSH front end: one coffee-tui child process per session on a PTY."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "coffee-sshd"
+path = "src/main.rs"
+
+[dependencies]
