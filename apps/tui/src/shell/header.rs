@@ -207,7 +207,7 @@ fn account_chip(stores: Stores, layout: Layout) -> View {
             crate::stores::actions::go_login(&stores);
           })
           .flex_row()
-          .child(layout::hspace(2))
+          .child(layout::hspace(1))
           .child(label("登录 →", Tone::Acc))
       })
     }))
@@ -248,14 +248,30 @@ fn top(stores: Stores, layout: Layout, header: HeaderLayout) -> View {
       },
     ))
     .child(search_entry(stores, layout, header))
-    // Four cells before the account where the search entry has its own width (XL, L, and
-    // S: 02-list.md's S mock, `‹/› 搜索     ‹林›`); two where it takes the room left (M).
-    .child(layout::hspace(if header.wide || header.search.is_some() {
-      4
+    .child(if header.wide && header.search.is_some() {
+      // XL: the entry stays at the mock's columns 103–139 and the account takes the 18 cells
+      // right of it, right-aligned: four blank before the member's `林晓 Lv.3`, two before
+      // the guest's longer `访客 登录 →` (a longer name pushes the entry left).
+      view()
+        .flex_none()
+        .min_w(layout::cols(18))
+        .flex_row()
+        .justify_end()
+        .child(layout::hspace(2))
+        .child(account_chip(stores, layout))
     } else {
-      2
-    }))
-    .child(account_chip(stores, layout))
+      // Four cells before the account where the entry has its own width (L, and S:
+      // 02-list.md's S mock); two where it takes the room left (M).
+      view()
+        .flex_none()
+        .flex_row()
+        .child(layout::hspace(if header.wide || header.search.is_some() {
+          4
+        } else {
+          2
+        }))
+        .child(account_chip(stores, layout))
+    })
     .child(layout::hspace(header.margin))
 }
 
