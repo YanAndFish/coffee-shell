@@ -167,7 +167,7 @@ export async function startOnClock(cols: number, rows: number, { transport = 'fi
 type Clock = NonNullable<App['clock']>
 
 /** Runs the clock `step` ms at a time until `done()` holds (at most `limit` ms). */
-export async function runUntil(clock: Clock, done: () => boolean, step = 100, limit = 20000) {
+export async function runUntil(clock: Clock, done: () => boolean, step = 250, limit = 20000) {
   for (let spent = 0; spent < limit && !done(); spent += step)
     await clock.runFor(step)
   return done()
@@ -178,4 +178,18 @@ export async function logInOnClock(app: App, clock: Clock) {
   await runUntil(clock, () => app.texts().includes('离开输入'), 50)
   await logInAsMember(app)
   await runUntil(clock, () => shows(app, '商品列表 · 8 款'))
+}
+
+/**
+ * Waits until the terminal's rows satisfy `check` (tui only; headless: true at once). A grid
+ * that measures its room settles a frame after the change that moved it.
+ */
+export async function rowsSettle(app: App, check: (rows: string[]) => boolean, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    const rows = await screenRows(app)
+    if (!rows || check(rows))
+      return true
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  return false
 }

@@ -308,6 +308,8 @@ test('the receipt at 80×24: Esc back to the beans, 4 to the orders', async () =
   await app.keyboard.press('c')
   await app.waitFor('text:订单回执 RECEIPT')
   expect(app.texts()).toContain('! 演示订单 · 没有真实扣款，也不会发货')
+  // The order's toast covers the card's buttons at 80 columns until it goes.
+  await app.waitUntil(() => !shows(app, '下一个烘焙日出炉'), { timeout: 5000 })
   const rows = await screenRows(app)
   if (rows) {
     expect(rows.some(row => row.includes('╭─ 订单回执 RECEIPT'))).toBe(true)
@@ -409,4 +411,20 @@ test('submitting the order: the progress block, only ? works, then the receipt',
   expect(app.texts()).toContain('快捷键 KEYMAP')
   await app.keyboard.press('escape')
   expect(await runUntil(clock, () => shows(app, '订单回执 RECEIPT'))).toBe(true)
+})
+
+test('鼠标追踪: the mouse moving over a row moves the cursor; off, it does not', async () => {
+  const app = await memberCart(160, 50)
+  await expectRow(app, '▶ [✓]', '慧兰 粉红波旁')
+  await app.hover('text:「夜班」意式拼配')
+  await expectRow(app, '▶ [✓]', '「夜班」意式拼配')
+  // Off (profile `o`): hovering moves nothing.
+  await app.keyboard.press('4')
+  await app.waitFor('text:个人信息 ACCOUNT')
+  await app.keyboard.press('o')
+  await app.waitFor('text:鼠标追踪已关闭')
+  await app.keyboard.press('2')
+  await app.waitFor('text:结算 CHECKOUT')
+  await app.hover('text:波奎特 瑰夏')
+  await expectRow(app, '▶ [✓]', '「夜班」意式拼配')
 })

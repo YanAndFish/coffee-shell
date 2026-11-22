@@ -8,7 +8,7 @@
 // a delete always leaves cards 2 and 3, a new default is always card 3).
 import type { App } from './testkit'
 import { expect, test } from 'nsh/test'
-import { enterAsGuest, logInAsMember, logInOnClock, loginReady, runUntil, screenRows, shows, start, startOnClock, waitForPart } from './testkit'
+import { enterAsGuest, logInAsMember, logInOnClock, loginReady, rowsSettle, runUntil, screenRows, shows, start, startOnClock, waitForPart } from './testkit'
 
 /** How many texts on screen are exactly `label` (a card button's; the footer says `默认`). */
 function buttons(app: App, label: string) {
@@ -165,7 +165,7 @@ test('100×30: the new dialog validates, types, picks a tag and the default, the
   await app.keyboard.press('right')
   let rows = await screenRows(app)
   if (rows)
-    expect(rows.some(row => row.includes('[ 家 ]  [ 公司 ]  ▐ 学校 ▌'))).toBe(true)
+    expect(rows.some(row => row.includes('[ 家 ] [ 公司 ] ▐ 学校 ▌'))).toBe(true)
   await app.keyboard.press('tab')
   await app.keyboard.press('space')
   await app.waitFor('text:[✓]')
@@ -228,23 +228,13 @@ test('80×24: one column of compact cards; the stacked dialog fits; it scrolls t
     const at = rows.findIndex(row => row.includes(part))
     return at > 0 && rows.slice(at).some(row => row.includes('┗') || row.includes('╰╌'))
   }
-  rows = await screenRows(app)
-  if (rows)
-    expect(whole(rows, '▶ 周一')).toBe(true)
+  expect(await rowsSettle(app, rows => whole(rows, '▶ 周一'))).toBe(true)
   for (let i = 0; i < 3; i++)
     await app.keyboard.press('up')
-  rows = await screenRows(app)
-  if (rows) {
-    expect(whole(rows, '▶ 林晓  138 **** 5521')).toBe(true)
-    expect(rows.some(row => row.includes('天平路'))).toBe(true)
-  }
+  expect(await rowsSettle(app, rows => whole(rows, '▶ 林晓  138 **** 5521') && rows.some(row => row.includes('天平路')))).toBe(true)
   for (let i = 0; i < 4; i++)
     await app.keyboard.press('down')
-  rows = await screenRows(app)
-  if (rows) {
-    expect(rows.some(row => row.includes('▶') && row.includes('+ 新增收货地址'))).toBe(true)
-    expect(rows[23]).toContain('帮助')
-  }
+  expect(await rowsSettle(app, rows => rows.some(row => row.includes('▶') && row.includes('+ 新增收货地址')) && rows[23].includes('帮助'))).toBe(true)
 })
 
 test('an empty book: 0 条, 未指定, only the add card; ⏎ adds with 设为默认 checked', async () => {
