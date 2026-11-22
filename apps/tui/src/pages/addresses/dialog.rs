@@ -122,9 +122,9 @@ pub fn dialog() -> AnyElement {
   })
 }
 
-/// The dialog's focus ring as its stops read it: the store's stop, asked of nsh once the
-/// box is laid out (`ElementRef::focus` does nothing before), so the dialog opens with the
-/// caret in `收货人` and a resize keeps the focus where it was.
+/// The dialog's focus ring as its stops read it: the store's stop. A stop that is no text
+/// field asks nsh for the focus once the box is laid out (`ElementRef::focus` does nothing
+/// before); the fields take it as they mount (`ui::input`'s `auto_focus`).
 #[derive(Clone, Copy)]
 struct Ring {
   book: AddressStore,
@@ -236,7 +236,8 @@ fn field(stores: Stores, ring: Ring, index: usize, place: LabelPlace) -> View {
         .map(|d| read(&d.input, index))
         .unwrap_or_default()
     },
-    move || ring.holds(at),
+    // The input takes the focus as it mounts (`auto_focus`): no wait for the layout.
+    move || ring.is(at),
     move || {
       book
         .dialog()
