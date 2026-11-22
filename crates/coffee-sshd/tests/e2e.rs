@@ -45,10 +45,11 @@ async fn the_real_tui_shows_the_brand_and_the_demo_notice_at_160x50() {
     "banner: {banner:?}"
   );
   let mut terminal = Terminal::open(&handle, 160, 50).await;
+  // A new connection opens on the login page; the system row carries the demo notice.
   assert!(
     terminal
-      .wait_for(WAIT, |t| t.text().contains("◆ROAST/TTY")
-        && t.text().contains("演示环境"))
+      .wait_for(WAIT, |t| t.text().contains("登录 · SIGN IN")
+        && t.text().contains("演示环境 · 不是真实商店"))
       .await,
     "screen:\n{}",
     terminal.text()
@@ -60,7 +61,8 @@ async fn the_real_tui_shows_the_brand_and_the_demo_notice_at_160x50() {
     "no pinned background"
   );
 
-  // Live resize: the app lays itself out again at the new size.
+  // Live resize: the app lays itself out again at the new size (under 32 rows the block
+  // letters give way to the one-line wordmark).
   terminal.resize(100, 30).await;
   assert!(
     terminal
@@ -537,10 +539,29 @@ async fn products_from_the_backend_show_at_160x50() {
   let server = TestServer::start(tui_bin(), |config| config.api_url = api).await;
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let mut terminal = Terminal::open(&handle, 160, 50).await;
-  // A new connection opens on the login page; `g` browses as a guest.
+  // A new connection opens on the login page with the focus in 用户名 (K1): `Esc` leaves
+  // the field, then `g` browses as a guest. Each key waits for the status bar to show its
+  // effect: `Esc` and `g` read in one go would be Alt+g.
+  let status_bar = |t: &Terminal, hint: &str| {
+    t.parser
+      .screen()
+      .contents_between(49, 0, 49, 160)
+      .contains(hint)
+  };
   assert!(
     terminal
-      .wait_text("登录 · SIGN IN", Duration::from_secs(15))
+      .wait_for(Duration::from_secs(15), |t| t
+        .text()
+        .contains("登录 · SIGN IN")
+        && status_bar(t, "Esc  离开输入"))
+      .await,
+    "screen:\n{}",
+    terminal.text()
+  );
+  terminal.send(b"\x1b").await;
+  assert!(
+    terminal
+      .wait_for(Duration::from_secs(15), |t| status_bar(t, "g  访客浏览"))
       .await,
     "screen:\n{}",
     terminal.text()
