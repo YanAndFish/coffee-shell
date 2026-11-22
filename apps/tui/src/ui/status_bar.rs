@@ -231,24 +231,37 @@ pub fn mode_line(
     .child(dynamic(move || {
       shown().map(|right| {
         let short = layout.bp() <= Bp::S;
-        view()
-          .flex_none()
-          .flex_row()
-          .gap(super::layout::gap_cols(2))
-          .pr(super::layout::cols(1))
-          .child(right.mouse.map(|on| {
+        let mut groups: Vec<AnyElement> = Vec::new();
+        if let Some(on) = right.mouse {
+          groups.push(
             text("")
               .child(toned(if on { "● " } else { "○ " }, move || {
                 if on { Tone::Acc2 } else { Tone::Mute }
               }))
               .child(label("鼠标", Tone::Mute))
-          }))
-          .child(right.total.map(|total| {
+              .into_element(),
+          );
+        }
+        if let Some(total) = right.total {
+          groups.push(
             text("")
               .child((!short).then(|| label("购物车 ", Tone::Mute)))
               .child(label(total, Tone::Fg))
-          }))
-          .child(right.help.map(|help| hint_button(help, on_hint)))
+              .into_element(),
+          );
+        }
+        if let Some(help) = right.help {
+          groups.push(hint_button(help, on_hint).into_element());
+        }
+        // Groups three cells apart (wider than any gap nsh lays out), one from the edge.
+        let mut row = view().flex_none().flex_row();
+        for (index, group) in groups.into_iter().enumerate() {
+          if index > 0 {
+            row = row.child(super::layout::hspace(GROUP_GAP as u16));
+          }
+          row = row.child(group);
+        }
+        row.child(super::layout::hspace(1))
       })
     }))
 }
