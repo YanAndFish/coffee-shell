@@ -39,8 +39,15 @@ fixture_files! {
   AUTH_ME = "auth/me.json";
   AUTH_REGISTER = "auth/register.json";
   AUTH_RESUME = "auth/resume.json";
+  PRODUCT_ANTIGUA = "catalog/product-antigua.json";
   PRODUCT_GEISHA = "catalog/product-geisha.json";
+  PRODUCT_MANDH = "catalog/product-mandh.json";
+  PRODUCT_NIGHT = "catalog/product-night.json";
+  PRODUCT_NYERI = "catalog/product-nyeri.json";
   PRODUCT_PINKB = "catalog/product-pinkb.json";
+  PRODUCT_YIRGA = "catalog/product-yirga.json";
+  PRODUCT_YUNNAN = "catalog/product-yunnan.json";
+  PRODUCT_NO_STOCK = "catalog/detail-no-stock.json";
   PRODUCTS_EMPTY = "catalog/products-empty.json";
   PRODUCTS_LIGHT_BY_PRICE = "catalog/products-light-by-price.json";
   PRODUCTS_SEARCH = "catalog/products-search.json";
@@ -49,6 +56,7 @@ fixture_files! {
   CART_ADDRESS_SET = "cart/address-set.json";
   CART_COUPON = "cart/cart-coupon.json";
   CART_EMPTY = "cart/cart-empty.json";
+  CART_NO_ADDRESS = "cart/cart-no-address.json";
   CART_PARTLY_SELECTED = "cart/cart-partly-selected.json";
   CART_PROBLEM = "cart/cart-problem.json";
   CART_COUPON_REMOVED = "cart/coupon-removed.json";
@@ -71,6 +79,7 @@ fixture_files! {
   ORDER_PLACED = "orders/placed.json";
   PROFILE_NEW = "profile/profile-new.json";
   PROFILE_NO_KEY = "profile/profile-no-key.json";
+  PROFILE_ORDERS_NO_KEY = "profile/profile-orders-no-key.json";
   PROFILE = "profile/profile.json";
   SETTINGS_ANIMATIONS_OFF = "profile/settings-animations-off.json";
   SETTINGS = "profile/settings.json";
@@ -116,18 +125,21 @@ pub const WRONG_PASSWORD: &str = "wrongpass";
 /// `409 username_taken`.
 pub const TAKEN_USERNAME: &str = "林晓";
 
-/// Which answers the fixture transport gives: a scenario.
+/// Which answers the fixture transport gives: a scenario. Answers are static: a change (an
+/// add, a delete, a saved address) answers its fixture and is not remembered by later reads.
 ///
 /// Common to all but [`FixtureSet::Down`] and [`FixtureSet::Error`]:
 ///
 /// - `auth: user` endpoints without a token answer `401 login_required`.
+/// - Every member is `林晓` (the contract checks every member fixture names her).
 /// - Register validates as the server does (`username_required`, `username_invalid`,
 ///   `password_too_short`, `password_too_long`), [`TAKEN_USERNAME`] is `username_taken`,
-///   else `auth/register.json`. Login validates the same way, [`WRONG_PASSWORD`] is
-///   `invalid_credentials`, else `auth/login.json` (`auth/login-no-key.json` without a key).
+///   else `auth/register.json` with the typed username. Login validates the same way,
+///   [`WRONG_PASSWORD`] is `invalid_credentials`, else `auth/login.json`
+///   (`auth/login-no-key.json` without a key).
 /// - Resume without a key is `400 fingerprint_required`.
-/// - The product list is filtered, sorted and searched from `products.json`; the details are
-///   `pinkb` and `geisha` (the only two detail fixtures; other ids are `404 not_found`).
+/// - The product list is filtered, sorted and searched from `products.json`; every listed
+///   product has its detail (`catalog/product-<id>.json`); other ids are `404 not_found`.
 /// - Cart: add → `added.json`; unselecting a line → `cart-partly-selected.json`, any other
 ///   line change → `cart.json`; delete → `removed.json`; unselect all → `none-selected.json`,
 ///   select all → `cart.json`; coupon `TTY10` (any case, trimmed) → `cart-coupon.json`, empty
@@ -139,6 +151,8 @@ pub const TAKEN_USERNAME: &str = "林晓";
 ///   `phone_invalid`) and answer their fixtures; ids 1–3 exist.
 /// - Checkout → `orders/placed.json` (an idempotency key outside 8–64 characters is
 ///   `400 validation_failed`).
+/// - The profile is `profile/profile.json`, `profile/profile-orders-no-key.json` without a
+///   key.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FixtureSet {
   /// `fixture:` / `fixture:guest` / `fixture:contract`: a new visitor. Its key (if the
@@ -150,8 +164,26 @@ pub enum FixtureSet {
   /// once (only when the connection has a key, as on the real server).
   Member,
   /// `fixture:empty`: nothing anywhere: no products, an empty cart, no addresses, no
-  /// orders, a new profile; resume answers `not_remembered`.
+  /// orders, a new profile (`profile-new.json`, `profile-no-key.json` without a key);
+  /// resume answers `not_remembered`.
   Empty,
+  /// `fixture:new`: `林晓` as a new member: the whole catalog, one line in the cart and no
+  /// address (`cart-no-address.json`, also the answer to an add; using an address is
+  /// `404 not_found`, checkout `422 address_required`), no addresses (saving one answers
+  /// `saved-first.json`), no orders, the new profile.
+  New,
+  /// `fixture:problem`: short stock and failing writes: `nyeri` is out of stock (list stock
+  /// 0, `detail-no-stock.json`) and `geisha` down to 2 (its list stock, detail bound and
+  /// totals); the cart is `cart-problem.json` (3 Geisha flagged `out_of_stock`); adding more
+  /// than is left and checking out answer `409 out_of_stock` with what is left; saving an
+  /// address answers `500 internal_error`.
+  Problem,
+  /// `fixture:expired`: as `fixture:member` (a key resumes at once), but every member call
+  /// answers `401 session_expired` (`登录已失效`).
+  Expired,
+  /// `fixture:member-error`: signing in works, the catalog works, every member call
+  /// answers `500 internal_error` (the member pages' failed states).
+  MemberError,
   /// `fixture:down`: no backend at all: every request fails as a refused connection does.
   Down,
   /// `fixture:error`: a backend that answers every request `500 internal_error`.
@@ -159,16 +191,27 @@ pub enum FixtureSet {
 }
 
 impl FixtureSet {
-  /// The set `name` names (`guest`/`contract`, `member`, `empty`, `down`, `error`);
-  /// anything else is the contract set.
+  /// Every scenario.
+  pub const ALL: [FixtureSet; 9] = [
+    FixtureSet::Contract,
+    FixtureSet::Member,
+    FixtureSet::Empty,
+    FixtureSet::New,
+    FixtureSet::Problem,
+    FixtureSet::Expired,
+    FixtureSet::MemberError,
+    FixtureSet::Down,
+    FixtureSet::Error,
+  ];
+
+  /// The set `name` names (`guest`/`contract`, `member`, `empty`, `new`, `problem`,
+  /// `expired`, `member-error`, `down`, `error`); anything else is the contract set.
   pub fn parse(name: &str) -> Self {
-    match name.trim() {
-      "member" => FixtureSet::Member,
-      "empty" => FixtureSet::Empty,
-      "down" => FixtureSet::Down,
-      "error" => FixtureSet::Error,
-      _ => FixtureSet::Contract,
-    }
+    let name = name.trim();
+    Self::ALL
+      .into_iter()
+      .find(|set| set.name() == name)
+      .unwrap_or_default()
   }
 
   /// Its name, as [`Self::parse`] reads it.
@@ -177,8 +220,21 @@ impl FixtureSet {
       FixtureSet::Contract => "guest",
       FixtureSet::Member => "member",
       FixtureSet::Empty => "empty",
+      FixtureSet::New => "new",
+      FixtureSet::Problem => "problem",
+      FixtureSet::Expired => "expired",
+      FixtureSet::MemberError => "member-error",
       FixtureSet::Down => "down",
       FixtureSet::Error => "error",
+    }
+  }
+
+  /// What is left of `product` when this scenario changes its stock ([`FixtureSet::Problem`]).
+  fn stock_left(self, product: &str) -> Option<u32> {
+    match (self, product) {
+      (FixtureSet::Problem, "nyeri") => Some(0),
+      (FixtureSet::Problem, "geisha") => Some(2),
+      _ => None,
     }
   }
 }
@@ -205,10 +261,26 @@ fn created(body: &'static str) -> Result<Answer, ApiFailure> {
 }
 
 fn json(value: &impl serde::Serialize) -> Result<Answer, ApiFailure> {
+  json_status(200, value)
+}
+
+fn json_status(status: u16, value: &impl serde::Serialize) -> Result<Answer, ApiFailure> {
   Ok(Answer {
-    status: 200,
+    status,
     body: Cow::Owned(serde_json::to_string(value).expect("fixture answers serialize")),
   })
+}
+
+/// `409 out_of_stock` for `product` with `available` left (the committed envelope's
+/// details, re-aimed).
+fn out_of_stock(product: &ProductSummary, available: u32) -> Result<Answer, ApiFailure> {
+  let mut envelope: ApiError = serde_json::from_str(E_OUT_OF_STOCK).expect("out_of_stock.json");
+  if let Some(details) = envelope.error.details.as_mut() {
+    details.product_id = Some(product.id.clone());
+    details.product_name = Some(product.name.clone());
+    details.available = Some(available);
+  }
+  json_status(ErrorCode::OutOfStock.status(), &envelope)
 }
 
 /// The committed envelope of `code` (`errors/<code>.json`).
@@ -251,6 +323,49 @@ fn products() -> ProductList {
 
 fn known_product(id: &str) -> bool {
   products().items.iter().any(|p| p.id == id)
+}
+
+/// The committed detail of product `id` (`catalog/product-<id>.json`).
+pub(crate) fn product_detail(id: &str) -> Option<&'static str> {
+  let path = format!("catalog/product-{id}.json");
+  FILES
+    .iter()
+    .find(|(file, _)| *file == path)
+    .map(|(_, body)| *body)
+}
+
+impl FixtureSet {
+  /// The product list of this scenario: `products.json` with [`Self::stock_left`] applied.
+  fn products(self) -> ProductList {
+    let mut list = products();
+    for product in &mut list.items {
+      if let Some(left) = self.stock_left(&product.id) {
+        product.stock = left;
+      }
+    }
+    list
+  }
+
+  /// The detail of `id`: its fixture, with [`Self::stock_left`] applied as the server would
+  /// (nyeri's empty stock is `catalog/detail-no-stock.json`).
+  fn detail(self, id: &str) -> Result<Answer, ApiFailure> {
+    let Some(body) = product_detail(id) else {
+      return fail(ErrorCode::NotFound);
+    };
+    match self.stock_left(id) {
+      None => ok(body),
+      Some(0) if id == "nyeri" => ok(PRODUCT_NO_STOCK),
+      Some(left) => {
+        let mut detail: ProductDetail = serde_json::from_str(body).expect("a ProductDetail");
+        detail.stock = left;
+        detail.max_quantity = u8::try_from(left.min(9)).unwrap_or(9);
+        for cell in &mut detail.prices {
+          cell.totals.truncate(usize::from(detail.max_quantity));
+        }
+        json(&detail)
+      }
+    }
+  }
 }
 
 /// The SKUs of the fixture member cart.
@@ -426,10 +541,18 @@ impl FixtureSet {
       FixtureSet::Error => return fail(ErrorCode::InternalError),
       _ => {}
     }
-    if call.endpoint.access == Access::Member && !client.signed_in() {
-      return fail(ErrorCode::LoginRequired);
+    if call.endpoint.access == Access::Member {
+      match self {
+        _ if !client.signed_in() => return fail(ErrorCode::LoginRequired),
+        FixtureSet::Expired => return fail(ErrorCode::SessionExpired),
+        FixtureSet::MemberError => return fail(ErrorCode::InternalError),
+        _ => {}
+      }
     }
     let empty = self == FixtureSet::Empty;
+    // A new member's book: no addresses, no orders, the new profile.
+    let fresh = empty || self == FixtureSet::New;
+    let problem = self == FixtureSet::Problem;
     let segments: Vec<&str> = call.route().trim_start_matches('/').split('/').collect();
     let method = call.endpoint.method;
     match (method, segments.as_slice()) {
@@ -444,7 +567,9 @@ impl FixtureSet {
         if request.username.trim().to_lowercase() == TAKEN_USERNAME.to_lowercase() {
           return fail(ErrorCode::UsernameTaken);
         }
-        created(AUTH_REGISTER)
+        let mut session: AuthSession = serde_json::from_str(AUTH_REGISTER).expect("register.json");
+        session.user.username = request.username.trim().to_owned();
+        json_status(201, &session)
       }
       (Method::Post, ["auth", "login"]) => {
         let request: LoginRequest = parse_body!(call);
@@ -462,7 +587,7 @@ impl FixtureSet {
       }
       (Method::Post, ["auth", "resume"]) => match (client.fingerprint(), self) {
         (None, _) => fail(ErrorCode::FingerprintRequired),
-        (Some(_), FixtureSet::Member) => ok(AUTH_RESUME),
+        (Some(_), FixtureSet::Member | FixtureSet::Expired) => ok(AUTH_RESUME),
         (Some(_), _) => fail(ErrorCode::NotRemembered),
       },
       (Method::Post, ["auth", "logout"]) => ok(AUTH_LOGOUT),
@@ -471,27 +596,42 @@ impl FixtureSet {
       // catalog
       (Method::Get, ["products"]) if empty => ok(PRODUCTS_EMPTY),
       (Method::Get, ["products"]) => json(&filter_products(
-        products(),
+        self.products(),
         &parse_product_query(&call.path),
       )),
-      (Method::Get, ["products", id]) => match (empty, percent_decode(id).as_str()) {
-        (false, "pinkb") => ok(PRODUCT_PINKB),
-        (false, "geisha") => ok(PRODUCT_GEISHA),
-        _ => fail(ErrorCode::NotFound),
-      },
+      (Method::Get, ["products", _]) if empty => fail(ErrorCode::NotFound),
+      (Method::Get, ["products", id]) => self.detail(&percent_decode(id)),
 
       // cart
-      (Method::Get, ["cart"]) if empty => ok(CART_EMPTY),
-      (Method::Get, ["cart"]) => ok(CART),
+      (Method::Get, ["cart"]) => ok(match self {
+        FixtureSet::Empty => CART_EMPTY,
+        FixtureSet::New => CART_NO_ADDRESS,
+        FixtureSet::Problem => CART_PROBLEM,
+        _ => CART,
+      }),
       (Method::Post, ["cart", "lines"]) => {
         let request: AddCartLineRequest = parse_body!(call);
-        if !known_product(&request.product_id) {
+        let Some(product) = self
+          .products()
+          .items
+          .into_iter()
+          .find(|p| p.id == request.product_id)
+        else {
           return fail(ErrorCode::NotFound);
-        }
+        };
         if !quantity_ok(request.quantity) {
           return fail(ErrorCode::QuantityInvalid);
         }
-        ok(CART_ADDED)
+        if let Some(left) = self.stock_left(&product.id)
+          && u32::from(request.quantity) > left
+        {
+          return out_of_stock(&product, left);
+        }
+        if self == FixtureSet::New {
+          ok(CART_NO_ADDRESS)
+        } else {
+          ok(CART_ADDED)
+        }
       }
       (Method::Patch, ["cart", "lines", sku]) => {
         let request: UpdateCartLineRequest = parse_body!(call);
@@ -533,7 +673,7 @@ impl FixtureSet {
       (Method::Delete, ["cart", "coupon"]) => ok(CART_COUPON_REMOVED),
       (Method::Put, ["cart", "address"]) => {
         let request: SetCartAddressRequest = parse_body!(call);
-        if !empty && KNOWN_ADDRESSES.contains(&request.address_id) {
+        if !fresh && KNOWN_ADDRESSES.contains(&request.address_id) {
           ok(CART_ADDRESS_SET)
         } else {
           fail(ErrorCode::NotFound)
@@ -568,14 +708,16 @@ impl FixtureSet {
       }
 
       // addresses
-      (Method::Get, ["addresses"]) if empty => ok(ADDRESSES_EMPTY),
+      (Method::Get, ["addresses"]) if fresh => ok(ADDRESSES_EMPTY),
       (Method::Get, ["addresses"]) => ok(ADDRESSES),
       (Method::Post, ["addresses"]) => {
         let input: AddressInput = parse_body!(call);
         if let Some(answer) = validate_address(&input) {
           return answer;
         }
-        if empty {
+        if problem {
+          fail(ErrorCode::InternalError)
+        } else if fresh {
           created(ADDRESS_SAVED_FIRST)
         } else {
           created(ADDRESS_SAVED_NO_PHONE)
@@ -583,20 +725,26 @@ impl FixtureSet {
       }
       (Method::Put, ["addresses", id]) => {
         let input: AddressInput = parse_body!(call);
-        if empty || !id.parse().is_ok_and(|id| KNOWN_ADDRESSES.contains(&id)) {
+        if fresh || !id.parse().is_ok_and(|id| KNOWN_ADDRESSES.contains(&id)) {
           return fail(ErrorCode::NotFound);
         }
-        validate_address(&input).unwrap_or_else(|| ok(ADDRESS_UPDATED))
+        validate_address(&input).unwrap_or_else(|| {
+          if problem {
+            fail(ErrorCode::InternalError)
+          } else {
+            ok(ADDRESS_UPDATED)
+          }
+        })
       }
       (Method::Delete, ["addresses", id]) => {
-        if !empty && id.parse().is_ok_and(|id| KNOWN_ADDRESSES.contains(&id)) {
+        if !fresh && id.parse().is_ok_and(|id| KNOWN_ADDRESSES.contains(&id)) {
           ok(ADDRESSES_DELETED_DEFAULT)
         } else {
           fail(ErrorCode::NotFound)
         }
       }
       (Method::Post, ["addresses", id, "default"]) => {
-        if !empty && id.parse().is_ok_and(|id| KNOWN_ADDRESSES.contains(&id)) {
+        if !fresh && id.parse().is_ok_and(|id| KNOWN_ADDRESSES.contains(&id)) {
           ok(ADDRESSES_DEFAULT_MOVED)
         } else {
           fail(ErrorCode::NotFound)
@@ -615,14 +763,19 @@ impl FixtureSet {
         {
           return fail(ErrorCode::ValidationFailed);
         }
-        if empty {
-          return fail(ErrorCode::EmptySelection);
+        match self {
+          FixtureSet::Empty => fail(ErrorCode::EmptySelection),
+          FixtureSet::New => fail(ErrorCode::AddressRequired),
+          FixtureSet::Problem => {
+            let geisha = self.products().items.into_iter().find(|p| p.id == "geisha");
+            out_of_stock(&geisha.expect("geisha is listed"), 2)
+          }
+          _ => created(ORDER_PLACED),
         }
-        created(ORDER_PLACED)
       }
-      (Method::Get, ["orders"]) if empty => ok(ORDERS_EMPTY),
+      (Method::Get, ["orders"]) if fresh => ok(ORDERS_EMPTY),
       (Method::Get, ["orders"]) => ok(ORDERS),
-      (Method::Get, ["orders", number]) => match (empty, *number) {
+      (Method::Get, ["orders", number]) => match (fresh, *number) {
         (false, "RT2611150203") => ok(ORDER_COUPON),
         (false, "RT2611060117") => ok(ORDER),
         (false, "RT2611220417") => {
@@ -633,9 +786,12 @@ impl FixtureSet {
       },
 
       // profile
-      (Method::Get, ["profile"]) if empty => ok(PROFILE_NEW),
-      (Method::Get, ["profile"]) if client.fingerprint().is_none() => ok(PROFILE_NO_KEY),
-      (Method::Get, ["profile"]) => ok(PROFILE),
+      (Method::Get, ["profile"]) => ok(match (fresh, client.fingerprint().is_some()) {
+        (true, true) => PROFILE_NEW,
+        (true, false) => PROFILE_NO_KEY,
+        (false, true) => PROFILE,
+        (false, false) => PROFILE_ORDERS_NO_KEY,
+      }),
       (Method::Get, ["settings"]) => ok(SETTINGS),
       (Method::Patch, ["settings"]) => {
         let patch: SettingsPatch = parse_body!(call);

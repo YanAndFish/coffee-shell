@@ -38,8 +38,14 @@ fn urls_pick_the_transport() {
     ("fixture:empty", FixtureSet::Empty),
     ("fixture:down", FixtureSet::Down),
     ("fixture:error", FixtureSet::Error),
+    ("fixture:new", FixtureSet::New),
+    ("fixture:problem", FixtureSet::Problem),
+    ("fixture:expired", FixtureSet::Expired),
+    ("fixture:member-error", FixtureSet::MemberError),
   ] {
     assert_eq!(Transport::from_url(url), Transport::Fixture(set), "{url}");
+  }
+  for set in FixtureSet::ALL {
     assert_eq!(FixtureSet::parse(set.name()), set);
   }
 }
@@ -103,7 +109,9 @@ fn every_fixture_decodes_through_the_client() {
         _ => check::<AuthSession>(path, body),
       },
       _ if path.starts_with("catalog/products-") => check::<ProductList>(path, body),
-      _ if path.starts_with("catalog/product-") => check::<ProductDetail>(path, body),
+      _ if path.starts_with("catalog/product-") || path.starts_with("catalog/detail-") => {
+        check::<ProductDetail>(path, body)
+      }
       "cart/merge.json" => check::<CartMergeResult>(path, body),
       _ if path.starts_with("cart/") => check::<Cart>(path, body),
       _ if path.starts_with("addresses/list") || file.starts_with("deleted") => {
@@ -348,6 +356,10 @@ fn every_endpoint_answers_from_its_fixtures() {
   assert_eq!(run(m.me()).unwrap().user.username, "林晓");
   // catalog
   assert_eq!(run(guest.products()).unwrap().items.len(), 8);
+  for summary in run(guest.products()).unwrap().items {
+    let detail = run(guest.product(&summary.id)).unwrap();
+    assert_eq!((detail.id, detail.stock), (summary.id, summary.stock));
+  }
   assert_eq!(run(guest.product("pinkb")).unwrap().code, "PNK");
   assert_eq!(run(guest.product("geisha")).unwrap().max_quantity, 6);
   // cart
@@ -586,7 +598,7 @@ fn the_scenarios_answer_as_documented() {
     0
   );
   assert!(
-    run(guest.product("yirga"))
+    run(guest.product("nope"))
       .unwrap_err()
       .is(ErrorCode::NotFound)
   );
@@ -647,4 +659,151 @@ fn usernames_follow_the_contract_pattern() {
   ] {
     assert!(!username_is_valid(bad), "{bad}");
   }
+}
+
+#[test]
+fn every_member_answer_is_the_same_member() {
+  let login = LoginRequest {
+    username: "林晓".into(),
+    password: "secret1".into(),
+    remember: true,
+  };
+  let me = run(member(FixtureSet::Contract).me()).unwrap().user;
+  assert_eq!(me.username, "林晓");
+  for set in [FixtureSet::Contract, FixtureSet::Empty, FixtureSet::New] {
+    for client in [member(set), client(set).with_token(Some("t".repeat(43)))] {
+      assert_eq!(run(client.login(&login)).unwrap().user, me, "{set:?}");
+      assert_eq!(run(client.profile()).unwrap().user, me, "{set:?}");
+    }
+  }
+  // Without a key: her own profile (orders, taste), marked `no_key`.
+  let keyless = client(FixtureSet::Contract).with_token(Some("t".repeat(43)));
+  let profile = run(keyless.profile()).unwrap();
+  assert_eq!(profile.remembered.state, RememberState::NoKey);
+  assert_eq!(profile.stats.orders, 4);
+  assert!(profile.taste.is_some());
+  // A new member without a key: the new profile, marked `no_key`.
+  let fresh = client(FixtureSet::Empty).with_token(Some("t".repeat(43)));
+  let profile = run(fresh.profile()).unwrap();
+  assert_eq!(profile.remembered.state, RememberState::NoKey);
+  assert!(profile.taste.is_none());
+  // Registering answers the register fixture with the typed name.
+  let register = RegisterRequest {
+    username: " 新会员_1 ".into(),
+    password: "secret1".into(),
+    remember: false,
+  };
+  let session = run(client(FixtureSet::Contract).register(&register)).unwrap();
+  assert_eq!(session.user.username, "新会员_1");
+  assert_eq!(session.user.id, me.id);
+}
+
+#[test]
+fn the_state_scenarios_answer_as_documented() {
+  let keyless = |set| client(set).with_fingerprint(Some("SHA256:k".into()));
+  let order = PlaceOrderRequest {
+    idempotency_key: "checkout-0001".into(),
+    expected_total: None,
+  };
+  // new: one line, no address; checkout needs one; nothing else yet.
+  let new = member(FixtureSet::New);
+  let cart = run(new.cart()).unwrap();
+  assert_eq!((cart.lines.len(), cart.address.is_none()), (1, true));
+  assert_eq!(cart.totals.shipping, 12);
+  assert_eq!(run(new.products()).unwrap().items.len(), 8);
+  assert!(run(new.addresses()).unwrap().items.is_empty());
+  assert_eq!(run(new.orders(None)).unwrap().total, 0);
+  assert!(run(new.profile()).unwrap().taste.is_none());
+  assert!(
+    run(new.place_order(&order))
+      .unwrap_err()
+      .is(ErrorCode::AddressRequired)
+  );
+  assert!(
+    run(keyless(FixtureSet::New).resume())
+      .unwrap_err()
+      .is(ErrorCode::NotRemembered)
+  );
+  // problem: short stock, a flagged line, failing checkout and address saves.
+  let problem = member(FixtureSet::Problem);
+  let stock = |id: &str| {
+    let list = run(problem.products()).unwrap();
+    list.items.into_iter().find(|p| p.id == id).unwrap().stock
+  };
+  assert_eq!(
+    (stock("nyeri"), stock("geisha"), stock("yirga")),
+    (0, 2, 42)
+  );
+  let nyeri = run(problem.product("nyeri")).unwrap();
+  assert_eq!((nyeri.stock, nyeri.max_quantity), (0, 0));
+  let geisha = run(problem.product("geisha")).unwrap();
+  assert_eq!((geisha.stock, geisha.max_quantity), (2, 2));
+  assert!(geisha.prices.iter().all(|cell| cell.totals.len() == 2));
+  let cart = run(problem.cart()).unwrap();
+  assert!(cart.lines.iter().any(|line| line.problem.is_some()));
+  let add = |product: &str, quantity| AddCartLineRequest {
+    product_id: product.into(),
+    weight: Weight::G100,
+    grind: Grind::WholeBean,
+    pack: Pack::Standard,
+    quantity,
+    index: None,
+  };
+  let short = run(problem.add_cart_line(&add("geisha", 3))).unwrap_err();
+  assert!(short.is(ErrorCode::OutOfStock));
+  assert_eq!(short.details().unwrap().available, Some(2));
+  assert!(run(problem.add_cart_line(&add("geisha", 2))).is_ok());
+  let none = run(problem.add_cart_line(&add("nyeri", 1))).unwrap_err();
+  let details = none.details().unwrap();
+  assert_eq!(details.product_name.as_deref(), Some("涅里 AA 双洗"));
+  assert_eq!(details.available, Some(0));
+  let checkout = run(problem.place_order(&order)).unwrap_err();
+  assert_eq!(
+    (checkout.code(), checkout.details().unwrap().available),
+    (Some(ErrorCode::OutOfStock), Some(2))
+  );
+  let input = AddressInput {
+    recipient: "周一".into(),
+    region: "上海市".into(),
+    detail: "某路 1 号".into(),
+    ..AddressInput::default()
+  };
+  for failure in [
+    run(problem.create_address(&input)).unwrap_err(),
+    run(problem.update_address(2, &input)).unwrap_err(),
+  ] {
+    assert!(failure.is(ErrorCode::InternalError));
+  }
+  assert_eq!(run(problem.addresses()).unwrap().items.len(), 3);
+  // expired: a remembered key resumes, then every member call has expired.
+  let expired = keyless(FixtureSet::Expired);
+  assert_eq!(run(expired.resume()).unwrap().user.username, "林晓");
+  let expired = member(FixtureSet::Expired);
+  assert!(
+    run(expired.cart())
+      .unwrap_err()
+      .is(ErrorCode::SessionExpired)
+  );
+  assert!(run(expired.products()).is_ok());
+  // member-error: signing in works, member reads fail.
+  let failing = member(FixtureSet::MemberError);
+  let login = LoginRequest {
+    username: "林晓".into(),
+    password: "secret1".into(),
+    remember: false,
+  };
+  assert!(run(failing.login(&login)).is_ok());
+  assert!(run(failing.products()).is_ok());
+  for failure in [
+    run(failing.cart()).unwrap_err(),
+    run(failing.addresses()).unwrap_err(),
+    run(failing.profile()).unwrap_err(),
+  ] {
+    assert!(failure.is(ErrorCode::InternalError));
+  }
+  assert!(
+    run(failing.orders(None))
+      .unwrap_err()
+      .is(ErrorCode::InternalError)
+  );
 }
