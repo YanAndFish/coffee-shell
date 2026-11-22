@@ -150,7 +150,10 @@ const openGeisha = (app: App) => openProduct(app, 3, '巴拿马')
 
 /** Whether group `name`'s label is the focused one (bold `fg`; the others `mute`, regular). */
 function focusedGroup(app: App, name: string) {
-  return app.spanStyle(`text:${name} >> nth=0`).fontWeight === 700
+  // `数量` is also a status-bar hint (`+ 数量`), which is never bold.
+  const matches = app.count(`text:${name}`)
+  return Array.from({ length: matches }, (_, n) =>
+    app.spanStyle(`text:${name} >> nth=${n}`).fontWeight === 700).some(Boolean)
 }
 
 for (const [cols, rows] of SIZES) {
@@ -209,7 +212,7 @@ for (const [cols, rows] of SIZES) {
       expect(lines.some(line => line.includes('[ 100g ] ▐ 250g ▌ [ 500g ] [ 1kg  ]'))).toBe(true)
       expect(lines.some(line => line.includes('› 重量') && line.includes('← → 切换'))).toBe(true)
       // Two columns: the information panel and the SKU panel share their top row.
-      expect(lines[sku].trimStart().startsWith('╭─')).toBe(false)
+      expect(lines[sku].indexOf('╭')).toBeLessThan(lines[sku].indexOf('╭─ 规格 SKU'))
       expect(lines.some(line => line.includes('── 豆子档案') && line.includes('── 风味指标'))).toBe(true)
       expect(lines.some(line => line.includes('产区 ┈') && line.includes('慧兰 · 皮塔利托'))).toBe(true)
       expect(lines.some(line => line.includes('烘焙度 ┈') && line.includes('中浅烘 ●●○○○'))).toBe(true)
@@ -239,8 +242,9 @@ for (const [cols, rows] of SIZES) {
         expect(lines.some(line => line.includes('¥118.00  1 × ¥118  已选 250g · 整豆 · 标准袋'))).toBe(true)
       }
       else {
-        // M: the purchase row is the content's last row, above the status bar.
-        expect(actions).toBe(rows - 2)
+        // M: the purchase row is the content's last row, above the status bar (and the
+        // shell's toast row while a toast shows).
+        expect(actions).toBeGreaterThanOrEqual(rows - 3)
         expect(lines[actions]).toContain('¥118.00  1 × ¥118')
       }
       // The scroll bar takes the rightmost content cell.
@@ -389,7 +393,9 @@ test('a low-stock product: 仅剩 6 份, the quantity stops at 6', async () => {
   const rows = await screenRows(app)
   if (rows) {
     expect(rows.some(line => line.includes('› 数量  [ − │ 6 │ + ]  仅剩 6 份 · 售完即止'))).toBe(true)
-    expect(rows[28]).toContain('▐ a 加入购物车 ▌ [ b 立即购买 ]')
+    // The pinned purchase row stays at the content's foot (a toast may sit under it).
+    const actions = rows.findIndex(line => line.includes('▐ a 加入购物车 ▌ [ b 立即购买 ]'))
+    expect(actions).toBeGreaterThanOrEqual(rows.length - 3)
   }
 })
 
