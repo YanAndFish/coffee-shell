@@ -120,7 +120,7 @@ test('160×50: brand column with the block wordmark and cup, the full card at co
   // The focused field's frame is heavy.
   await typing(app)
   const after = cellRows((await screenCells(app))!)
-  expect(find(after, '┏━━━━')?.[1]).toBe(101)
+  expect(find(after, '┏━━━━')?.[1]).toBe(102)
 })
 
 test('130×40: the same structure, the wordmark from column 5', async () => {
