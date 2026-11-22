@@ -79,6 +79,34 @@ release 构建。连续两轮：
 RSS 两轮之差来自 macOS 的内存压缩/回收时机（同一二进制、同一页面），按上限 20 MB 规划：64 个会话约
 1.3 GB + sshd。空闲 CPU 仍在测量下限。结论不变：**保留每会话一个进程**。
 
+### 第二阶段完成后复测（2026-11-22，六个画面全部落地）
+
+同一测试（已改为新流程：新连接先到登录页，首帧以演示提示 `演示环境` 为准；设了 `COFFEE_SPIKE_WAIT` 时每个会话
+以访客身份走一遍：`Esc` → `g` → 列表 → `⏎` 第一款的详情 → `a` 加入 → `2` 购物车，之后停在购物车上测内存与空闲
+CPU）。同一台机器（Apple M1，8 核，macOS 27.2），release `coffee-sshd` + release `coffee-tui`，后端为
+`node dist/main.mjs`（`pnpm -F @coffee/server build`）+ 新迁移、新种子的 SQLite，带内部密钥；先连一次预热。复现：
+起后端与 release sshd（`COFFEE_SSH_MAX_SESSIONS_PER_IP=64`、`COFFEE_SSH_CONNECTIONS_PER_MINUTE=0`），然后
+`COFFEE_SPIKE_ADDR=127.0.0.1:<端口> COFFEE_SPIKE_PID=<sshd pid> COFFEE_SPIKE_WAIT='耶加雪菲 孔加' cargo test --release
+-p coffee-sshd --test e2e measure_twenty_sessions -- --ignored --nocapture`。
+
+| 指标                                      | 走完 列表→详情→购物车（第 1 轮） | 同（第 2 轮）                | 只停在登录页                |
+| ----------------------------------------- | -------------------------------- | ---------------------------- | --------------------------- |
+| 连接 → 首帧（登录页，20 个同时发起）      | p50 74 ms · p95/最大 160 ms      | p50 63 ms · p95/最大 91 ms   | p50 80 ms · p95/最大 95 ms  |
+| 连接 → 商品列表（含 `Esc`、`g` 两次往返） | p50 267 ms · p95/最大 325 ms     | p50 231 ms · p95/最大 263 ms | —                           |
+| 每个 `coffee-tui` 常驻内存（RSS）         | 35.1–37.1 MB，均值 36.1 MB       | 35.2–37.7 MB，均值 36.4 MB   | 22.5–22.9 MB，均值 22.8 MB  |
+| 每个 `coffee-tui` 空闲 CPU（10 秒窗口）   | 均值 0.03 %，最大 0.10 %         | 均值 0.06 %，最大 0.10 %     | 均值 0.38 %，最大 0.50 %    |
+| `coffee-sshd` 自身                        | RSS 7.4 MB，空闲 CPU 0.10 %      | RSS 7.6 MB，空闲 CPU 0.10 %  | RSS 7.5 MB，空闲 CPU 0.30 % |
+| 20 个客户端同时断开                       | 14 ms 内全部子进程退出，0 残留   | 13 ms 内全部退出，0 残留     | 16 ms 内全部退出，0 残留    |
+
+读法：
+
+- 内存随用过的画面增长（详情的风味雷达、购物车、各 store 的数据），走完一圈约 **36 MB**，比上一轮只看列表时的
+  15–20 MB 高，但仍远低于 60 MB 的阈值。按 **40 MB/会话** 规划：64 个会话约 2.6 GB + sshd。
+- 停在购物车上的空闲 CPU 仍在测量下限；**停在登录页**时每会话约 0.4 %（20 个会话合计约 8 % 个核），来自登录页的
+  蒸汽动画（离开登录页、停在购物车上即回到下限），sshd 为转发这些帧也有 0.3 %。这是有意的动效，不改变结论，
+  但公开部署时若大量连接停在登录页，可考虑让动画在无输入一段时间后停下（已列为对界面的建议）。
+- 结论不变：**保留每会话一个进程**。
+
 断开行为：客户端断开（TCP 关闭）后 sshd 立即向子进程**进程组**发 SIGHUP，`coffee-tui` 收到后
 恢复终端并退出；1 秒内未退出则 SIGKILL（`KILL_GRACE`），所以 2 秒内必然回收。e2e 测试
 `a_disconnect_ends_the_real_tui_within_two_seconds` 与 `a_disconnect_ends_the_child_within_two_seconds`
