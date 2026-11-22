@@ -278,11 +278,16 @@ dependencies = [
 [[package]]
 name = "coffee-api"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "coffee-app"
 version = "0.1.0"
 dependencies = [
+ "coffee-api",
  "nsh-base",
  "nsh-core",
 ]

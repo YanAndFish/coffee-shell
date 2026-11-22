@@ -13,6 +13,10 @@
 //!   before it mounts [`App`]. One process serves exactly one SSH session, so they are a
 //!   process-wide `OnceLock`.
 //! - [`session_env`]: how the UI reads them back.
+//! - [`APP_ID`] and [`THEME_JSON`]: `nsh.json`'s `"id"` and `"theme"` (dark only), which a
+//!   host that mounts the root itself applies with `Root::app_id`, `Root::tokens` and
+//!   `Root::appearance(Appearance::Dark)` (`nsh run`/`nsh test` do that from `nsh.json`).
+//! - The API types: `coffee_api` (re-exported as [`api`]).
 
 use std::sync::OnceLock;
 
@@ -42,6 +46,16 @@ pub struct SessionEnv {
   /// Forced color depth: `truecolor`, `256`, `16` or `mono`; `None` detects it.
   pub color_mode: Option<String>,
 }
+
+/// The app's id; `nsh.json` `"id"` is the same.
+pub const APP_ID: &str = "dev.yafh.coffee";
+
+/// The app's theme file (`apps/tui/theme.json`, shadcn `cssVars`, dark only), which
+/// `nsh.json` `"theme"` names. Read it with `nsh_base::Theme::from_json`.
+pub const THEME_JSON: &str = include_str!("../theme.json");
+
+/// The backend API's DTOs.
+pub use coffee_api as api;
 
 static SESSION_ENV: OnceLock<SessionEnv> = OnceLock::new();
 
@@ -74,6 +88,13 @@ pub fn App() -> impl IntoElement {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn theme_parses_with_the_design_tokens() {
+    let theme = nsh_base::Theme::from_json(THEME_JSON).unwrap();
+    assert!(theme.color("success").is_some());
+    assert!(theme.color("soft").is_some());
+  }
 
   #[test]
   fn configure_keeps_the_first_value() {

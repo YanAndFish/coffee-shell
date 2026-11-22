@@ -1,0 +1,19 @@
+{
+  "cssVars": {
+    "dark": {
+      "background": "#14110e",
+      "card": "#1b1713",
+      "popover": "#1b1713",
+      "border": "#3b332a",
+      "input": "#3b332a",
+      "foreground": "#ece4d6",
+      "muted-foreground": "#a39684",
+      "primary": "#f0b45a",
+      "ring": "#f0b45a",
+      "primary-foreground": "#1a140d",
+      "destructive": "#f08a6c",
+      "success": "#8cc7a1",
+      "soft": "#d9cfbf"
+    }
+  }
+}

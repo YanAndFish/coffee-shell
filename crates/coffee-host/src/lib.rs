@@ -10,8 +10,8 @@ use std::{env, io, time::Duration};
 
 use coffee_app::SessionEnv;
 use nsh_platform_tui::{
-  AppOptions, AppView, ColorDepth, Input, Modifiers, MouseButton, MouseInput, MouseKind, Root,
-  RunEvent, TerminalCapabilities, run_app,
+  AppOptions, AppView, Appearance, ColorDepth, Input, Modifiers, MouseButton, MouseInput,
+  MouseKind, Root, RunEvent, TerminalCapabilities, run_app,
 };
 use ratatui_core::terminal::Terminal;
 use ratatui_crossterm::{
@@ -60,10 +60,24 @@ pub fn color_depth(color_mode: Option<&str>) -> ColorDepth {
   }
 }
 
+/// The app's root as nsh's generated runners mount it from `nsh.json`: its theme
+/// (`coffee_app::THEME_JSON`), id (`coffee_app::APP_ID`) and dark appearance.
+pub fn app_root() -> io::Result<Root> {
+  let theme = nsh_base::Theme::from_json(coffee_app::THEME_JSON)
+    .map_err(|error| io::Error::other(format!("theme.json: {error}")))?;
+  Ok(
+    Root::of::<coffee_app::App>()
+      .tokens(theme.into_tokens())
+      .app_id(coffee_app::APP_ID)
+      .appearance(Appearance::Dark),
+  )
+}
+
 /// Configures `coffee_app` with `env` and runs its root until the app or the terminal ends.
 pub fn run(env: SessionEnv) -> io::Result<()> {
   let colors = color_depth(env.color_mode.as_deref());
   coffee_app::configure(env);
+  let root = app_root()?;
 
   let mut capabilities = TerminalCapabilities::default();
   capabilities.colors = colors;
@@ -76,7 +90,7 @@ pub fn run(env: SessionEnv) -> io::Result<()> {
   let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
   // Prime the area so the first layout has the terminal's size, as nsh-tui-host does.
   terminal.draw(|frame| view.render(frame, frame.area()))?;
-  view.load(Root::of::<coffee_app::App>())?;
+  view.load(root)?;
   run_app(&mut terminal, &mut view, poll)
 }
 
@@ -207,6 +221,11 @@ fn key_name(code: KeyCode) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn the_root_takes_the_theme() {
+    assert!(app_root().is_ok());
+  }
 
   #[test]
   fn forced_color_modes_win() {

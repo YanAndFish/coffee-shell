@@ -10,5 +10,6 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+coffee-api.workspace = true
 nsh-core.workspace = true
 nsh-base.workspace = true

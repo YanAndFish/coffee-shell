@@ -15,6 +15,9 @@ dist/
 *.sqlite
 .env*
 
+# Claude Code worktrees
+.claude/worktrees/
+
 # OS / editors
 .DS_Store
 .vscode/

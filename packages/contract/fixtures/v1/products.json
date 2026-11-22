@@ -1,0 +1,212 @@
+{
+  "items": [
+    {
+      "id": "yirga",
+      "name": "耶加雪菲 孔加",
+      "subtitle": "Ethiopia · Yirgacheffe Konga G1",
+      "origin": "埃塞俄比亚",
+      "process": "水洗",
+      "roast": 1,
+      "tag": "新产季",
+      "notes": [
+        "茉莉",
+        "柠檬",
+        "佛手柑",
+        "红茶"
+      ],
+      "flavor": [
+        8,
+        7,
+        4,
+        2,
+        7,
+        9
+      ],
+      "score": 87.5,
+      "price250": 98,
+      "stock": 42
+    },
+    {
+      "id": "pinkb",
+      "name": "慧兰 粉红波旁",
+      "subtitle": "Colombia · Huila Pink Bourbon",
+      "origin": "哥伦比亚",
+      "process": "水洗",
+      "roast": 2,
+      "tag": "店长推荐",
+      "notes": [
+        "荔枝",
+        "蔓越莓",
+        "蜂蜜",
+        "可可"
+      ],
+      "flavor": [
+        7,
+        8,
+        5,
+        2,
+        8,
+        8
+      ],
+      "score": 88,
+      "price250": 118,
+      "stock": 26
+    },
+    {
+      "id": "nyeri",
+      "name": "涅里 AA 双洗",
+      "subtitle": "Kenya · Nyeri AA Double Washed",
+      "origin": "肯尼亚",
+      "process": "双重水洗",
+      "roast": 2,
+      "tag": null,
+      "notes": [
+        "黑醋栗",
+        "西柚",
+        "番茄",
+        "红糖"
+      ],
+      "flavor": [
+        9,
+        6,
+        6,
+        3,
+        7,
+        7
+      ],
+      "score": 87,
+      "price250": 108,
+      "stock": 18
+    },
+    {
+      "id": "geisha",
+      "name": "波奎特 瑰夏",
+      "subtitle": "Panama · Boquete Geisha Washed",
+      "origin": "巴拿马",
+      "process": "水洗",
+      "roast": 1,
+      "tag": "限量",
+      "notes": [
+        "茉莉",
+        "白桃",
+        "柑橘",
+        "蜂蜜"
+      ],
+      "flavor": [
+        7,
+        8,
+        3,
+        1,
+        9,
+        10
+      ],
+      "score": 90,
+      "price250": 268,
+      "stock": 6
+    },
+    {
+      "id": "yunnan",
+      "name": "保山 小粒 日晒",
+      "subtitle": "China · Yunnan Baoshan Natural",
+      "origin": "中国云南",
+      "process": "日晒",
+      "roast": 3,
+      "tag": null,
+      "notes": [
+        "红枣",
+        "黑巧",
+        "莓果",
+        "焦糖"
+      ],
+      "flavor": [
+        5,
+        7,
+        6,
+        4,
+        6,
+        6
+      ],
+      "score": 85,
+      "price250": 68,
+      "stock": 64
+    },
+    {
+      "id": "antigua",
+      "name": "安提瓜 火山",
+      "subtitle": "Guatemala · Antigua",
+      "origin": "危地马拉",
+      "process": "水洗",
+      "roast": 4,
+      "tag": null,
+      "notes": [
+        "黑巧",
+        "坚果",
+        "烟熏",
+        "焦糖"
+      ],
+      "flavor": [
+        4,
+        6,
+        7,
+        5,
+        6,
+        6
+      ],
+      "score": 84.5,
+      "price250": 78,
+      "stock": 30
+    },
+    {
+      "id": "mandh",
+      "name": "曼特宁 G1",
+      "subtitle": "Indonesia · Sumatra Mandheling",
+      "origin": "印尼",
+      "process": "湿刨",
+      "roast": 5,
+      "tag": null,
+      "notes": [
+        "草本",
+        "黑巧",
+        "雪松",
+        "糖浆"
+      ],
+      "flavor": [
+        2,
+        5,
+        9,
+        7,
+        8,
+        5
+      ],
+      "score": 84,
+      "price250": 72,
+      "stock": 40
+    },
+    {
+      "id": "night",
+      "name": "「夜班」意式拼配",
+      "subtitle": "House Espresso Blend",
+      "origin": "拼配",
+      "process": "日晒 + 水洗",
+      "roast": 4,
+      "tag": "招牌",
+      "notes": [
+        "可可",
+        "榛子",
+        "焦糖",
+        "太妃"
+      ],
+      "flavor": [
+        4,
+        8,
+        7,
+        4,
+        7,
+        6
+      ],
+      "score": 85.5,
+      "price250": 88,
+      "stock": 120
+    }
+  ]
+}
