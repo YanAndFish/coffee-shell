@@ -91,8 +91,19 @@ release 构建。连续两轮：
 - **色深**：`COFFEE_COLORS=truecolor|256|16|mono` 优先，其次 `NO_COLOR` → 单色，`COLORTERM`
   为 `truecolor/24bit` → 真彩，`TERM` 含 `256color` → 256 色，`TERM=dumb` → 单色，否则 16 色。
   注意：OpenSSH 默认不转发 `COLORTERM`（macOS 自带配置只 `SendEnv LANG LC_*`），所以经 SSH
-  的默认是 `xterm-256color` → 256 色；用户可 `ssh -o SendEnv=COLORTERM`，运维可设服务器端
-  `COFFEE_COLORS=truecolor` 强制真彩。
+  的默认是 `xterm-256color` → 256 色；用户可 `ssh -o SendEnv=COLORTERM`（`pnpm ssh` 已带上），运维可设
+  服务器端 `COFFEE_COLORS=truecolor` 强制真彩（不支持 24 位色的终端会因此显示错色，只在确知客户端时用）。
+  客户端无法经 SSH 设 `COFFEE_COLORS`：sshd 只接受 `LANG`、`LC_*`、`COLORTERM`。集成时实测（原版
+  OpenSSH，`pnpm dev`）：不带 SendEnv → 只有 `38;5;…`；带 `-o SendEnv=COLORTERM` 且本地
+  `COLORTERM=truecolor` → 只有 `38;2;…`；服务器 `COFFEE_COLORS=truecolor` → 不带 SendEnv 也是真彩。
+- **第二阶段可选**（未实现）：不依赖 `COLORTERM` 的真彩探测。
+  1. 按 `TERM` 的品牌判断：`xterm-kitty`、`xterm-ghostty`、`foot`、`alacritty`、`wezterm`、`rio` 这类 `TERM`
+     会经 SSH 原样到达。nsh-tui-host 0.6.1 的 `truecolor_brand`（`terminal.rs`）就这么做（另读
+     `TERM_PROGRAM`、`KITTY_WINDOW_ID` 等，但这些经 SSH 到不了）；`coffee-host` 目前没有这一步。
+  2. 在已有的启动查询里加一个往返：`XTGETTCAP`（`DCS + q 524742 ST`，问 `RGB`/`Tc`）或“设一个 24 位
+     SGR 再用 `DECRQSS m` 读回”，回答完整即真彩。xterm、kitty、foot、WezTerm 支持，Apple Terminal、
+     部分 VTE 不答，所以只能“答了才升级”，不答维持 256 色。
+     两者都只会把 256 升到真彩、不会降级，风险低；需要各终端实测后再定。
 
 ## 调色板钉色结果
 
