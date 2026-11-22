@@ -50,7 +50,10 @@ def shop_today() -> datetime.date:
 # --- Login page ------------------------------------------------------------------------------
 
 def on_login_page(t: Term) -> None:
+  """The login card, ready: the page opens (and returns) with the focus in 用户名 (keymap K1),
+  so the status bar says 离开输入. Keys sent before that land elsewhere."""
   t.wait("用户名", "密码", "演示环境 · 请勿使用真实密码")
+  t.wait_footer("离开输入")
 
 
 def login_field(t: Term) -> str | None:
@@ -77,8 +80,10 @@ def focus_login_field(t: Term, label: str) -> None:
 
 
 def find_label(t: Term, label: str) -> tuple[int, int] | None:
-  """A field's label: alone on its line in a box (not the same word inside a sentence)."""
-  return t.find_re(rf"[│║┃]\s+({label})(?:\s{{2,}}|\s*[│║┃]|$)")
+  """A field's label: alone on its line in a box, or in the field's top border at compact
+  sizes (`┏━ 用户名 ━━┓`); not the same word inside a sentence."""
+  return (t.find_re(rf"[│║┃]\s+({label})(?:\s{{2,}}|\s*[│║┃]|$)")
+          or t.find_re(rf"[┏╭][━─] ({label}) [━─]"))
 
 
 def field_value(t: Term, label: str) -> str:
