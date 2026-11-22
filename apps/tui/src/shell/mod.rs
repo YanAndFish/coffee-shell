@@ -1,5 +1,15 @@
-//! The app shell: the window frame (header, the page stack, the toast line, the status bar),
-//! the key bindings of the command table, and the too-small guard. No page logic.
+//! The app shell: the window frame (header, the page stack or an open dialog, the toast
+//! line, the status bar), the key bindings of the command table, the session's start, and
+//! the too-small guard. No page logic.
+//!
+//! Outlets (data wiring only; the overlays' look is drawn by the next wave):
+//!
+//! - the **dialog outlet** ([`outlets::dialog`]): while an overlay is open
+//!   (`UiStore::overlay`), it shows in place of the page stack — the help and the logout
+//!   confirmation from [`overlays`], the address and filter dialogs from their pages
+//!   (`pages::dialog`). The pages stay mounted underneath and keep their state.
+//! - the **toast outlet** ([`outlets::toast`]): `ToastStore::current`, dismissed after
+//!   `ToastStore::duration` (shorter while another waits).
 //!
 //! Below 80×24 only the guard shows, but the frame stays mounted (hidden), so the pages
 //! keep their state and enlarging the terminal brings them back as they were. Keys do
@@ -7,48 +17,65 @@
 
 mod footer;
 mod header;
+pub mod outlets;
+pub mod overlays;
 mod too_small;
 
-use nsh_core::prelude::*;
+use nsh_core::{keymap::When, prelude::*};
 
 use crate::{
+  api::{ApiFailure, ErrorCode},
   commands, pages,
   router::Route,
-  stores::{Stores, toast::TOAST_DURATION},
+  stores::{Stores, actions},
   ui::{self, Layout, layout},
 };
 
 /// The demo notice the status bar always shows.
 pub const DEMO_NOTICE: &str = "演示环境 · 不是真实商店";
 
-/// Binds every keystroke of the command table: a key runs the first command in scope on
-/// the page on top and enabled; it does nothing while the terminal is too small.
+/// Binds every keystroke of the command table once: a key runs the first command active
+/// in the context now and enabled; it does nothing while the terminal is too small.
 fn bind_keys(stores: Stores, layout: Layout) {
-  // A held key repeats (holding `j` walks the list). Terminals without the kitty protocol
-  // report no releases, so without `repeat` a second press of the same key would read as a
-  // repeat of the first.
-  let options = KeyOptions {
-    repeat: true,
-    ..KeyOptions::default()
-  };
-  for stroke in commands::strokes() {
-    on_key_with(stroke, options, move |stroke| {
+  for binding in commands::bindings() {
+    // A held key repeats (holding `j` walks the list). Terminals without the kitty
+    // protocol report no releases, so without `repeat` a second press of the same key
+    // would read as a repeat of the first. A stroke some command takes while typing (`⏎`,
+    // `Esc`) fires in text fields too; the others are the field's.
+    let options = KeyOptions {
+      repeat: true,
+      when: if binding.in_text {
+        When::Always
+      } else {
+        When::Auto
+      },
+      pass_through: binding.pass_through,
+      ..KeyOptions::default()
+    };
+    on_key_with(binding.stroke, options, move |stroke| {
       if layout.too_small() {
         return;
       }
-      let page = stores.router.top_untracked().page();
-      if let Some(command) = commands::resolve(page, stroke, |command| (command.enabled)(&stores)) {
-        (command.run)(&stores, stroke);
+      let command = untracked(|| {
+        let ctx = commands::context(&stores);
+        commands::resolve(&ctx, stroke, |command| (command.enabled)(&stores))
+      });
+      if let Some(command) = command {
+        // One update for all a command changes (the route, a toast, an overlay).
+        batch(|| (command.run)(&stores, stroke));
       }
     });
   }
 }
 
-/// Dismisses each toast after [`TOAST_DURATION`] (a newer toast restarts the clock).
+/// Dismisses each toast after its duration (the next one then shows, with its own clock).
+/// A toast that others queue behind gets a new, shorter clock: the effect runs again and
+/// its earlier timer goes with the earlier run.
 fn expire_toasts(stores: Stores) {
   effect(move || {
     if let Some(toast) = stores.toasts.current() {
-      set_timeout(TOAST_DURATION, move || stores.toasts.dismiss(toast.seq));
+      let duration = stores.toasts.duration();
+      set_timeout(duration, move || stores.toasts.dismiss(toast.seq));
     }
   });
 }
@@ -59,6 +86,17 @@ pub fn shell() -> impl IntoElement {
   let layout = Layout::get();
   bind_keys(stores, layout);
   expire_toasts(stores);
+  // The connection's start: resume a remembered key's session (once).
+  effect(move || untracked(|| actions::start(&stores)));
+  // A store saw the member session end: back to the login page (`登录已失效`).
+  effect(move || {
+    if stores.session.expired() {
+      untracked(|| {
+        let failure = ApiFailure::of(ErrorCode::SessionExpired);
+        batch(|| actions::session_expired(&stores, &failure));
+      });
+    }
+  });
 
   let pages = ui::page_stack().child(each(
     move || stores.router.routes(),
@@ -70,26 +108,25 @@ pub fn shell() -> impl IntoElement {
     },
   ));
 
+  let content = view()
+    .flex_1()
+    .w_full()
+    .max_w(layout::cols(layout::MAX_CONTENT_COLS))
+    .px(layout::cols(1))
+    .child(
+      view()
+        .flex_1()
+        .style_when(move || stores.ui.overlay().is_some(), |s| s.hidden())
+        .child(pages),
+    )
+    .child(outlets::dialog(stores));
+
   let frame = view()
     .flex_1()
     .style_when(move || layout.too_small(), |s| s.hidden())
     .child(header::header(stores, layout))
-    .child(
-      view().flex_1().min_h(px(0.0)).items_center().child(
-        view()
-          .flex_1()
-          .w_full()
-          .max_w(layout::cols(layout::MAX_CONTENT_COLS))
-          .px(layout::cols(1))
-          .child(pages),
-      ),
-    )
-    .child(dynamic(move || {
-      stores
-        .toasts
-        .current()
-        .map(|toast| ui::toast_line(toast.kind, toast.title, toast.sub))
-    }))
+    .child(view().flex_1().min_h(px(0.0)).items_center().child(content))
+    .child(outlets::toast(stores))
     .child(footer::footer(stores, layout));
 
   ui::surface_root().child(frame).child(when(
