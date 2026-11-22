@@ -291,7 +291,7 @@ fn boxed(legend: Option<&'static str>, content: impl IntoElement) -> View {
   )
 }
 
-/// M and S: one scrolled column (the rightmost cell left to the scroll bar); a change of
+/// M and S: one scrolled column (the scroll bar right of it); a change of
 /// the selection scrolls its group into view. M pins the purchase row under it.
 fn stacked(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyElement {
   let (shape, short) = (key.shape, key.short);
@@ -334,12 +334,13 @@ fn stacked(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyEleme
       .child(info_panel)
       .child(sku_panel),
   };
+  // nsh keeps the scroll bar a column of its own, right of the content: the panels reach
+  // it (03-detail.md's S mock, `│┃`), no blank column between.
   let scrolled = scroll().flex_1().min_h(px(0.0)).child(
     view()
       .flex_none()
       .flex_row()
-      .child(view().flex_1().min_w(px(0.0)).child(column))
-      .child(layout::hspace(1)),
+      .child(view().flex_1().min_w(px(0.0)).child(column)),
   );
   view()
     .flex_1()
