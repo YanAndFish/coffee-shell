@@ -11,8 +11,13 @@
 // Environment: HOST, PORT (backend, default 127.0.0.1:3000), COFFEE_SSH_ADDR
 // (default 127.0.0.1:2222), COFFEE_SSH_HOST_KEY (default .data/ssh_host_ed25519_key),
 // COFFEE_COLORS (passed on to every session).
+//
+// Every phase (cargo metadata, the build, the backend, sshd) runs as a child in its own
+// process group, never blocking this process: Ctrl+C, SIGTERM or SIGHUP at any moment stops
+// whatever is running (the whole group, so cargo's rustc jobs and pnpm's node too) and exits.
 
-import { spawn, spawnSync } from 'node:child_process'
+import { Buffer } from 'node:buffer'
+import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { connect } from 'node:net'
@@ -46,6 +51,77 @@ function fail(message, hint) {
   process.exit(1)
 }
 
+// --- Children and shutdown -----------------------------------------------------------------
+
+/** @type {Map<string, import('node:child_process').ChildProcess>} */
+const children = new Map()
+let stopping = false
+
+process.on('SIGINT', () => void stop(0))
+process.on('SIGTERM', () => void stop(0))
+process.on('SIGHUP', () => void stop(0))
+
+/**
+ * Starts `command` as child `name` in a process group of its own (so stopping it stops what
+ * it started) and resolves with how it ended.
+ * @returns {{ child: import('node:child_process').ChildProcess, done: Promise<{ code: number | null, signal: string | null, error?: Error }> }} the child and its end
+ */
+function launch(name, command, commandArgs, options) {
+  const child = spawn(command, commandArgs, {
+    cwd: root,
+    detached: process.platform !== 'win32',
+    ...options,
+  })
+  children.set(name, child)
+  const done = new Promise((settle) => {
+    child.once('error', (error) => {
+      children.delete(name)
+      settle({ code: null, signal: null, error })
+    })
+    child.once('exit', (code, signal) => {
+      children.delete(name)
+      settle({ code, signal })
+    })
+  })
+  return { child, done }
+}
+
+function signalChild(child, signal) {
+  try {
+    if (process.platform === 'win32')
+      child.kill(signal)
+    else
+      process.kill(-child.pid, signal)
+  }
+  catch {}
+}
+
+async function stop(code) {
+  if (stopping)
+    return
+  stopping = true
+  const running = [
+    ...children.values(),
+  ]
+  if (running.length > 0)
+    log('stopping…')
+  running.forEach(child => signalChild(child, 'SIGTERM'))
+  const deadline = Date.now() + 5000
+  while (children.size > 0 && Date.now() < deadline)
+    await sleep(50)
+  for (const child of children.values())
+    signalChild(child, 'SIGKILL')
+  process.exit(code)
+}
+
+/** Parks the caller forever once a shutdown is under way: `stop` ends the process. */
+async function unlessStopping() {
+  if (stopping)
+    await new Promise(() => {})
+}
+
+// --- Settings ------------------------------------------------------------------------------
+
 const args = new Set(process.argv.slice(2))
 const skipBuild = args.has('--skip-build')
 
@@ -76,23 +152,7 @@ if (!serverScripts.dev) {
 if (!existsSync(join(root, 'node_modules')))
   fail('dependencies are not installed.', 'Run `pnpm install` first.')
 
-const cargo = spawnSync('cargo', [
-  'metadata',
-  '--format-version',
-  '1',
-  '--no-deps',
-], {
-  cwd: root,
-  encoding: 'utf8',
-  maxBuffer: 64 * 1024 * 1024,
-})
-if (cargo.error || cargo.status !== 0) {
-  fail(
-    'cargo is not available or the workspace does not load.',
-    'Install Rust with rustup; rust-toolchain.toml pins the version.',
-  )
-}
-const targetDir = JSON.parse(cargo.stdout).target_directory
+const targetDir = await cargoTargetDir()
 const exe = process.platform === 'win32'
   ? '.exe'
   : ''
@@ -116,6 +176,7 @@ for (const [port, host, what, variable] of [
   if (await listening(host, port))
     fail(`${host}:${port} is already in use, so ${what} cannot listen there.`, `Stop what holds it or set ${variable}.`)
 }
+await unlessStopping()
 
 // --- Build ---------------------------------------------------------------------------------
 
@@ -127,17 +188,17 @@ if (skipBuild) {
 }
 else {
   log('building coffee-tui and coffee-sshd (cargo build -p coffee-host -p coffee-sshd)…')
-  const build = spawnSync('cargo', [
+  const build = await launch('build', 'cargo', [
     'build',
     '-p',
     'coffee-host',
     '-p',
     'coffee-sshd',
   ], {
-    cwd: root,
-    stdio: 'inherit',
-  })
-  if (build.status !== 0)
+    stdio: ['ignore', 'inherit', 'inherit'],
+  }).done
+  await unlessStopping()
+  if (build.error || build.code !== 0)
     fail('cargo build failed (see above).')
 }
 
@@ -145,22 +206,14 @@ mkdirSync(dirname(hostKey), { recursive: true })
 
 // --- Run -----------------------------------------------------------------------------------
 
-/** @type {Map<string, import('node:child_process').ChildProcess>} */
-const children = new Map()
-let stopping = false
-
 function start(name, command, commandArgs, env) {
-  const child = spawn(command, commandArgs, {
-    cwd: root,
+  const { child, done } = launch(name, command, commandArgs, {
     env: {
       ...process.env,
       ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
-    // Its own process group, so stopping it also stops what it started (pnpm → node).
-    detached: process.platform !== 'win32',
   })
-  children.set(name, child)
   for (const stream of [child.stdout, child.stderr]) {
     createInterface({ input: stream }).on('line', (line) => {
       // While stopping, pnpm only reports that its child got SIGTERM: not worth showing.
@@ -168,11 +221,9 @@ function start(name, command, commandArgs, env) {
         console.log(`${tags[name]} ${line}`)
     })
   }
-  child.on('error', (error) => {
-    console.error(`${tags[name]} ${paint('31', `✗ could not start: ${error.message}`)}`)
-  })
-  child.on('exit', (code, signal) => {
-    children.delete(name)
+  void done.then(({ code, signal, error }) => {
+    if (error)
+      console.error(`${tags[name]} ${paint('31', `✗ could not start: ${error.message}`)}`)
     if (stopping)
       return
     const how = signal
@@ -183,38 +234,6 @@ function start(name, command, commandArgs, env) {
   })
   return child
 }
-
-function signalChild(child, signal) {
-  try {
-    if (process.platform === 'win32')
-      child.kill(signal)
-    else
-      process.kill(-child.pid, signal)
-  }
-  catch {}
-}
-
-async function stop(code) {
-  if (stopping)
-    return
-  stopping = true
-  const running = [
-    ...children.values(),
-  ]
-  if (running.length > 0)
-    log('stopping…')
-  running.forEach(child => signalChild(child, 'SIGTERM'))
-  const deadline = Date.now() + 5000
-  while (children.size > 0 && Date.now() < deadline)
-    await sleep(100)
-  for (const child of children.values())
-    signalChild(child, 'SIGKILL')
-  process.exit(code)
-}
-
-process.on('SIGINT', () => void stop(0))
-process.on('SIGTERM', () => void stop(0))
-process.on('SIGHUP', () => void stop(0))
 
 await run()
 
@@ -265,6 +284,29 @@ async function run() {
 }
 
 // --- Helpers -------------------------------------------------------------------------------
+
+/** Cargo's target directory, from `cargo metadata` (run like every other child). */
+async function cargoTargetDir() {
+  const { child, done } = launch('metadata', 'cargo', [
+    'metadata',
+    '--format-version',
+    '1',
+    '--no-deps',
+  ], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  const chunks = []
+  child.stdout.on('data', chunk => chunks.push(chunk))
+  const { code, error } = await done
+  await unlessStopping()
+  if (error || code !== 0) {
+    fail(
+      'cargo is not available or the workspace does not load.',
+      'Install Rust with rustup; rust-toolchain.toml pins the version.',
+    )
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')).target_directory
+}
 
 function listening(host, port) {
   return new Promise((done) => {
