@@ -5,7 +5,7 @@
 // headless (texts and values); `nsh test --target tui` also checks the terminal's cells.
 import type { App, Cell } from './testkit'
 import { expect, open, test } from 'nsh/test'
-import { cells, KEY, screenCells, shows, start, toLogin, toRegister } from './testkit'
+import { cells, hint, KEY, screenCells, shows, start, toLogin, toRegister } from './testkit'
 
 const LIVE = 'http://login.test'
 
@@ -155,6 +155,9 @@ test('the focus starts in 用户名: g types a g there (K1); Esc leaves, then g 
   expect(app.texts()).not.toContain('快捷键 KEYMAP')
   await app.keyboard.press('escape')
   await app.waitUntil(() => !app.texts().includes('离开输入'))
+  // No focus: keymap.md's full login footer, `? 快捷键` last.
+  expect(hint(app, '? 快捷键')).toBe(true)
+  expect(hint(app, 'g 访客浏览')).toBe(true)
   await app.keyboard.press('g')
   await app.waitFor('text:以访客身份浏览')
   expect(shows(app, '结算前需要登录')).toBe(true)

@@ -894,7 +894,7 @@ mod tests {
     let login = ["login.register_submit", "login.back"];
     assert_eq!(
       ids(set(KeyContext::on(Login), Bp::Xl, &login)),
-      ["login.tab", "login.submit", "login.guest"]
+      ["login.tab", "login.submit", "login.guest", "login.keys"]
     );
     assert_eq!(
       labels(set(KeyContext::on(Login), Bp::S, &login)),
@@ -911,7 +911,8 @@ mod tests {
         "login.tab",
         "login.register_submit",
         "login.guest",
-        "login.back"
+        "login.back",
+        "login.keys"
       ]
     );
     // 选购: 7, then 5 at M, 4 at S with `f 筛选`.
