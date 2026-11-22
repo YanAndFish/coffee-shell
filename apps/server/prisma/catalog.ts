@@ -1,11 +1,11 @@
 // The eight beans of the design (`P` in docs/design/raw/canvas/Main.dc.html), in display
 // order. `seedCatalog` inserts the missing ones and leaves existing rows (and their stock) alone.
 
+import type { Weight } from '@coffee/contract'
 import type { PrismaClient } from '../src/db.ts'
-import type { WeightKey } from '../src/services/json-columns.ts'
-import { FlavorSchema } from '@coffee/contract'
+import { FlavorSchema, WeightSchema } from '@coffee/contract'
 import { z } from 'zod'
-import { toJsonColumn, WeightKeySchema } from '../src/services/json-columns.ts'
+import { toJsonColumn } from '../src/services/json-columns.ts'
 
 export interface CatalogProduct {
   id: string
@@ -28,7 +28,7 @@ export interface CatalogProduct {
   stock: number
   brew: string
   description: string
-  soldOutWeights: WeightKey[]
+  soldOutWeights: Weight[]
 }
 
 export const CATALOG: readonly CatalogProduct[] = [
@@ -219,7 +219,7 @@ export const CATALOG: readonly CatalogProduct[] = [
 ]
 
 const Notes = z.array(z.string().min(1))
-const SoldOut = z.array(WeightKeySchema)
+const SoldOut = z.array(WeightSchema)
 
 /** Inserts the catalog products that are missing; returns how many were created. */
 export async function seedCatalog(prisma: PrismaClient): Promise<number> {

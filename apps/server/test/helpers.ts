@@ -1,5 +1,6 @@
 import type Koa from 'koa'
 import type { AddressInfo } from 'node:net'
+import type { AppOptions } from '../src/app.ts'
 import type { PrismaClient } from '../src/db.ts'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -8,6 +9,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { seedCatalog } from '../prisma/catalog.ts'
+import { seedCoupons } from '../prisma/coupons.ts'
+import { createApp } from '../src/app.ts'
 import { createPrisma } from '../src/db.ts'
 import { SERVER_ROOT } from '../src/env.ts'
 
@@ -24,7 +27,10 @@ export interface TestDatabase {
   cleanup: () => Promise<void>
 }
 
-/** A fresh SQLite file in a temp dir, migrated with the real `prisma migrate deploy` and seeded. */
+/**
+ * A fresh SQLite file in a temp dir, migrated with the real `prisma migrate deploy` and
+ * seeded (catalog + coupons). Call it in `beforeAll` (allow ~60 s).
+ */
 export async function createTestDatabase(): Promise<TestDatabase> {
   const dir = mkdtempSync(join(tmpdir(), 'coffee-server-test-'))
   const url = `file:${join(dir, 'test.db')}`
@@ -36,6 +42,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   })
   const prisma = createPrisma(url)
   await seedCatalog(prisma)
+  await seedCoupons(prisma)
   return {
     url,
     prisma,
@@ -65,5 +72,52 @@ export async function listen(app: Koa): Promise<TestServer> {
         ? reject(error)
         : resolve()))
     }),
+  }
+}
+
+/** The app over `prisma` with response validation on, listening on a free port. */
+export function listenApp(prisma: PrismaClient, options: Omit<AppOptions, 'prisma'> = {}): Promise<TestServer> {
+  return listen(createApp({
+    validateResponses: true,
+    logError: () => {},
+    ...options,
+    prisma,
+  }))
+}
+
+export interface JsonResponse {
+  status: number
+  headers: Headers
+  body: unknown
+}
+
+/** `fetch` with JSON in and out; `token` becomes `Authorization: Bearer`. */
+export async function call(
+  origin: string,
+  method: string,
+  path: string,
+  options: { body?: unknown, token?: string, headers?: Record<string, string> } = {},
+): Promise<JsonResponse> {
+  const headers: Record<string, string> = { Accept: 'application/json', ...options.headers }
+  if (options.token)
+    headers.Authorization = `Bearer ${options.token}`
+  if (options.body !== undefined)
+    headers['Content-Type'] = 'application/json'
+  const response = await fetch(`${origin}${path}`, {
+    method,
+    headers,
+    ...(options.body !== undefined
+      ? {
+          body: JSON.stringify(options.body),
+        }
+      : {}),
+  })
+  const text = await response.text()
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: text
+      ? JSON.parse(text)
+      : undefined,
   }
 }

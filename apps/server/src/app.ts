@@ -1,5 +1,6 @@
 import type { Context } from 'koa'
 import type { PrismaClient } from './db.ts'
+import type { Deps } from './deps.ts'
 import Koa from 'koa'
 import { errorHandler } from './middleware/error-handler.ts'
 import { internalKey } from './middleware/internal-key.ts'
@@ -11,6 +12,10 @@ export interface AppOptions {
   internalKey?: string | undefined
   /** Receives unexpected (5xx) errors; defaults to `console.error`. */
   logError?: (error: unknown, ctx: Context) => void
+  /** The clock; defaults to the system clock (tests pass a fixed one). */
+  now?: () => Date
+  /** Check every success body against the contract (tests); default off. */
+  validateResponses?: boolean
 }
 
 function defaultLogError(error: unknown, ctx: Context): void {
@@ -23,7 +28,12 @@ export function createApp(options: AppOptions): Koa {
   // errorHandler answers and logs every error; keep Koa's default stderr logger quiet.
   app.silent = true
 
-  const router = apiRouter(options.prisma)
+  const deps: Deps = {
+    prisma: options.prisma,
+    now: options.now ?? (() => new Date()),
+    validateResponses: options.validateResponses ?? false,
+  }
+  const router = apiRouter(deps)
   app.use(errorHandler(options.logError ?? defaultLogError))
   app.use(internalKey(options.internalKey, new Set([HEALTH_PATH])))
   app.use(router.routes())

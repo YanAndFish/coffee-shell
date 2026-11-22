@@ -1,20 +1,19 @@
 import type { Health } from '@coffee/contract'
-import { API_PREFIX } from '@coffee/contract'
+import type { Deps } from '../deps.ts'
+import { API_PREFIX, getHealth } from '@coffee/contract'
 import Router from '@koa/router'
 import pkg from '../../package.json' with { type: 'json' }
+import { route } from '../http/route.ts'
 
 export const HEALTH_PATH = `${API_PREFIX}/health`
 
-export function healthRouter(): Router {
+export function healthRouter(deps: Deps): Router {
   const router = new Router()
-  router.get(HEALTH_PATH, (ctx) => {
-    const body: Health = {
-      ok: true,
-      service: 'roast-tty',
-      version: pkg.version,
-      demo: true,
-    }
-    ctx.body = body
-  })
+  route(router, deps, getHealth, (): Health => ({
+    ok: true,
+    service: 'roast-tty',
+    version: pkg.version,
+    demo: true,
+  }))
   return router
 }

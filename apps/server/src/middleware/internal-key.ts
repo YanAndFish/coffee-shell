@@ -22,7 +22,7 @@ export function internalKey(key: string | undefined, publicPaths: ReadonlySet<st
     const given = ctx.get(INTERNAL_KEY_HEADER)
     // Compare fixed-length digests so the check takes the same time for any input.
     if (!given || !timingSafeEqual(digest(given), expected))
-      throw new ApiHttpError(401, 'unauthorized')
+      throw new ApiHttpError('unauthorized')
     return next()
   }
 }

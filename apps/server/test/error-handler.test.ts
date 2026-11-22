@@ -5,7 +5,8 @@ import Router from '@koa/router'
 import Koa from 'koa'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { errorHandler, parseInput } from '../src/middleware/error-handler.ts'
+import { parseInput } from '../src/http/validate.ts'
+import { errorHandler } from '../src/middleware/error-handler.ts'
 import { listen } from './helpers.ts'
 
 let server: TestServer
@@ -17,6 +18,12 @@ beforeAll(async () => {
   router.get('/validate', (ctx) => {
     const query = parseInput(z.object({
       qty: z.coerce.number().int().min(1).max(9),
+    }), ctx.query)
+    ctx.body = { qty: query.qty }
+  })
+  router.get('/coded', (ctx) => {
+    const query = parseInput(z.object({
+      qty: z.coerce.number().int().max(9, { error: 'quantity_invalid' }),
     }), ctx.query)
     ctx.body = { qty: query.qty }
   })
@@ -42,10 +49,21 @@ describe('errorHandler', () => {
     expect(await response.json()).toEqual({ qty: 3 })
   })
 
-  it('answers invalid input with 400 validation_failed in Chinese', async () => {
+  it('answers invalid input with 400 validation_failed naming the field', async () => {
     expect(await errorOf('/validate?qty=10')).toEqual({
       status: 400,
-      error: { code: 'validation_failed', message: '请求参数不合法：qty' },
+      error: {
+        code: 'validation_failed',
+        message: '请求参数不合法',
+        details: { field: 'qty' },
+      },
+    })
+  })
+
+  it('answers the error code a schema carries, with its status and message', async () => {
+    expect(await errorOf('/coded?qty=10')).toEqual({
+      status: 422,
+      error: { code: 'quantity_invalid', message: '数量应为 1–9' },
     })
   })
 

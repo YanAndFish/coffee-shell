@@ -3,6 +3,7 @@ import type { TestDatabase, TestServer } from './helpers.ts'
 import { ApiErrorSchema, HealthSchema, INTERNAL_KEY_HEADER, ProductListSchema } from '@coffee/contract'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { seedCatalog } from '../prisma/catalog.ts'
+import { seedCoupons } from '../prisma/coupons.ts'
 import { createApp } from '../src/app.ts'
 import { createTestDatabase, listen, readFixture } from './helpers.ts'
 
@@ -39,7 +40,7 @@ describe('without an internal key', () => {
     expect(HealthSchema.parse(body)).toEqual(readFixture('v1/health.json'))
   })
 
-  it('gET /v1/products returns the 8 seeded products in seed order, equal to the fixture', async () => {
+  it('gET /v1/products returns the 8 seeded products in seed order with facets, equal to the fixture', async () => {
     const { status, body } = await getJson(server.origin, '/v1/products')
     expect(status).toBe(200)
     const list = ProductListSchema.parse(body)
@@ -62,6 +63,7 @@ describe('without an internal key', () => {
 
   it('seeding again changes nothing', async () => {
     expect(await seedCatalog(db.prisma)).toBe(0)
+    expect(await seedCoupons(db.prisma)).toBe(0)
     const { body } = await getJson(server.origin, '/v1/products')
     expect(ProductListSchema.parse(body).items).toHaveLength(8)
   })
