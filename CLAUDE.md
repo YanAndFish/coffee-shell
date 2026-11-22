@@ -22,13 +22,12 @@ API decisions of phase 2: `docs/design/decisions.md`. The API contract and its c
 | `crates/coffee-host` | bin `coffee-tui`: runs `coffee_app::App` in the current terminal | pins theme colours, colour depth, Ctrl+C twice                                    |
 | `crates/coffee-sshd` | bin `coffee-sshd`: SSH front end, one PTY child per session      | end-to-end tests in `tests/`                                                      |
 | `crates/coffee-api`  | serde DTOs of the backend API (no nsh)                           | tested against the contract fixtures                                              |
-| `apps/server`        | `@coffee/server`: Koa + Prisma + SQLite                          | `routes/<area>.ts` + `services/<area>.ts`; DB `apps/server/.data/coffee.db`       |
+| `apps/server`        | `@coffee/server`: Koa + Prisma + SQLite, all 29 endpoints        | `routes/<area>.ts` + `services/<area>.ts`; DB `apps/server/.data/coffee.db`       |
 | `packages/contract`  | `@coffee/contract`: zod → `openapi.json` + `fixtures/v1/*.json`  | single source of the API; `FooSchema` / type `Foo`; money in integer yuan         |
-| `docs/design`        | screens, keymap, copy, responsive rules, tokens                  | `raw/` are exported originals: read-only                                          |
+| `docs/design`        | screens, keymap, copy, states, responsive rules, tokens          | `raw/` are exported originals: read-only                                          |
 | `docs/adr`           | architecture decisions                                           |                                                                                   |
-| `deploy/`            | gateway image (`coffee-sshd` + `coffee-tui`) and its settings    | `deploy/README.md` lists every `COFFEE_*` variable                                |
+| `deploy/`            | `Dockerfile` (gateway), `server.Dockerfile`, `compose.yaml`      | `smoke-test.sh`, `server/` (entry point); `README.md` lists every `COFFEE_*`      |
 | `scripts/`           | `dev.mjs` (`pnpm dev`), `pty-run.py`, `check-mocks.py`           |                                                                                   |
-| `.claude/skills`     | how-tos for recurring tasks (see below)                          |                                                                                   |
 
 Frozen interface (change only with every caller): `coffee_app::{App, registry, SessionEnv, configure, session_env,
 APP_ID, THEME_JSON}`; root script names `dev build test lint check ssh`.
@@ -41,32 +40,41 @@ APP_ID, THEME_JSON}`; root script names `dev build test lint check ssh`.
 | `pnpm dev`                                                            | builds `coffee-tui` + `coffee-sshd`, migrates + seeds, starts backend and sshd        |
 | `pnpm ssh`                                                            | `ssh -p 2222 localhost`, sends `COLORTERM`, no host-key checks                        |
 | `pnpm check`                                                          | eslint, design mock sizes, `tsc`, `cargo fmt --check`, `cargo clippy -D warnings`     |
-| `pnpm check:tui`                                                      | `nsh check` in `apps/tui` (cargo check + TS check of `App.test.tsx`)                  |
+| `pnpm check:tui`                                                      | `nsh check` in `apps/tui` (cargo check + TS check of the `*.test.tsx`)                |
 | `pnpm test`                                                           | `cargo build -p coffee-host`, `cargo test --workspace` (incl. SSH e2e), vitest        |
 | `pnpm test:tui`                                                       | `nsh test` and `nsh test --target tui` in `apps/tui`                                  |
 | `pnpm test:e2e`                                                       | only the SSH end-to-end tests (`crates/coffee-sshd/tests`)                            |
 | `pnpm verify`                                                         | everything CI runs except the Docker build                                            |
-| `pnpm lint:fix`                                                       | eslint also formats, Markdown tables included (no Prettier)                           |
-| `python3 scripts/pty-run.py --size 100x30 -- target/debug/coffee-tui` | the UI's screen as text (`--env COFFEE_API_URL=fixture:` for fixtures)                |
+| `python3 scripts/pty-run.py --size 100x30 -- target/debug/coffee-tui` | the UI's screen as text (`--env COFFEE_API_URL=fixture:…`, `COFFEE_UI_GALLERY=1`)     |
 | `pnpm --filter @coffee/contract generate` / `check:generated`         | regenerate / check `openapi.json` and fixtures                                        |
 | `pnpm --filter @coffee/server db:migrate` / `db:seed`                 | backend database (`pnpm dev` runs both); `db:reset` is for humans only (see pitfalls) |
 
-CI (`.github/workflows/ci.yml`, ubuntu-24.04) runs the jobs `node`, `rust`, `nsh` and `docker` (builds
-`deploy/Dockerfile`, no push) on every push and PR.
+CI (`.github/workflows/ci.yml`, ubuntu-24.04) runs the jobs `node`, `rust`, `nsh` and `docker` (builds both
+images, `deploy/Dockerfile` and `deploy/server.Dockerfile`, no push, then `deploy/smoke-test.sh` runs the pair with
+`compose.yaml` and checks it over `ssh`) on every push and PR.
 
 ## Layering rules (apps/tui)
 
+Module map and per-screen contract: `apps/tui/README.md`. Dependencies point down: `shell → pages → stores → api`.
+
 - **Only `src/ui/` touches `nsh_base` and theme tokens.** Pages compose `ui::*` and layout primitives; they never
   style base controls, write colours, radii or paddings. Missing look → new variant/size in `ui/` first.
-- **One command table** (`commands.rs`: `Command { id, key, label, scope, footer_rank, enabled, run }`) drives key
-  bindings (bound once in `shell/mod.rs`), buttons, the footer hints and the `?` help. Never bind a key elsewhere.
-- **Stores** are `Copy` structs of private signals (`SessionStore`, `CatalogStore`, `ToastStore`, `Router`; Cart,
-  Address, Orders, Settings come in phase 2), bundled in `stores::Stores` (`Stores::provide()` in the root,
-  `Stores::get()` in a body); change them through their methods. A page never writes another page's state.
+- **Pages** are `pages/<name>/{mod.rs,commands.rs}` (login, catalog, detail, cart, addresses, profile): each exports
+  a `PageModule { page, mode, commands, view, dialogs }` listed in `pages::PAGES`. A screen worker edits only its
+  page's directory.
+- **One command table** (`commands.rs`: `Command { id, key, label, scope, typing, busy, footer, enabled, run }`,
+  `commands::all()` = global + overlay + every page's `COMMANDS`) drives key bindings (bound once in
+  `shell/mod.rs`), buttons, the footer hints and the `?` help. Never bind a key elsewhere.
+- **Stores** are `Copy` structs of private signals, all fields of `stores::Stores` (`session`, `router`,
+  `catalog`, `product`, `cart`, `addresses`, `orders`, `profile`, `settings`, `toasts`, `ui`; `Stores::provide()`
+  in the root, `Stores::get()` in a body); change them through their methods. Flows that cross stores (login +
+  merge, checkout, logout, expiry, addresses) are `stores::actions`. A page never writes another page's state.
 - **The TUI never computes money.** Prices, discounts, shipping and totals come from the backend as given (not even
   unit × quantity: the detail page reads `PriceCell.totals`).
 - Async work starts from events, effects or resources, with explicit loading / empty / error states.
 - Component bodies run once; only bindings (closures) re-run. Read signals inside closures, not in the body.
+- A new connection opens on the **login page**; `g` browses as a guest; a remembered key resumes straight to the
+  catalog. Checkout is the login gate (it returns to the cart).
 
 ## Contract first
 
@@ -86,6 +94,13 @@ CI (`.github/workflows/ci.yml`, ubuntu-24.04) runs the jobs `node`, `rust`, `nsh
 - Copy is Simplified Chinese, short, “你”; panel titles are “中文 ENGLISH” (`购物车 CART`); keys lead labels (`a 加入购物车`).
 - Breakpoints (cells): <80×24 “终端太小” page; 80–99 one column; 100–129 list + preview; 130–159 three narrow columns;
   ≥160 the design layout (max 200 wide); <32 rows compact header. Measure CJK with `unicode-width` (2 cells).
+- **Colour carriers**: nsh draws ANSI meanings, not values, so each token travels on a carrier (an ANSI channel,
+  maybe _marked_ italic; fills on xterm-cube `carrier-*` colours) that `coffee-host` pins back to the token at every
+  depth (`INKS` / `FILLS` in `ui/theme.rs`; tokens.md “终端载体”). Never write raw colours; colour text only via
+  `ui::label` / `strong` / `toned` or a `Tone`/`Fill` component (a bare `Tone::color()` loses its mark).
+- **`When::Always` keys**: a stroke that any command takes while typing (`Typing::Only` / `Also`) is bound
+  `When::Always` and then belongs to the app in _every_ text field. Give typing commands only `⏎`, `Esc`, Tab-like
+  keys — never a letter, digit or space, or nobody can type it.
 
 ## Pinned versions (and why)
 
@@ -103,25 +118,31 @@ CI (`.github/workflows/ci.yml`, ubuntu-24.04) runs the jobs `node`, `rust`, `nsh
 - `apps/tui` is lib-only (`nsh init`'s desktop `main.rs` pulled GTK): keep it that way. `.nsh/` is generated,
   git-ignored, its own Cargo workspace (excluded from the root one).
 - nsh builds into `apps/tui/target` (≈8 GB locally); first builds take minutes. Do not delete it casually.
-- Tests (`App.test.tsx`) must `open('.', { platform: 'linux', width: cols * 8, height: rows * 16 })`: the headless
-  default is a phone, whose shortcuts never fire. `nsh test --target tui` cannot resize an open app.
-- With no host session the app reads the contract fixtures; storage key `coffee.transport` or
-  `COFFEE_API_URL=fixture:` / `fixture:empty` / `fixture:down` pick a set (the header shows `◇ 样例数据`).
+- One test file per screen, `apps/tui/<Name>.test.tsx` (`App.test.tsx` the shell, `Gallery.test.tsx` the
+  components); each must `open('.', { platform: 'linux', width: cols * 8, height: rows * 16 })`: the headless
+  default is a phone, whose shortcuts never fire. `nsh test --target tui` cannot resize an open app. vitest must
+  never pick them up (`vitest.config.ts`).
+- **Fixture mode** (no backend; header `◇ 样例数据`): `COFFEE_API_URL=fixture:<scenario>` or storage
+  `coffee.transport` picks `guest` (default), `member`, `empty`, `new`, `problem`, `expired`, `member-error`, `down`
+  or `error` (`api::FixtureSet`); storage `coffee.fingerprint` / `COFFEE_SSH_FINGERPRINT` gives a key. Answers are
+  static: a change answers its fixture and is not remembered.
+- **Gallery**: every `ui/` component on 14 pages: `COFFEE_UI_GALLERY=1 target/debug/coffee-tui` (pinned colours,
+  any `COFFEE_COLORS`), tested by `apps/tui/Gallery.test.tsx`.
 - Pressable chrome is `view().role(Button).focusable(false)`; key bindings need `KeyOptions { repeat: true }`.
 - A bordered view clips its children: the Panel legend is an absolutely positioned sibling.
-- nsh's TUI maps colours to ANSI meanings and draws dark text as the terminal's foreground; `coffee-host` pins
-  exact hex (and `ink` on `acc` fills). A custom host must apply the theme with `Root::tokens`.
 - nsh toasts and Ctrl+S search own the bottom row: we draw our own Toast and status bar.
 - The host intercepts Ctrl+C: press it **twice** to quit. Never bind Ctrl+C in the app.
 - crossterm needs its `use-dev-tty` feature in `coffee-host`: the default reader spins at 100 % CPU after a hang-up.
-- vitest must never pick up `apps/tui/*.test.tsx` (see `vitest.config.ts`).
 
 ## Other pitfalls
 
 - `expect` mangles multi-byte output: drive TUIs and SSH sessions with `scripts/pty-run.py`.
-- OpenSSH does not forward `COLORTERM`: plain `ssh` gets 256 colours. `pnpm ssh` sends it; servers may force
-  `COFFEE_COLORS=truecolor|256|16|mono`. Clients cannot set `COFFEE_COLORS` (sshd takes only `LANG`, `LC_*`,
-  `COLORTERM`).
+- Colour depth over SSH (`crates/coffee-host/src/color.rs`): `COLORTERM` (sent by `pnpm ssh`), else a 24-bit brand
+  in `TERM` (`xterm-kitty`, `xterm-ghostty`, `foot`, `*-direct`, …), else a `*-256color` terminal answering XTGETTCAP
+  `RGB`/`Tc` at startup gets truecolor. Servers may force `COFFEE_COLORS=truecolor|256|16|mono`; clients cannot
+  (sshd takes only `LANG`, `LC_*`, `COLORTERM`).
+- Startup keys (`coffee-host/src/terminal.rs`): keys typed during the terminal queries are split from the answers,
+  and all input waits until nsh applied the app's first batches (its key bindings); nothing else may read stdin.
 - `prisma migrate reset` refuses to run for an AI agent: `db:reset` is for humans. Never work around that guard.
   Prisma also prints a harmless “unsupported Node” warning on Node 26.
 - pnpm 12 takes one script per `pnpm --filter <pkg> <script>`; chain separate commands.
@@ -136,14 +157,13 @@ CI (`.github/workflows/ci.yml`, ubuntu-24.04) runs the jobs `node`, `rust`, `nsh
 - The pre-commit hook (simple-git-hooks + lint-staged) runs `eslint --fix` and `rustfmt` on staged files.
   `.vscode/settings.json` (picked up by VS Code and its forks; needs the ESLint extension) fixes on save.
 - Conventional commits in English. No secrets or personal data in the repo, logs or fixtures.
-- Theme colours only through `ui/theme.rs` accessors (`theme::acc`); raw hex lives in `apps/tui/theme.json` alone.
 
 ## Working here
 
-- Work is split into slices and **delegated to subagents** with disjoint file ownership; an orchestrator merges and
-  re-runs the verification. Stay inside the paths your brief owns; list needed changes elsewhere as change requests.
-- Skills: `nsh-tui-conventions`, `add-ui-component`, `add-screen`, `add-api-endpoint`, `run-and-verify-over-ssh`,
-  `update-snapshots` in `.claude/skills/`.
+- Work is split into slices **delegated to subagents** with disjoint file ownership; an orchestrator merges and
+  re-runs the verification. Stay inside your brief's paths; list changes elsewhere as change requests. Skills
+  (`.claude/skills/`): `nsh-tui-conventions`, `add-ui-component`, `add-screen`, `add-api-endpoint`,
+  `run-and-verify-over-ssh`, `update-snapshots`.
 
 ## Verification before claiming done
 

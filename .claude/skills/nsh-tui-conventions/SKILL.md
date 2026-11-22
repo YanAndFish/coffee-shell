@@ -52,8 +52,9 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
 - `api/` is the HTTP client: one typed async method per `/v1` operation (`api/endpoints.rs`), the contract's headers
   (`X-Internal-Key`, `Authorization: Bearer`, `X-SSH-Fingerprint`, `X-Client-IP`), one `decode` for both transports,
   typed `ApiFailure` (`code()`, `message()`, `details()`, `ends_session()`); the fixture transport answers every
-  endpoint in scenarios (`fixture:guest|member|empty|down|error`). **The TUI never computes money**: show the
-  backend's prices, discounts, shipping and totals.
+  endpoint in scenarios (`fixture:guest|member|empty|new|problem|expired|member-error|down|error`, static answers:
+  see `api::FixtureSet`). **The TUI never computes money**: show the backend's prices, discounts, shipping and
+  totals.
 - `commands.rs` is the command model: `Command { id, key: Key, label, scope: Scope, typing: Typing, busy, footer:
   Footer, enabled, run }`, built with `Command::new(..)` and `.footer(rank)` / `.footer_full` / `.footer_s` /
   `.short("f 筛选")` / `.when(fn)` / `.typing(Typing::Only)` / `.while_busy()`. The table is `commands::all()`:
@@ -103,24 +104,53 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
   no blur). Otherwise the command table thinks the user is still typing (`pages::placeholder::field` is the model).
 - While a field is focused, nsh does not fire `When::Auto` bindings for keys that edit text (letters, digits, and
   also Enter, Esc, arrows); the shell binds a stroke `When::Always` only when some command takes it with
-  `Typing::Only`/`Also`, and such a stroke is then the app's in every field.
+  `Typing::Only`/`Also`, and such a stroke is then the app's in **every** field. **Rule:** a typing command takes
+  only `⏎`, `Esc` and keys no field types (Tab is nsh's); never a letter, digit, space or arrow a field needs —
+  `commands.rs` tests that `g` is still typed into a field.
 - `ElementRef::focus()` does nothing before the element is mounted: a field shown *because* the focus was asked for
   uses `.auto_focus(..)`; the ref's `focus()` serves a field already on screen.
 - When a pushed page goes (Esc on the detail page), nsh focuses the first text field of the page revealed. Keep a
   field that should not take the keys off screen until it is asked for (the catalog's search box).
 
-## Theme
+## Theme and colour carriers
 
-- Colours only through the accessors in `ui/theme.rs` (`theme::acc`, `theme::fg`, `theme::mute`, `Tone`), passed
-  as bindings (`.text_color(theme::acc)`). Raw hex lives in `apps/tui/theme.json` only. Missing role → add it to
-  `theme.json`, an accessor in `ui/theme.rs` and a row in `docs/design/tokens.md` first.
-- nsh maps colours to ANSI meanings; `coffee-host` pins exact hex at true colour and degrades for 256/16/mono.
-  A host that mounts the root itself must apply `Root::tokens` (see `coffee_host::app_root`). Default text on an
-  `acc` fill is pinned to `ink`, so `ink` on `acc` (mode block, primary button) reads at every depth.
+- nsh 0.6.1 draws colours in a terminal as ANSI *meanings* (a saturated colour → its hue band's accent, a neutral
+  one → default foreground or the same + DIM; fills only on boxes under 3 rows), so nine browns would all read
+  "dim". Every token therefore travels on a **carrier**: text = an ANSI channel plus an optional *mark* (italic,
+  which the design never uses), fills = a saturated `carrier-*` colour on the xterm cube at 94 % opacity
+  (`theme::CARRIER_OPACITY`). `coffee-host`'s pin (`palette.rs`) swaps each carrier back to its token at 24-bit,
+  256, 16 colours and mono. The contract is the `INKS` / `FILLS` tables in `ui/theme.rs` (and
+  `docs/design/tokens.md`, “终端载体”).
+- So: **never a raw colour** anywhere; text colour only through `ui::label` / `ui::strong` / `ui::toned` /
+  `ui::toned_strong` or components taking a `Tone` / `Fill` — they apply the mark. A bare `Tone::color()` (no mark)
+  reaches the pin as another token. Raw hex lives in `apps/tui/theme.json` only. Missing role → `theme.json`, a
+  carrier row in `ui/theme.rs` and a row in tokens.md first; `crates/coffee-host/tests/pin_render.rs` proves it.
+- Pure `Blue` is not a carrier (nsh's own focus marks use it; the pin turns them into `acc`). A host that mounts the
+  root itself must apply `Root::tokens` (see `coffee_host::app_root`). Default text on an `acc` fill is pinned to
+  `ink`, so `ink` on `acc` (mode block, primary button) reads at every depth.
 - Pressable chrome is `view().role(AccessibilityRole::Button).focusable(false)`: every action has a key, and a
   focused control would swallow Enter/Space. Key bindings need `KeyOptions { repeat: true }` to auto-repeat.
 - A bordered view clips its children: draw an overlapping legend (the Panel title) as an absolutely positioned
   sibling.
+
+## nsh 0.6.1 pitfalls (found in wave 2)
+
+- **Batch**: change several signals in one `batch`. An `each` list changed twice before one commit logs `a kept row
+  is gone` and drops a row; commands run batched, tasks batch each stretch between awaits.
+- **Focus on reveal**: when a pushed page goes, nsh focuses the *first text field* of the page revealed. Keep a field
+  that must not take the keys (the catalog's search box) off screen until asked for.
+- **`ElementRef::focus()` before mount does nothing**: a field shown because the focus was asked for uses
+  `.auto_focus(..)`; `focus()` only serves a field already on screen.
+- **Fills only under 3 rows**: nsh's terminal drawing gives a background only to boxes under three rows tall. Taller
+  cards stand on `bg` and show state by frame weight and glyphs (`▶`, heavy `┏━┓`), not a fill.
+- **Paddings and gaps are capped**: the terminal layout turns horizontal padding into at most two columns (one on a
+  box of text or a control), gaps into 0/1/2 columns, vertical padding under 24 points and gaps under 16 into no
+  row and never more than one. Exact insets are spacers: `ui::layout::{hspace, vspace, pad_cols, gap_cols}`.
+- **Startup keys**: `coffee-host` reads the terminal's answers to its startup queries before crossterm exists; keys
+  typed meanwhile are split from the answers and delivered first (`terminal::split_replies`). nsh applies the
+  engine's batches (the shell's key bindings included) only when the host draws, and `AppView::handle` drops a key
+  that arrives before them, so the host holds all input until the engine woke and stayed quiet for 100 ms
+  (`terminal::Startup`, at most 2 s). Nothing else may read stdin.
 
 ## Checks before "done"
 
