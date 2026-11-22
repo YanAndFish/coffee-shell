@@ -90,10 +90,15 @@ user`), `session_expired` (`auth: optional`), `validation_failed` (any input), `
 
 `fixtures/v1/` holds at least one success example per endpoint (`src/generate.ts` lists each with its endpoint and
 status) and one envelope per error code (`errors/<code>.json`). The first three paths are frozen (the TUI and the sshd
-e2e stub read them): `health.json`, `products.json` (the unfiltered list), `error.json` (404). State variants the UI
-renders: empty / partly selected / coupon / problem carts, the guest quote, the merge result, empty and non-empty
-address books (order address ≠ default), the receipt (`orders/placed.json`), empty and full order lists (all three
-statuses), the profile with and without a taste profile, settings.
+e2e stub read them): `health.json`, `products.json` (the unfiltered list), `error.json` (404). Every listed product
+has its detail, `catalog/product-<id>.json`, plus `catalog/detail-no-stock.json` (nyeri out of stock). State variants
+the UI renders: empty / partly selected / coupon / problem / no-address carts, the guest quote, the merge result,
+empty and non-empty address books (order address ≠ default), the receipt (`orders/placed.json`), empty and full order
+lists (all three statuses), the profile with and without a taste profile and with and without a key, settings.
+
+Every member fixture is the same member, `林晓` (a test checks it); `apps/server/test/fixtures.test.ts` proves the
+product details, her register / me / profile answers and the no-address cart equal what the server answers for the
+seeded data (`pricing.test.ts` checks the money of every cart, order and price table).
 
 ## Adding or changing an endpoint
 

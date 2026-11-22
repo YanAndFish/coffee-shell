@@ -1,0 +1,184 @@
+{
+  "id": "nyeri",
+  "name": "涅里 AA 双洗",
+  "subtitle": "Kenya · Nyeri AA Double Washed",
+  "origin": "肯尼亚",
+  "region": "涅里 · 卡拉蒂纳",
+  "process": "双重水洗",
+  "roast": 2,
+  "tag": null,
+  "notes": [
+    "黑醋栗",
+    "西柚",
+    "番茄",
+    "红糖"
+  ],
+  "flavor": [
+    9,
+    6,
+    6,
+    3,
+    7,
+    7
+  ],
+  "score": 87,
+  "description": "典型的肯尼亚明亮酸质：黑醋栗与西柚汁的多汁感，带一点番茄般的鲜咸。中段红糖甜感撑起结构，做冰手冲也很出彩。",
+  "price250": 108,
+  "stock": 18,
+  "defaultWeight": "250g",
+  "code": "NYR",
+  "farm": "处理站批次",
+  "altitude": "1,700–1,900 m",
+  "variety": "SL28 / SL34",
+  "harvest": "2025",
+  "brew": "1:16 · 93°C · 2′40″",
+  "maxQuantity": 9,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": true
+    },
+    {
+      "weight": "1kg",
+      "available": true
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 49,
+      "totals": [
+        49,
+        98,
+        147,
+        196,
+        245,
+        294,
+        343,
+        392,
+        441
+      ]
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 69,
+      "totals": [
+        69,
+        138,
+        207,
+        276,
+        345,
+        414,
+        483,
+        552,
+        621
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 108,
+      "totals": [
+        108,
+        216,
+        324,
+        432,
+        540,
+        648,
+        756,
+        864,
+        972
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 128,
+      "totals": [
+        128,
+        256,
+        384,
+        512,
+        640,
+        768,
+        896,
+        1024,
+        1152
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 205,
+      "totals": [
+        205,
+        410,
+        615,
+        820,
+        1025,
+        1230,
+        1435,
+        1640,
+        1845
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 225,
+      "totals": [
+        225,
+        450,
+        675,
+        900,
+        1125,
+        1350,
+        1575,
+        1800,
+        2025
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 389,
+      "totals": [
+        389,
+        778,
+        1167,
+        1556,
+        1945,
+        2334,
+        2723,
+        3112,
+        3501
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 409,
+      "totals": [
+        409,
+        818,
+        1227,
+        1636,
+        2045,
+        2454,
+        2863,
+        3272,
+        3681
+      ]
+    }
+  ]
+}

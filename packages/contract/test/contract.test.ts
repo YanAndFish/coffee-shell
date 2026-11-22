@@ -13,11 +13,13 @@ import {
   HealthSchema,
   isErrorCode,
   LoginRequestSchema,
+  ProductDetailSchema,
   ProductListSchema,
   RegisterRequestSchema,
   skuCode,
   SkuSchema,
   UpdateCartLineRequestSchema,
+  UserSchema,
 } from '../src/index.ts'
 
 const root = join(import.meta.dirname, '..')
@@ -114,6 +116,47 @@ describe('fixtures', () => {
         expect(fixture.schema, fixture.path).toBe(endpoint.success.schema)
       }
     }
+  })
+
+  it('every product of products.json has its detail fixture, consistent with the list', () => {
+    const list = ProductListSchema.parse(readJson('fixtures/v1/products.json'))
+    const details = fixtures.filter(f => f.path.startsWith('v1/catalog/product-')).map(f => f.path).sort()
+    expect(details).toEqual(list.items.map(p => `v1/catalog/product-${p.id}.json`).sort())
+    for (const summary of list.items) {
+      const detail = ProductDetailSchema.parse(readJson(`fixtures/v1/catalog/product-${summary.id}.json`))
+      const { code: _code, farm: _farm, altitude: _altitude, variety: _variety, harvest: _harvest, brew: _brew, maxQuantity, weights, prices, ...rest } = detail
+      expect(rest, summary.id).toEqual(summary)
+      expect(maxQuantity, summary.id).toBe(Math.min(9, summary.stock))
+      expect(weights.map(w => w.weight), summary.id).toEqual(['100g', '250g', '500g', '1kg'])
+      expect(prices, summary.id).toHaveLength(8)
+    }
+  })
+
+  it('every member fixture names the same user (林晓)', () => {
+    const users = fixtures
+      .map(f => [
+        f.path,
+        readJson(`fixtures/${f.path}`),
+      ] as const)
+      .filter(([, value]) => typeof value === 'object' && value !== null && 'user' in value)
+      .map(([path, value]) => [
+        path,
+        UserSchema.parse((value as { user: unknown }).user),
+      ] as const)
+    expect(users.map(([path]) => path).sort()).toEqual([
+      'v1/auth/login-no-key.json',
+      'v1/auth/login.json',
+      'v1/auth/me.json',
+      'v1/auth/register.json',
+      'v1/auth/resume.json',
+      'v1/profile/profile-new.json',
+      'v1/profile/profile-no-key.json',
+      'v1/profile/profile-orders-no-key.json',
+      'v1/profile/profile.json',
+    ])
+    for (const [path, user] of users)
+      expect(user, path).toEqual(users[0]![1])
+    expect(users[0]![1].username).toBe('林晓')
   })
 
   it('every error code has an envelope fixture with its status and exact message', () => {

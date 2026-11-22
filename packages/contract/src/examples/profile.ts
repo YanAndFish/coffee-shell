@@ -1,7 +1,7 @@
 // Example profile pages. The taste is derived from `exampleOrders` by the rules in
 // docs/design/decisions.md (P-profile-*); the server tests recompute it.
 import type { Profile, Settings } from '../profile.ts'
-import { noKeyExample, notRememberedExample, rememberedExample, tierExample, userExample } from './auth.ts'
+import { noKeyExample, notRememberedExample, rememberedExample, userExample } from './auth.ts'
 
 /**
  * 林晓 bought (by quantity) yirga ×2, pinkb ×2, night ×2, geisha ×2: average flavor
@@ -26,23 +26,30 @@ export const profileExample: Profile = {
   ],
 }
 
-/** A new member before any order, on a connection with a key that is not remembered. */
+/**
+ * 林晓 before her first order (no orders, no addresses, no taste profile) on a connection
+ * with a key that is not remembered: the `fixture:empty` profile.
+ */
 export const profileNewExample: Profile = {
-  user: {
-    id: 2,
-    username: 'bean_lover',
-    createdAt: '2026-11-22T13:04:00.000Z',
-    tier: tierExample,
-  },
+  user: userExample,
   remembered: notRememberedExample,
   stats: { orders: 0, addresses: 0, coupons: 1 },
   taste: null,
   recommendations: [],
 }
 
-/** The same member on a connection without a key. */
+/** The same, on a connection without a key: the `fixture:empty` profile without a key. */
 export const profileNoKeyExample: Profile = {
   ...profileNewExample,
+  remembered: noKeyExample,
+}
+
+/**
+ * 林晓's profile (her orders, addresses and taste) on a connection without a key
+ * (`○ 未提供公钥`): what a login without a key shows next to the cart and order fixtures.
+ */
+export const profileOrdersNoKeyExample: Profile = {
+  ...profileExample,
   remembered: noKeyExample,
 }
 

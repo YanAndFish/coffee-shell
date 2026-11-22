@@ -11,6 +11,19 @@ Node API (Koa + Prisma + SQLite).
 ssh client ─ coffee-sshd (russh, PTY) ─ coffee-tui per session (nsh) ─ HTTP 127.0.0.1 ─ @coffee/server (Koa + Prisma + SQLite)
 ```
 
+## What works today
+
+- **SSH**: any key or none, one `coffee-tui` per session on its own PTY, session limits, resize, Ctrl+C twice to
+  leave, 24-bit / 256 / 16 colours or monochrome chosen per session (see [Colours](#colours)).
+- **Backend**: all 29 `/v1` endpoints of the contract — accounts with 记住我 (remember this SSH key), the catalog
+  with filters, sort and search, the cart (guest quotes, merge on login, coupon `TTY10`), the address book, checkout
+  and orders, the profile with its taste profile and settings. Every answer is checked against the contract.
+- **The TUI**: a new connection opens on the login page (register, log in, or `g` to browse as a guest; a
+  remembered key signs in at once), then the catalog, product detail, cart and checkout, address book and profile,
+  with the header, status-bar keys, `?` help, toasts and logout confirmation. Each screen's designed layout lands in
+  phase 2; a screen not yet laid out shows a plain body over the same keys and data.
+- **Fixture mode** and the **component gallery** (below) run the UI with no backend at all.
+
 ## Prerequisites
 
 - **Rust** via [rustup](https://rustup.rs); `rust-toolchain.toml` pins 1.99.1 and rustup installs it on first use.
@@ -34,6 +47,19 @@ pnpm ssh        # in another terminal: ssh -p 2222 localhost, no host-key prompt
 Runtime data goes to `.data/` (the SSH host key) and `apps/server/.data/coffee.db` (SQLite), both git-ignored.
 
 Any SSH key works, and so does none: there is no password prompt. Inside, press **Ctrl+C twice** to leave.
+
+### Without a backend: fixture mode and the gallery
+
+```sh
+cargo build -p coffee-host
+COFFEE_API_URL=fixture: target/debug/coffee-tui          # the UI on the contract's sample data (`◇ 样例数据`)
+COFFEE_API_URL=fixture:member COFFEE_SSH_FINGERPRINT=SHA256:demo target/debug/coffee-tui   # a remembered key
+COFFEE_UI_GALLERY=1 target/debug/coffee-tui              # every UI component, ← → to turn pages
+```
+
+Scenarios: `fixture:` (a new visitor; any password but `wrongpass` logs in as 林晓), `member`, `empty`, `new`,
+`problem`, `expired`, `member-error`, `down`, `error` — see [`apps/tui/README.md`](apps/tui/README.md). The answers
+are static samples: what you add, delete or save is not remembered.
 
 ### Colours
 

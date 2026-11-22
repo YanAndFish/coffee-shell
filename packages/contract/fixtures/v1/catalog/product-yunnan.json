@@ -1,0 +1,184 @@
+{
+  "id": "yunnan",
+  "name": "保山 小粒 日晒",
+  "subtitle": "China · Yunnan Baoshan Natural",
+  "origin": "中国云南",
+  "region": "保山 · 潞江坝",
+  "process": "日晒",
+  "roast": 3,
+  "tag": null,
+  "notes": [
+    "红枣",
+    "黑巧",
+    "莓果",
+    "焦糖"
+  ],
+  "flavor": [
+    5,
+    7,
+    6,
+    4,
+    6,
+    6
+  ],
+  "score": 85,
+  "description": "来自干热河谷的日晒批次。红枣和莓果的发酵甜感很讨喜，中烘之后黑巧与焦糖撑起厚度，加奶也不违和。",
+  "price250": 68,
+  "stock": 64,
+  "defaultWeight": "250g",
+  "code": "YUN",
+  "farm": "本地庄园",
+  "altitude": "1,100–1,400 m",
+  "variety": "卡蒂姆",
+  "harvest": "2025/26",
+  "brew": "1:15 · 90°C · 2′30″",
+  "maxQuantity": 9,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": true
+    },
+    {
+      "weight": "1kg",
+      "available": true
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 31,
+      "totals": [
+        31,
+        62,
+        93,
+        124,
+        155,
+        186,
+        217,
+        248,
+        279
+      ]
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 51,
+      "totals": [
+        51,
+        102,
+        153,
+        204,
+        255,
+        306,
+        357,
+        408,
+        459
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 68,
+      "totals": [
+        68,
+        136,
+        204,
+        272,
+        340,
+        408,
+        476,
+        544,
+        612
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 88,
+      "totals": [
+        88,
+        176,
+        264,
+        352,
+        440,
+        528,
+        616,
+        704,
+        792
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 129,
+      "totals": [
+        129,
+        258,
+        387,
+        516,
+        645,
+        774,
+        903,
+        1032,
+        1161
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 149,
+      "totals": [
+        149,
+        298,
+        447,
+        596,
+        745,
+        894,
+        1043,
+        1192,
+        1341
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 245,
+      "totals": [
+        245,
+        490,
+        735,
+        980,
+        1225,
+        1470,
+        1715,
+        1960,
+        2205
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 265,
+      "totals": [
+        265,
+        530,
+        795,
+        1060,
+        1325,
+        1590,
+        1855,
+        2120,
+        2385
+      ]
+    }
+  ]
+}

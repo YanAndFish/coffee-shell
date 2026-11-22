@@ -13,22 +13,32 @@
 //! - Startup asks the terminal for its colours (OSC 10/11), the kitty keyboard
 //!   protocol, synchronized output (DECRQM 2026), when it matters 24-bit colour
 //!   (XTGETTCAP `RGB`/`Tc`), and DA1, which every terminal answers and so ends the wait
-//!   early ([`Session::enter`]).
+//!   early ([`Session::enter`]). Keys typed meanwhile share the input with the answers:
+//!   they are kept apart from them and delivered first, in order, by [`poll`]
+//!   ([`split_replies`], [`decode_keys`]). No input reaches the app before it can take it
+//!   ([`Startup`]).
 //! - Frames are written whole, inside synchronized updates where supported ([`Frames`]).
 
 use std::{
   cell::RefCell,
+  collections::VecDeque,
   io::{self, Write},
   rc::Rc,
   sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
   },
   time::{Duration, Instant},
 };
 
 use nsh_platform_tui::{CursorStyle, RunEvent};
-use ratatui_crossterm::crossterm::{cursor, event, execute, style::Print, terminal};
+use ratatui_crossterm::crossterm::{
+  cursor,
+  event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+  execute,
+  style::Print,
+  terminal,
+};
 use rustix::{
   event::{PollFd, PollFlags, Timespec},
   fs::OFlags,
@@ -164,15 +174,18 @@ impl Session {
       previous(panic);
     }));
     terminal::enable_raw_mode()?;
-    // Before crossterm's reader exists, so the answers are ours to read.
+    // Before crossterm's reader exists, so the answers are ours to read. Whatever else
+    // arrives with them was typed: it goes to the app first, in order.
     let mut asked = QUERY.to_vec();
     if ask_rgb {
       asked.extend_from_slice(QUERY_RGB);
     }
     asked.extend_from_slice(QUERY_DA1);
-    session.replies = query(&asked, QUERY_TIMEOUT, &shutdown.flag())
-      .map(|bytes| parse_replies(&bytes))
+    let (replies, typed) = query(&asked, QUERY_TIMEOUT, &shutdown.flag())
+      .map(|bytes| split_replies(&bytes))
       .unwrap_or_default();
+    session.replies = replies;
+    queue_typed(decode_keys(&typed));
     let var = |name: &str| std::env::var(name).ok();
     session.synchronized = var("TMUX").is_none_or(|v| v.is_empty()) || session.replies.synchronized;
     let mut output = Output::new(shutdown.flag());
@@ -396,30 +409,254 @@ impl Write for Output {
   }
 }
 
-/// Writes `query` and collects the answers until DA1 arrives or `timeout` passes.
+/// Writes `query` and collects the input until DA1 arrives or `timeout` passes.
 fn query(query: &[u8], timeout: Duration, shutdown: &Arc<AtomicBool>) -> io::Result<Vec<u8>> {
   let deadline = Instant::now() + timeout;
   Output::new(shutdown.clone()).write_all(query)?;
-  let stdin = rustix::stdio::stdin();
-  let mut replies = Vec::new();
+  collect(rustix::stdio::stdin(), deadline, shutdown)
+}
+
+/// Reads `input` until the answers are complete (DA1), `deadline` passes or a shutdown is
+/// asked for: every byte read, the answers and whatever was typed meanwhile. Nothing after
+/// the read that brought DA1 is taken.
+fn collect(
+  input: rustix::fd::BorrowedFd<'_>,
+  deadline: Instant,
+  shutdown: &AtomicBool,
+) -> io::Result<Vec<u8>> {
+  let mut bytes = Vec::new();
   let mut chunk = [0u8; 512];
   loop {
     let left = deadline.saturating_duration_since(Instant::now());
-    if left.is_zero() || parse_replies(&replies).complete || shutdown.load(Ordering::Relaxed) {
-      return Ok(replies);
+    if left.is_zero() || parse_replies(&bytes).complete || shutdown.load(Ordering::Relaxed) {
+      return Ok(bytes);
     }
-    let ready = wait_for(stdin, PollFlags::IN, left.min(Duration::from_millis(50)))?;
+    let ready = wait_for(input, PollFlags::IN, left.min(Duration::from_millis(50)))?;
     if ready.intersects(PollFlags::HUP | PollFlags::ERR | PollFlags::NVAL) {
-      return Ok(replies);
+      return Ok(bytes);
     }
     if !ready.contains(PollFlags::IN) {
       continue;
     }
-    match rustix::io::read(stdin, &mut chunk) {
-      Ok(0) => return Ok(replies),
-      Ok(read) => replies.extend_from_slice(&chunk[..read]),
+    match rustix::io::read(input, &mut chunk) {
+      Ok(0) => return Ok(bytes),
+      Ok(read) => bytes.extend_from_slice(&chunk[..read]),
       Err(rustix::io::Errno::INTR | rustix::io::Errno::AGAIN) => {}
       Err(error) => return Err(error.into()),
+    }
+  }
+}
+
+/// The answers among `bytes` (as [`parse_replies`] reads them) and everything else, in
+/// order: what was typed while startup waited. An answer cut off at the end is dropped.
+pub fn split_replies(bytes: &[u8]) -> (Replies, Vec<u8>) {
+  let mut typed = Vec::new();
+  let mut i = 0;
+  while i < bytes.len() {
+    match reply_len(&bytes[i..]) {
+      Some(len) => i += len,
+      None => {
+        typed.push(bytes[i]);
+        i += 1;
+      }
+    }
+  }
+  (parse_replies(bytes), typed)
+}
+
+/// The length of the answer `bytes` starts with: an OSC 10/11 colour, a DCS string
+/// (XTGETTCAP), `CSI ? … u` (kitty flags), `CSI ? … c` (DA1) or `CSI ? … $ y` (DECRQM);
+/// the rest of `bytes` when such an answer is cut off.
+fn reply_len(bytes: &[u8]) -> Option<usize> {
+  let body = bytes.strip_prefix(b"\x1b")?;
+  match body.first()? {
+    b']' => {
+      let text = &body[1..];
+      if !(text.starts_with(b"10;") || text.starts_with(b"11;")) {
+        return None;
+      }
+      Some(match text.iter().position(|&b| b == 0x07 || b == 0x1b) {
+        Some(end) if text[end] == 0x07 => 3 + end,
+        Some(end) if text.get(end + 1) == Some(&b'\\') => 4 + end,
+        // Ended by another escape: that one is not part of it.
+        Some(end) if end + 1 < text.len() => 2 + end,
+        _ => bytes.len(),
+      })
+    }
+    b'P' => Some(
+      body[1..]
+        .windows(2)
+        .position(|w| w == b"\x1b\\")
+        .map_or(bytes.len(), |end| 4 + end),
+    ),
+    b'[' if body.get(1) == Some(&b'?') => {
+      let params = &body[2..];
+      match params.iter().position(|b| (0x40..=0x7e).contains(b)) {
+        Some(end) if matches!(params[end], b'u' | b'c' | b'y') => Some(4 + end),
+        Some(_) => None,
+        None => params
+          .iter()
+          .all(|&b| b.is_ascii_digit() || b == b';' || b == b'$')
+          .then_some(bytes.len()),
+      }
+    }
+    _ => None,
+  }
+}
+
+/// Keys typed during startup, in order, until [`poll`] delivers them.
+static TYPED: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
+
+fn queue_typed(events: Vec<Event>) {
+  if let Ok(mut typed) = TYPED.lock() {
+    typed.extend(events);
+  }
+}
+
+/// The next key typed during startup, once.
+fn take_typed() -> Option<Event> {
+  TYPED.lock().ok()?.pop_front()
+}
+
+/// The keys in `bytes` as crossterm reads a terminal's legacy encoding (no kitty flags
+/// yet at startup): characters, Enter, Tab, Backspace, control keys, Esc and Alt+key,
+/// arrows, Home/End, the `~` keys, F1–F12 and Shift+Tab. A `\n` is Enter: typed before
+/// raw mode, the terminal turned Enter into one. Unknown sequences are skipped.
+pub fn decode_keys(bytes: &[u8]) -> Vec<Event> {
+  let mut events = Vec::new();
+  let mut rest = bytes;
+  while !rest.is_empty() {
+    let (key, used) = decode_key(rest);
+    events.extend(key.map(Event::Key));
+    rest = &rest[used.max(1)..];
+  }
+  events
+}
+
+fn key(code: KeyCode, modifiers: KeyModifiers) -> Option<KeyEvent> {
+  Some(KeyEvent::new(code, modifiers))
+}
+
+/// The key `bytes` starts with and how many bytes it takes.
+fn decode_key(bytes: &[u8]) -> (Option<KeyEvent>, usize) {
+  let none = KeyModifiers::NONE;
+  match bytes[0] {
+    0x1b => decode_escape(bytes),
+    b'\r' | b'\n' => (key(KeyCode::Enter, none), 1),
+    b'\t' => (key(KeyCode::Tab, none), 1),
+    0x7f => (key(KeyCode::Backspace, none), 1),
+    0 => (key(KeyCode::Char(' '), KeyModifiers::CONTROL), 1),
+    c @ 0x01..=0x1a => (
+      key(
+        KeyCode::Char(char::from(c - 1 + b'a')),
+        KeyModifiers::CONTROL,
+      ),
+      1,
+    ),
+    c @ 0x1c..=0x1f => (
+      key(
+        KeyCode::Char(char::from(c - 0x1c + b'4')),
+        KeyModifiers::CONTROL,
+      ),
+      1,
+    ),
+    first => {
+      let len = match first {
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf7 => 4,
+        _ => 1,
+      };
+      let Some(c) = bytes
+        .get(..len)
+        .and_then(|b| std::str::from_utf8(b).ok())
+        .and_then(|s| s.chars().next())
+      else {
+        return (None, 1);
+      };
+      let modifiers = if c.is_uppercase() {
+        KeyModifiers::SHIFT
+      } else {
+        none
+      };
+      (key(KeyCode::Char(c), modifiers), len)
+    }
+  }
+}
+
+/// Esc, Alt+key, SS3 (`ESC O x`) and CSI keys.
+fn decode_escape(bytes: &[u8]) -> (Option<KeyEvent>, usize) {
+  let none = KeyModifiers::NONE;
+  match bytes.get(1) {
+    None | Some(0x1b) => (key(KeyCode::Esc, none), 1),
+    Some(b'O') if bytes.len() > 2 => {
+      let code = match bytes[2] {
+        b'A' => Some(KeyCode::Up),
+        b'B' => Some(KeyCode::Down),
+        b'C' => Some(KeyCode::Right),
+        b'D' => Some(KeyCode::Left),
+        b'H' => Some(KeyCode::Home),
+        b'F' => Some(KeyCode::End),
+        f @ b'P'..=b'S' => Some(KeyCode::F(1 + f - b'P')),
+        _ => None,
+      };
+      (code.and_then(|code| key(code, none)), 3)
+    }
+    Some(b'[') => {
+      let params = &bytes[2..];
+      let Some(end) = params.iter().position(|b| (0x40..=0x7e).contains(b)) else {
+        return (None, bytes.len());
+      };
+      let text = std::str::from_utf8(&params[..end]).unwrap_or_default();
+      let mut numbers = text.split(';').map(|n| n.parse::<u8>().unwrap_or(1));
+      let first = numbers.next().unwrap_or(1);
+      let mask = numbers.next().unwrap_or(1).saturating_sub(1);
+      let mut modifiers = none;
+      for (bit, modifier) in [
+        (1, KeyModifiers::SHIFT),
+        (2, KeyModifiers::ALT),
+        (4, KeyModifiers::CONTROL),
+        (8, KeyModifiers::SUPER),
+      ] {
+        if mask & bit != 0 {
+          modifiers |= modifier;
+        }
+      }
+      let code = match params[end] {
+        b'A' => Some(KeyCode::Up),
+        b'B' => Some(KeyCode::Down),
+        b'C' => Some(KeyCode::Right),
+        b'D' => Some(KeyCode::Left),
+        b'H' => Some(KeyCode::Home),
+        b'F' => Some(KeyCode::End),
+        f @ b'P'..=b'S' => Some(KeyCode::F(1 + f - b'P')),
+        b'Z' => {
+          modifiers |= KeyModifiers::SHIFT;
+          Some(KeyCode::BackTab)
+        }
+        b'~' => match first {
+          1 | 7 => Some(KeyCode::Home),
+          2 => Some(KeyCode::Insert),
+          3 => Some(KeyCode::Delete),
+          4 | 8 => Some(KeyCode::End),
+          5 => Some(KeyCode::PageUp),
+          6 => Some(KeyCode::PageDown),
+          n @ 11..=15 => Some(KeyCode::F(n - 10)),
+          n @ 17..=21 => Some(KeyCode::F(n - 11)),
+          n @ 23..=24 => Some(KeyCode::F(n - 12)),
+          _ => None,
+        },
+        _ => None,
+      };
+      (code.and_then(|code| key(code, modifiers)), 3 + end)
+    }
+    Some(_) => {
+      let (inner, used) = decode_key(&bytes[1..]);
+      let alt = inner.map(|mut event| {
+        event.modifiers |= KeyModifiers::ALT;
+        event
+      });
+      (alt, 1 + used)
     }
   }
 }
@@ -622,9 +859,68 @@ pub fn set_cursor_style(output: &mut Output, style: CursorStyle) -> io::Result<(
 
 /// Wakes the run loop from its wait: the engine has work (nsh's wake callback) or the
 /// terminal was resized (SIGWINCH). A self-pipe the loop polls next to stdin.
+///
+/// It also tells when the app can take input ([`Startup`]).
 pub struct Waker {
   read: std::os::unix::net::UnixStream,
   write: Arc<std::os::unix::net::UnixStream>,
+  startup: std::cell::Cell<Startup>,
+}
+
+/// How long the engine must stay quiet after its startup work before input reaches the
+/// app.
+const APP_QUIET: Duration = Duration::from_millis(100);
+/// The longest input waits for the app (an engine that never settles, e.g. an animation
+/// from the first frame).
+const APP_READY_WAIT: Duration = Duration::from_secs(2);
+
+/// Whether the app can take input yet.
+///
+/// nsh runs the app on an engine thread and applies its batches (the tree, then the key
+/// bindings the shell registers) only when the host draws; a key handled before the
+/// bindings arrived matches nothing and is dropped (`AppView::handle` answers `Ignored`).
+/// The first batches arrive over the first tens of milliseconds, in several wake-ups, so
+/// input stays queued (in the terminal, or from the startup queries) until the engine
+/// woke at least once and then stayed quiet for [`APP_QUIET`], or [`APP_READY_WAIT`]
+/// passed since the run began. Then it is read in order, and from then on at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Startup {
+  started: Instant,
+  last_wake: Option<Instant>,
+  ready: bool,
+}
+
+impl Startup {
+  pub fn new(started: Instant) -> Self {
+    Self {
+      started,
+      last_wake: None,
+      ready: false,
+    }
+  }
+
+  /// The engine woke the loop at `now`.
+  pub fn woke(&mut self, now: Instant) {
+    self.last_wake = Some(now);
+  }
+
+  /// Whether input may reach the app at `now` (once true, it stays true).
+  pub fn ready(&mut self, now: Instant) -> bool {
+    self.ready = self.ready
+      || now.saturating_duration_since(self.started) >= APP_READY_WAIT
+      || self
+        .last_wake
+        .is_some_and(|woke| now.saturating_duration_since(woke) >= APP_QUIET);
+    self.ready
+  }
+
+  /// How long to wait at most at `now` before [`Self::ready`] may change.
+  fn wait(&self, now: Instant) -> Duration {
+    let limit = APP_READY_WAIT.saturating_sub(now.saturating_duration_since(self.started));
+    self.last_wake.map_or(limit, |woke| {
+      limit.min(APP_QUIET.saturating_sub(now.saturating_duration_since(woke)))
+    })
+  }
 }
 
 impl Waker {
@@ -636,6 +932,7 @@ impl Waker {
     Ok(Self {
       read,
       write: Arc::new(write),
+      startup: std::cell::Cell::new(Startup::new(Instant::now())),
     })
   }
 
@@ -660,10 +957,45 @@ impl Waker {
     }
     woke
   }
+
+  /// [`Startup::ready`] now.
+  fn input_ready(&self) -> bool {
+    let mut startup = self.startup.get();
+    let ready = startup.ready(Instant::now());
+    self.startup.set(startup);
+    ready
+  }
+}
+
+/// Before the app can take input: waits up to `timeout` for the engine only, leaving
+/// input queued; a wake-up (the engine's work, to draw) or the app becoming ready is a
+/// redraw, so the loop comes straight back.
+fn wait_for_app(timeout: Duration, shutdown: &Shutdown, waker: &Waker) -> io::Result<RunEvent> {
+  let mut fds = [PollFd::new(&waker.read, PollFlags::IN)];
+  let wait = timeout.min(waker.startup.get().wait(Instant::now()));
+  let wait = Timespec::try_from(wait).unwrap_or_default();
+  match rustix::event::poll(&mut fds, Some(&wait)) {
+    Ok(_) | Err(rustix::io::Errno::INTR) => {}
+    Err(error) => return Err(error.into()),
+  }
+  if shutdown.requested() || disconnected()? {
+    return Ok(RunEvent::Exit);
+  }
+  if waker.drain() {
+    let mut startup = waker.startup.get();
+    startup.woke(Instant::now());
+    waker.startup.set(startup);
+    return Ok(RunEvent::Redraw);
+  }
+  Ok(if waker.input_ready() {
+    RunEvent::Redraw
+  } else {
+    RunEvent::Idle
+  })
 }
 
 /// Waits up to `timeout` for input, a wake-up or a resize: a shutdown or a hung-up
-/// terminal is `Exit`.
+/// terminal is `Exit`. Input waits until the app can take it ([`Startup`]).
 ///
 /// nsh's `run_app` polls crossterm every 16 ms because crossterm cannot be woken from
 /// the engine thread; that costs about 0.5 % CPU per idle session. Here the wait is a
@@ -676,7 +1008,14 @@ pub fn poll(timeout: Duration, shutdown: &Shutdown, waker: &Waker) -> io::Result
   if shutdown.requested() || disconnected()? {
     return Ok(RunEvent::Exit);
   }
-  // Events crossterm already parsed (one read can carry several) come first.
+  if !waker.input_ready() {
+    return wait_for_app(timeout, shutdown, waker);
+  }
+  // Keys typed while startup waited for the terminal were read then: they come first.
+  if let Some(event) = take_typed() {
+    return Ok(convert(event));
+  }
+  // Events crossterm already parsed (one read can carry several) come next.
   if event::poll(DECODE_POLL)? {
     return Ok(convert(event::read()?));
   }
@@ -746,6 +1085,164 @@ mod tests {
     // Its hex never reads as another answer (no stray DA1 or kitty flags).
     let inside = parse_replies(b"\x1bP1+r5463=5b3f75\x1b\\");
     assert!(inside.truecolor && !inside.complete && !inside.keyboard);
+  }
+
+  fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
+    Event::Key(KeyEvent::new(code, modifiers))
+  }
+
+  fn chars(text: &str) -> Vec<Event> {
+    text
+      .chars()
+      .map(|c| press(KeyCode::Char(c), KeyModifiers::NONE))
+      .collect()
+  }
+
+  /// Every answer of the startup queries, with keys typed before, between and after them.
+  const INTERLEAVED: &[u8] = b"g\x1b]10;rgb:ecec/e4e4/d6d6\x1b\\h\x1b]11;rgb:14/11/0e\x07\x1b[A\
+    \x1b[?1u\x1bP1+r524742\x1b\\\r\x1b[?2026;2$y\x1bP0+r5463\x1b\\\x1b[?62;22cij";
+
+  #[test]
+  fn keys_typed_during_the_queries_are_kept_apart_from_the_answers() {
+    let (replies, typed) = split_replies(INTERLEAVED);
+    assert_eq!(replies, parse_replies(INTERLEAVED));
+    assert_eq!(replies.foreground, Some([0xec, 0xe4, 0xd6]));
+    assert!(replies.keyboard && replies.synchronized && replies.truecolor && replies.complete);
+    assert_eq!(typed, b"gh\x1b[A\rij");
+    let mut expected = chars("gh");
+    expected.push(press(KeyCode::Up, KeyModifiers::NONE));
+    expected.push(press(KeyCode::Enter, KeyModifiers::NONE));
+    expected.extend(chars("ij"));
+    assert_eq!(decode_keys(&typed), expected);
+    // No answers: everything was typed (a user's Esc and arrows included).
+    let keys = b"\x1b\x1b[1;5C\x1bOP\x1b[Z";
+    assert_eq!(split_replies(keys).1, keys);
+    // An answer cut off at the end (the wait timed out) is not taken for keys.
+    for cut in [&b"q\x1b[?62;2"[..], b"q\x1bP1+r52", b"q\x1b]11;rgb:14/11"] {
+      assert_eq!(split_replies(cut).1, b"q", "{cut:?}");
+    }
+    // An unrelated OSC or CSI is not an answer.
+    assert_eq!(split_replies(b"\x1b[5~").1, b"\x1b[5~");
+  }
+
+  #[test]
+  fn typed_bytes_decode_as_crossterm_reads_them() {
+    let ctrl = KeyModifiers::CONTROL;
+    let none = KeyModifiers::NONE;
+    let events =
+      decode_keys("a中G\t\x7f\x03\n\x1b\x1bx\x1b[1;5C\x1bOP\x1b[15~\x1b[Z\x1b[3~".as_bytes());
+    assert_eq!(
+      events,
+      vec![
+        press(KeyCode::Char('a'), none),
+        press(KeyCode::Char('中'), none),
+        press(KeyCode::Char('G'), KeyModifiers::SHIFT),
+        press(KeyCode::Tab, none),
+        press(KeyCode::Backspace, none),
+        press(KeyCode::Char('c'), ctrl),
+        press(KeyCode::Enter, none),
+        press(KeyCode::Esc, none),
+        press(KeyCode::Char('x'), KeyModifiers::ALT),
+        press(KeyCode::Right, ctrl),
+        press(KeyCode::F(1), none),
+        press(KeyCode::F(5), none),
+        press(KeyCode::BackTab, KeyModifiers::SHIFT),
+        press(KeyCode::Delete, none),
+      ]
+    );
+    assert_eq!(decode_keys(b"\x1b"), vec![press(KeyCode::Esc, none)]);
+    // Unknown sequences and broken UTF-8 are skipped, not misread.
+    assert_eq!(decode_keys(b"\x1b[99~\xffz"), chars("z"));
+  }
+
+  /// The regression of "the first keys after connecting are lost": keys arriving before,
+  /// between and right after the answers are all read once, in order; a key arriving after
+  /// the wait ended stays for the normal reader.
+  #[test]
+  fn startup_keeps_keys_typed_during_and_right_after_the_queries() {
+    use std::{io::Read, os::fd::AsFd, os::unix::net::UnixStream};
+
+    let (app, mut terminal) = UnixStream::pair().unwrap();
+    let flag = AtomicBool::new(false);
+    // Typed before the queries even went out.
+    terminal.write_all(b"g").unwrap();
+    let mut writer = terminal.try_clone().unwrap();
+    let answers = std::thread::spawn(move || {
+      std::thread::sleep(Duration::from_millis(30));
+      writer.write_all(b"\x1b]11;rgb:14/11/0e\x1b\\h").unwrap();
+      std::thread::sleep(Duration::from_millis(30));
+      // DA1 and two keys typed right after it, in one read.
+      writer.write_all(b"\x1b[?62;22cij").unwrap();
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let bytes = collect(app.as_fd(), deadline, &flag).unwrap();
+    answers.join().unwrap();
+    terminal.write_all(b"k").unwrap();
+    let (replies, typed) = split_replies(&bytes);
+    assert!(replies.complete);
+    assert_eq!(replies.background, Some([0x14, 0x11, 0x0e]));
+    assert_eq!(typed, b"ghij");
+    let mut later = [0u8; 8];
+    let read = (&app).read(&mut later).unwrap();
+    assert_eq!(&later[..read], b"k");
+
+    // A terminal that never answers: the wait ends at its deadline, the keys stay.
+    let (app, mut terminal) = UnixStream::pair().unwrap();
+    terminal.write_all(b"xy\r").unwrap();
+    let bytes = collect(
+      app.as_fd(),
+      Instant::now() + Duration::from_millis(100),
+      &flag,
+    )
+    .unwrap();
+    let (replies, typed) = split_replies(&bytes);
+    assert!(!replies.complete);
+    assert_eq!(decode_keys(&typed).len(), 3);
+
+    // What startup kept reaches the run loop once, in order, before anything read later.
+    queue_typed(decode_keys(b"gh"));
+    assert_eq!(
+      take_typed(),
+      Some(press(KeyCode::Char('g'), KeyModifiers::NONE))
+    );
+    assert_eq!(
+      take_typed(),
+      Some(press(KeyCode::Char('h'), KeyModifiers::NONE))
+    );
+    assert_eq!(take_typed(), None);
+  }
+
+  /// Input waits for the app: not before the engine's first wake-up, not while it keeps
+  /// waking, and never longer than `APP_READY_WAIT`.
+  #[test]
+  fn input_waits_until_the_app_settled() {
+    let start = Instant::now();
+    let at = |ms| start + Duration::from_millis(ms);
+    let mut startup = Startup::new(start);
+    assert!(!startup.ready(at(0)));
+    assert!(
+      !startup.ready(at(500)),
+      "no wake-up yet: the app has no bindings"
+    );
+    assert_eq!(
+      startup.wait(at(500)),
+      APP_READY_WAIT - Duration::from_millis(500)
+    );
+    startup.woke(at(17));
+    startup.woke(at(51));
+    assert!(!startup.ready(at(60)), "still busy");
+    assert_eq!(startup.wait(at(60)), APP_QUIET - Duration::from_millis(9));
+    assert!(startup.ready(at(51) + APP_QUIET));
+    // Once ready, always ready (a later wake-up does not hold input back).
+    startup.woke(at(200));
+    assert!(startup.ready(at(201)));
+    // An engine that never settles: input goes through at the limit.
+    let mut busy = Startup::new(start);
+    for ms in (0..2000).step_by(20) {
+      busy.woke(at(ms));
+      assert!(!busy.ready(at(ms + 1)), "{ms}");
+    }
+    assert!(busy.ready(start + APP_READY_WAIT));
   }
 
   #[test]

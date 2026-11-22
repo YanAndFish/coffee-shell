@@ -59,8 +59,9 @@ export const fixtures: readonly Fixture[] = [
   ok('v1/catalog/products-light-by-price.json', 'listProducts', 200, catalog.ProductListSchema, ex.productListLightByPriceExample),
   ok('v1/catalog/products-search.json', 'listProducts', 200, catalog.ProductListSchema, ex.productListSearchExample),
   ok('v1/catalog/products-empty.json', 'listProducts', 200, catalog.ProductListSchema, ex.productListEmptyExample),
-  ok('v1/catalog/product-pinkb.json', 'getProduct', 200, catalog.ProductDetailSchema, ex.productDetailPinkbExample),
-  ok('v1/catalog/product-geisha.json', 'getProduct', 200, catalog.ProductDetailSchema, ex.productDetailGeishaExample),
+  // one detail per seeded bean: product-<id>.json
+  ...ex.productDetailExamples.map(detail => ok(`v1/catalog/product-${detail.id}.json`, 'getProduct', 200, catalog.ProductDetailSchema, detail)),
+  ok('v1/catalog/detail-no-stock.json', 'getProduct', 200, catalog.ProductDetailSchema, ex.productDetailNoStockExample),
   // cart
   ok('v1/cart/cart.json', 'getCart', 200, cart.CartSchema, ex.cartExample),
   ok('v1/cart/added.json', 'addCartLine', 200, cart.CartSchema, ex.cartExample),
@@ -68,6 +69,7 @@ export const fixtures: readonly Fixture[] = [
   ok('v1/cart/cart-coupon.json', 'applyCoupon', 200, cart.CartSchema, ex.cartCouponExample),
   ok('v1/cart/cart-empty.json', 'getCart', 200, cart.CartSchema, ex.cartEmptyExample),
   ok('v1/cart/cart-problem.json', 'getCart', 200, cart.CartSchema, ex.cartProblemExample),
+  ok('v1/cart/cart-no-address.json', 'getCart', 200, cart.CartSchema, ex.cartNoAddressExample),
   ok('v1/cart/removed.json', 'removeCartLine', 200, cart.CartSchema, ex.cartRemovedExample),
   ok('v1/cart/none-selected.json', 'setCartSelection', 200, cart.CartSchema, ex.cartNoneSelectedExample),
   ok('v1/cart/coupon-removed.json', 'removeCoupon', 200, cart.CartSchema, ex.cartCouponRemovedExample),
@@ -93,6 +95,7 @@ export const fixtures: readonly Fixture[] = [
   ok('v1/profile/profile.json', 'getProfile', 200, profile.ProfileSchema, ex.profileExample),
   ok('v1/profile/profile-new.json', 'getProfile', 200, profile.ProfileSchema, ex.profileNewExample),
   ok('v1/profile/profile-no-key.json', 'getProfile', 200, profile.ProfileSchema, ex.profileNoKeyExample),
+  ok('v1/profile/profile-orders-no-key.json', 'getProfile', 200, profile.ProfileSchema, ex.profileOrdersNoKeyExample),
   ok('v1/profile/settings.json', 'getSettings', 200, profile.SettingsSchema, ex.settingsExample),
   ok('v1/profile/settings-animations-off.json', 'updateSettings', 200, profile.SettingsSchema, ex.settingsAnimationsOffExample),
   // one envelope per error code

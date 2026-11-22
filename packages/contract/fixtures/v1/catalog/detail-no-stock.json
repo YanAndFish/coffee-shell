@@ -1,0 +1,104 @@
+{
+  "id": "nyeri",
+  "name": "涅里 AA 双洗",
+  "subtitle": "Kenya · Nyeri AA Double Washed",
+  "origin": "肯尼亚",
+  "region": "涅里 · 卡拉蒂纳",
+  "process": "双重水洗",
+  "roast": 2,
+  "tag": null,
+  "notes": [
+    "黑醋栗",
+    "西柚",
+    "番茄",
+    "红糖"
+  ],
+  "flavor": [
+    9,
+    6,
+    6,
+    3,
+    7,
+    7
+  ],
+  "score": 87,
+  "description": "典型的肯尼亚明亮酸质：黑醋栗与西柚汁的多汁感，带一点番茄般的鲜咸。中段红糖甜感撑起结构，做冰手冲也很出彩。",
+  "price250": 108,
+  "stock": 0,
+  "defaultWeight": "250g",
+  "code": "NYR",
+  "farm": "处理站批次",
+  "altitude": "1,700–1,900 m",
+  "variety": "SL28 / SL34",
+  "harvest": "2025",
+  "brew": "1:16 · 93°C · 2′40″",
+  "maxQuantity": 0,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": true
+    },
+    {
+      "weight": "1kg",
+      "available": true
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 49,
+      "totals": []
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 69,
+      "totals": []
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 108,
+      "totals": []
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 128,
+      "totals": []
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 205,
+      "totals": []
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 225,
+      "totals": []
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 389,
+      "totals": []
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 409,
+      "totals": []
+    }
+  ]
+}

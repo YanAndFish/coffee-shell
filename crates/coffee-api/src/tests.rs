@@ -75,7 +75,9 @@ fn check(path: &str, text: &str) -> Result<(), String> {
       _ => round_trip::<AuthSession>(text),
     },
     _ if path.starts_with("v1/catalog/products-") => round_trip::<ProductList>(text),
-    _ if path.starts_with("v1/catalog/product-") => round_trip::<ProductDetail>(text),
+    _ if path.starts_with("v1/catalog/product-") || path.starts_with("v1/catalog/detail-") => {
+      round_trip::<ProductDetail>(text)
+    }
     "v1/cart/merge.json" => round_trip::<CartMergeResult>(text),
     _ if path.starts_with("v1/cart/") => round_trip::<Cart>(text),
     _ if path.starts_with("v1/addresses/saved-") || path == "v1/addresses/updated.json" => {
@@ -182,6 +184,41 @@ fn product_detail_prices() {
     sku_code(&detail.code, Weight::G100, Grind::WholeBean, Pack::Gift),
     "RT-GSH-100G-WB-GIFT"
   );
+}
+
+/// Every listed product has its detail fixture, which agrees with its list entry.
+#[test]
+fn every_product_has_a_detail() {
+  let list: ProductList = serde_json::from_str(PRODUCTS).unwrap();
+  let fixtures = all_fixtures();
+  for summary in &list.items {
+    let path = format!("v1/catalog/product-{}.json", summary.id);
+    let (_, text) = fixtures
+      .iter()
+      .find(|(p, _)| *p == path)
+      .unwrap_or_else(|| panic!("{path} is missing"));
+    let detail: ProductDetail = serde_json::from_str(text).unwrap();
+    assert_eq!(detail.id, summary.id);
+    assert_eq!(detail.name, summary.name);
+    assert_eq!(detail.stock, summary.stock);
+    assert_eq!(detail.price250, summary.price250);
+    assert_eq!(u32::from(detail.max_quantity), summary.stock.min(9));
+    assert_eq!(detail.prices.len(), 8, "{path}");
+  }
+  let details = fixtures
+    .iter()
+    .filter(|(p, _)| p.starts_with("v1/catalog/product-"))
+    .count();
+  assert_eq!(details, list.items.len());
+  let none: ProductDetail = serde_json::from_str(include_str!(
+    "../../../packages/contract/fixtures/v1/catalog/detail-no-stock.json"
+  ))
+  .unwrap();
+  assert_eq!(
+    (none.id.as_str(), none.stock, none.max_quantity),
+    ("nyeri", 0, 0)
+  );
+  assert!(none.prices.iter().all(|cell| cell.totals.is_empty()));
 }
 
 #[test]

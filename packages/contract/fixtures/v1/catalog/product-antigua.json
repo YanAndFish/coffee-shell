@@ -1,0 +1,184 @@
+{
+  "id": "antigua",
+  "name": "安提瓜 火山",
+  "subtitle": "Guatemala · Antigua",
+  "origin": "危地马拉",
+  "region": "安提瓜谷地",
+  "process": "水洗",
+  "roast": 4,
+  "tag": null,
+  "notes": [
+    "黑巧",
+    "坚果",
+    "烟熏",
+    "焦糖"
+  ],
+  "flavor": [
+    4,
+    6,
+    7,
+    5,
+    6,
+    6
+  ],
+  "score": 84.5,
+  "description": "火山土壤带来的厚实质感。黑巧与烤坚果为主调，带一丝温和的烟熏，酸度低、口感圆润，适合法压或摩卡壶。",
+  "price250": 78,
+  "stock": 30,
+  "defaultWeight": "250g",
+  "code": "ATG",
+  "farm": "庄园批次",
+  "altitude": "1,500–1,700 m",
+  "variety": "波旁 / 卡杜拉",
+  "harvest": "2025",
+  "brew": "1:14 · 89°C · 2′40″",
+  "maxQuantity": 9,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": true
+    },
+    {
+      "weight": "1kg",
+      "available": true
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 35,
+      "totals": [
+        35,
+        70,
+        105,
+        140,
+        175,
+        210,
+        245,
+        280,
+        315
+      ]
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 55,
+      "totals": [
+        55,
+        110,
+        165,
+        220,
+        275,
+        330,
+        385,
+        440,
+        495
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 78,
+      "totals": [
+        78,
+        156,
+        234,
+        312,
+        390,
+        468,
+        546,
+        624,
+        702
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 98,
+      "totals": [
+        98,
+        196,
+        294,
+        392,
+        490,
+        588,
+        686,
+        784,
+        882
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 148,
+      "totals": [
+        148,
+        296,
+        444,
+        592,
+        740,
+        888,
+        1036,
+        1184,
+        1332
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 168,
+      "totals": [
+        168,
+        336,
+        504,
+        672,
+        840,
+        1008,
+        1176,
+        1344,
+        1512
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 281,
+      "totals": [
+        281,
+        562,
+        843,
+        1124,
+        1405,
+        1686,
+        1967,
+        2248,
+        2529
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 301,
+      "totals": [
+        301,
+        602,
+        903,
+        1204,
+        1505,
+        1806,
+        2107,
+        2408,
+        2709
+      ]
+    }
+  ]
+}

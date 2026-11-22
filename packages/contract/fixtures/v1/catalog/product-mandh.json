@@ -1,0 +1,184 @@
+{
+  "id": "mandh",
+  "name": "曼特宁 G1",
+  "subtitle": "Indonesia · Sumatra Mandheling",
+  "origin": "印尼",
+  "region": "苏门答腊 · 多巴湖",
+  "process": "湿刨",
+  "roast": 5,
+  "tag": null,
+  "notes": [
+    "草本",
+    "黑巧",
+    "雪松",
+    "糖浆"
+  ],
+  "flavor": [
+    2,
+    5,
+    9,
+    7,
+    8,
+    5
+  ],
+  "score": 84,
+  "description": "湿刨法造就的厚重醇度：草本、雪松与黑巧克力，糖浆般的口感久久不散。深烘下苦而不焦，是重口味爱好者的老朋友。",
+  "price250": 72,
+  "stock": 40,
+  "defaultWeight": "250g",
+  "code": "MDH",
+  "farm": "小农批次",
+  "altitude": "1,200–1,500 m",
+  "variety": "混合品种",
+  "harvest": "2025",
+  "brew": "1:14 · 88°C · 3′00″",
+  "maxQuantity": 9,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": true
+    },
+    {
+      "weight": "1kg",
+      "available": true
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 32,
+      "totals": [
+        32,
+        64,
+        96,
+        128,
+        160,
+        192,
+        224,
+        256,
+        288
+      ]
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 52,
+      "totals": [
+        52,
+        104,
+        156,
+        208,
+        260,
+        312,
+        364,
+        416,
+        468
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 72,
+      "totals": [
+        72,
+        144,
+        216,
+        288,
+        360,
+        432,
+        504,
+        576,
+        648
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 92,
+      "totals": [
+        92,
+        184,
+        276,
+        368,
+        460,
+        552,
+        644,
+        736,
+        828
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 137,
+      "totals": [
+        137,
+        274,
+        411,
+        548,
+        685,
+        822,
+        959,
+        1096,
+        1233
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 157,
+      "totals": [
+        157,
+        314,
+        471,
+        628,
+        785,
+        942,
+        1099,
+        1256,
+        1413
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 259,
+      "totals": [
+        259,
+        518,
+        777,
+        1036,
+        1295,
+        1554,
+        1813,
+        2072,
+        2331
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 279,
+      "totals": [
+        279,
+        558,
+        837,
+        1116,
+        1395,
+        1674,
+        1953,
+        2232,
+        2511
+      ]
+    }
+  ]
+}

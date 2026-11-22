@@ -251,8 +251,13 @@ export function unitPriceOf(id: string, weight: Weight, gift = false): number {
   return bean(id).unit[WEIGHTS.indexOf(weight)]! + (gift ? 20 : 0)
 }
 
-function detail(id: string): ProductDetail {
-  const b = bean(id)
+function detail(id: string, stock?: number): ProductDetail {
+  const b = {
+    ...bean(id),
+    ...(stock === undefined
+      ? {}
+      : { stock }),
+  }
   const maxQuantity = Math.min(9, b.stock)
   const prices: PriceCell[] = WEIGHTS.flatMap(weight => PACKS.map((pack) => {
     const unitPrice = unitPriceOf(id, weight, pack === 'GIFT')
@@ -306,11 +311,51 @@ export const productListEmptyExample: ProductList = {
   facets,
 }
 
+/** `GET /v1/products/yirga`: every weight in stock. */
+export const productDetailYirgaExample: ProductDetail = detail('yirga')
+
 /** `GET /v1/products/pinkb`: 1kg sold out. */
 export const productDetailPinkbExample: ProductDetail = detail('pinkb')
 
+/** `GET /v1/products/nyeri`. */
+export const productDetailNyeriExample: ProductDetail = detail('nyeri')
+
 /** `GET /v1/products/geisha`: 6 left (`仅剩 6 份`), 500g and 1kg sold out. */
 export const productDetailGeishaExample: ProductDetail = detail('geisha')
+
+/** `GET /v1/products/yunnan`. */
+export const productDetailYunnanExample: ProductDetail = detail('yunnan')
+
+/** `GET /v1/products/antigua`. */
+export const productDetailAntiguaExample: ProductDetail = detail('antigua')
+
+/** `GET /v1/products/mandh`. */
+export const productDetailMandhExample: ProductDetail = detail('mandh')
+
+/** `GET /v1/products/night`: 120 in stock, the stepper still stops at 9. */
+export const productDetailNightExample: ProductDetail = detail('night')
+
+/**
+ * `GET /v1/products/nyeri` once its stock ran out (`暂时缺货`): the stepper's bound is 0 and
+ * the price cells have no totals; every weight is still "available" (sold-out weights are a
+ * separate list).
+ */
+export const productDetailNoStockExample: ProductDetail = detail('nyeri', 0)
+
+/**
+ * The detail of every seeded bean, in display order: `fixtures/v1/catalog/product-<id>.json`
+ * (each equal to what the server answers for the seeded catalog).
+ */
+export const productDetailExamples: readonly ProductDetail[] = [
+  productDetailYirgaExample,
+  productDetailPinkbExample,
+  productDetailNyeriExample,
+  productDetailGeishaExample,
+  productDetailYunnanExample,
+  productDetailAntiguaExample,
+  productDetailMandhExample,
+  productDetailNightExample,
+]
 
 /** A product as a cart line or order item needs it. */
 export function beanFacts(id: string): { name: string, origin: string, roast: number, code: string, stock: number } {

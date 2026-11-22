@@ -1,0 +1,184 @@
+{
+  "id": "yirga",
+  "name": "耶加雪菲 孔加",
+  "subtitle": "Ethiopia · Yirgacheffe Konga G1",
+  "origin": "埃塞俄比亚",
+  "region": "耶加雪菲 · 孔加",
+  "process": "水洗",
+  "roast": 1,
+  "tag": "新产季",
+  "notes": [
+    "茉莉",
+    "柠檬",
+    "佛手柑",
+    "红茶"
+  ],
+  "flavor": [
+    8,
+    7,
+    4,
+    2,
+    7,
+    9
+  ],
+  "score": 87.5,
+  "description": "高海拔小农水洗批次，干香是一把新鲜茉莉。入口柠檬与佛手柑的酸质明亮干净，冷却后浮出红茶般的回甘，适合手冲慢慢喝。",
+  "price250": 98,
+  "stock": 42,
+  "defaultWeight": "250g",
+  "code": "YIR",
+  "farm": "孔加合作社",
+  "altitude": "1,950–2,200 m",
+  "variety": "埃塞原生种",
+  "harvest": "2025/26",
+  "brew": "1:15 · 92°C · 2′30″",
+  "maxQuantity": 9,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": true
+    },
+    {
+      "weight": "1kg",
+      "available": true
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 44,
+      "totals": [
+        44,
+        88,
+        132,
+        176,
+        220,
+        264,
+        308,
+        352,
+        396
+      ]
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 64,
+      "totals": [
+        64,
+        128,
+        192,
+        256,
+        320,
+        384,
+        448,
+        512,
+        576
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 98,
+      "totals": [
+        98,
+        196,
+        294,
+        392,
+        490,
+        588,
+        686,
+        784,
+        882
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 118,
+      "totals": [
+        118,
+        236,
+        354,
+        472,
+        590,
+        708,
+        826,
+        944,
+        1062
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 186,
+      "totals": [
+        186,
+        372,
+        558,
+        744,
+        930,
+        1116,
+        1302,
+        1488,
+        1674
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 206,
+      "totals": [
+        206,
+        412,
+        618,
+        824,
+        1030,
+        1236,
+        1442,
+        1648,
+        1854
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 353,
+      "totals": [
+        353,
+        706,
+        1059,
+        1412,
+        1765,
+        2118,
+        2471,
+        2824,
+        3177
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 373,
+      "totals": [
+        373,
+        746,
+        1119,
+        1492,
+        1865,
+        2238,
+        2611,
+        2984,
+        3357
+      ]
+    }
+  ]
+}

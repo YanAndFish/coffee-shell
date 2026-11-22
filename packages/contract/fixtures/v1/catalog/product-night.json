@@ -1,0 +1,184 @@
+{
+  "id": "night",
+  "name": "「夜班」意式拼配",
+  "subtitle": "House Espresso Blend",
+  "origin": "拼配",
+  "region": "巴西 × 哥伦比亚 × 埃塞",
+  "process": "日晒 + 水洗",
+  "roast": 4,
+  "tag": "招牌",
+  "notes": [
+    "可可",
+    "榛子",
+    "焦糖",
+    "太妃"
+  ],
+  "flavor": [
+    4,
+    8,
+    7,
+    4,
+    7,
+    6
+  ],
+  "score": 85.5,
+  "description": "为深夜写代码的人调的拼配。巴西打底给出榛子与可可，哥伦比亚补甜，一点埃塞带来尾段果香，做拿铁奶感很足。",
+  "price250": 88,
+  "stock": 120,
+  "defaultWeight": "250g",
+  "code": "NGT",
+  "farm": "ROAST/TTY 烘焙室",
+  "altitude": "—",
+  "variety": "多产区拼配",
+  "harvest": "季节轮换",
+  "brew": "18g → 36g · 28s",
+  "maxQuantity": 9,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": true
+    },
+    {
+      "weight": "1kg",
+      "available": true
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 40,
+      "totals": [
+        40,
+        80,
+        120,
+        160,
+        200,
+        240,
+        280,
+        320,
+        360
+      ]
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 60,
+      "totals": [
+        60,
+        120,
+        180,
+        240,
+        300,
+        360,
+        420,
+        480,
+        540
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 88,
+      "totals": [
+        88,
+        176,
+        264,
+        352,
+        440,
+        528,
+        616,
+        704,
+        792
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 108,
+      "totals": [
+        108,
+        216,
+        324,
+        432,
+        540,
+        648,
+        756,
+        864,
+        972
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 167,
+      "totals": [
+        167,
+        334,
+        501,
+        668,
+        835,
+        1002,
+        1169,
+        1336,
+        1503
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 187,
+      "totals": [
+        187,
+        374,
+        561,
+        748,
+        935,
+        1122,
+        1309,
+        1496,
+        1683
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 317,
+      "totals": [
+        317,
+        634,
+        951,
+        1268,
+        1585,
+        1902,
+        2219,
+        2536,
+        2853
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 337,
+      "totals": [
+        337,
+        674,
+        1011,
+        1348,
+        1685,
+        2022,
+        2359,
+        2696,
+        3033
+      ]
+    }
+  ]
+}
