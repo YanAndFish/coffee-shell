@@ -328,7 +328,6 @@ async fn an_idle_session_is_closed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "enable after the TUI and server slices merge"]
 async fn products_from_the_backend_show_at_160x50() {
   let api = stub_backend().await;
   let server = TestServer::start(tui_bin(), |config| config.api_url = api).await;
@@ -344,7 +343,6 @@ async fn products_from_the_backend_show_at_160x50() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "enable after the TUI and server slices merge"]
 async fn a_small_terminal_shows_the_too_small_notice_at_60x20() {
   let api = stub_backend().await;
   let server = TestServer::start(tui_bin(), |config| config.api_url = api).await;
