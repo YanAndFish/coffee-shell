@@ -116,7 +116,9 @@ pub fn toast_box(kind: ToastKind, title: SharedString, sub: SharedString, width:
 }
 
 /// The toast overlay of `current()` (none: nothing), at the bottom right of the screen,
-/// over the content and never over the status bar. Its box clears what is behind it.
+/// over the content and never over the status bar. Its box clears what is behind it. It
+/// takes no presses (`pointerEvents: none`): a notice is never in the way of the mouse, and
+/// the fields and hints under it stay pressable.
 pub fn toast(
   current: impl Fn() -> Option<(ToastKind, SharedString, SharedString)> + 'static,
 ) -> AnyElement {
@@ -126,19 +128,23 @@ pub fn toast(
       let viewport = layout.viewport();
       let width = toast_width(viewport.cols);
       let right = if viewport.cols >= 100 { 2 } else { 1 };
-      overlay().absolute().inset(px(0.0)).child(
-        view()
-          .absolute()
-          .right(layout::cols(right))
-          .bottom(layout::rows(2))
-          .w(layout::cols(width))
-          .h(layout::rows(TOAST_ROWS))
-          // An overlay's box with a fill of its own clears what is behind it; as the
-          // terminal's summary line, nsh leaves its own frame off it.
-          .role(AccessibilityRole::Summary)
-          .bg(theme::bg)
-          .child(toast_box(kind, title, sub, width)),
-      )
+      overlay()
+        .absolute()
+        .inset(px(0.0))
+        .pointer_events(PointerEvents::None)
+        .child(
+          view()
+            .absolute()
+            .right(layout::cols(right))
+            .bottom(layout::rows(2))
+            .w(layout::cols(width))
+            .h(layout::rows(TOAST_ROWS))
+            // An overlay's box with a fill of its own clears what is behind it; as the
+            // terminal's summary line, nsh leaves its own frame off it.
+            .role(AccessibilityRole::Summary)
+            .bg(theme::bg)
+            .child(toast_box(kind, title, sub, width)),
+        )
     })
   })
 }

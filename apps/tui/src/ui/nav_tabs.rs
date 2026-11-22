@@ -135,7 +135,7 @@ pub fn nav_rule(
     .h(layout::rows(1))
     .overflow_hidden()
     .child(
-      view().absolute().top(px(0.0)).left(px(0.0)).child(
+      super::frame::overflowing().child(
         text("")
           .child(label(
             move || {

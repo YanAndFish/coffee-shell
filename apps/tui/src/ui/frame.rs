@@ -14,6 +14,11 @@
 //! horizontal lines are long runs clipped by a flexible box (nsh never ends a run of line
 //! glyphs with `…`); the sides are a column of glyphs: exact when the caller knows the
 //! height, else a long column clipped to the content's height.
+//!
+//! A clipped run is drawn only inside its box, but nsh hit-tests the run's own (much wider
+//! or taller) box: every run therefore takes no pointer events ([`overflowing`]), so a press
+//! reaches what is under it — a dialog's buttons, the fields under a toast — and a pressable
+//! frame still gets the presses on its own lines.
 
 use nsh_core::{EllipsizeMode, prelude::*};
 
@@ -137,6 +142,16 @@ impl Legend {
   }
 }
 
+/// The absolute box at the top left of a clipping parent that holds a run longer than the
+/// parent: it takes no pointer events (the run's box reaches far outside what is drawn).
+pub fn overflowing() -> View {
+  view()
+    .absolute()
+    .top(px(0.0))
+    .left(px(0.0))
+    .pointer_events(PointerEvents::None)
+}
+
 /// Glyph text in the tone `tone()` gives now (with its carrier's mark).
 fn line_text(content: impl IntoReactive<SharedString>, tone: impl Fn() -> Tone + 'static) -> Text {
   super::label::toned(content, tone)
@@ -150,7 +165,7 @@ pub fn line_run(glyph: char, tone: Tone) -> View {
     .h(layout::rows(1))
     .overflow_hidden()
     .child(
-      view().absolute().top(px(0.0)).left(px(0.0)).child(
+      overflowing().child(
         super::label::label(glyph.to_string().repeat(RUN), tone)
           .number_of_lines(1)
           .text_overflow(EllipsizeMode::Clip),
@@ -170,7 +185,7 @@ fn run(
     .h(layout::rows(1))
     .overflow_hidden()
     .child(
-      view().absolute().top(px(0.0)).left(px(0.0)).child(
+      overflowing().child(
         line_text(
           move || {
             let g = style().glyphs();
@@ -227,7 +242,7 @@ fn side(
         .left(px(0.0))
         .w(layout::cols(1))
         .overflow_hidden()
-        .child(column),
+        .child(overflowing().child(column)),
     ),
   }
 }
