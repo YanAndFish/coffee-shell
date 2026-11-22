@@ -135,6 +135,21 @@ pub fn render(route: &Route) -> Screen {
     _ => SharedString::default(),
   };
   let product = stores.product;
+  // `a` / `b` typed while the product loaded run once it is there (or are dropped if it
+  // cannot be bought or failed to load).
+  effect(move || {
+    let arrived = product.detail().is_some();
+    let failed = product.phase() == crate::stores::Phase::Failed;
+    if product.typed_ahead().is_some() && (arrived || failed) {
+      untracked(|| {
+        if let Some(buy_now) = product.take_typed_ahead()
+          && arrived
+        {
+          batch(|| crate::stores::actions::add_selection(&stores, buy_now));
+        }
+      });
+    }
+  });
   // The page's work: show its product, unless the list (`actions::open_product`) already
   // opened it. `ProductStore::open` alone would ask again here: its load task has not begun
   // yet in this commit, so the detail still reads idle, and the first answer is dropped.

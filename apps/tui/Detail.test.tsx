@@ -11,7 +11,7 @@ import { expect, test } from 'nsh/test'
 
 import pinkb from '../../packages/contract/fixtures/v1/catalog/product-pinkb.json' with { type: 'json' }
 import products from '../../packages/contract/fixtures/v1/products.json' with { type: 'json' }
-import { enterAsGuest, isWide, start as open, rowsOf, screenCells, screenRows, shows, waitForPart } from './testkit'
+import { enterAsGuest, isWide, start as open, rowsOf, runUntil, screenCells, screenRows, shows, startOnClock, waitForPart } from './testkit'
 
 const SIZES: [number, number][] = [
   [160, 50],
@@ -385,6 +385,24 @@ test('Esc and Backspace go back to the list, its cursor kept', async () => {
   await app.press('label:← Esc 返回')
   await app.waitUntil(() => !app.texts().includes('规格 SKU'))
   expect(shows(app, '选购 BROWSE')).toBe(true)
+})
+
+test('a pressed while the product loads adds it once it is there', async () => {
+  // `fixture:slow` on a manual clock: every answer 3 s later.
+  const { app, clock } = await startOnClock(130, 40)
+  await runUntil(clock, () => app.texts().includes('离开输入'), 50)
+  await app.keyboard.press('escape')
+  await app.keyboard.press('g')
+  await runUntil(clock, () => shows(app, '商品列表 · 8 款'))
+  await runUntil(clock, () => !shows(app, '以访客身份浏览'))
+  await app.keyboard.press('enter')
+  await app.keyboard.press('a')
+  // Still loading: nothing added yet, and no `a 加入` hint.
+  await clock.runFor(100)
+  expect(shows(app, '已加入购物车')).toBe(false)
+  expect(app.shows('label:a 加入')).toBe(false)
+  expect(await runUntil(clock, () => shows(app, '已加入购物车'))).toBe(true)
+  expect(shows(app, '耶加雪菲 孔加 · 250g · 整豆 × 1')).toBe(true)
 })
 
 const API = 'http://127.0.0.1:3999'

@@ -17,6 +17,10 @@ fn buyable(stores: &Stores) -> bool {
   stores.product.can_buy()
 }
 
+fn loading(stores: &Stores) -> bool {
+  stores.product.detail().is_none() && stores.product.phase().pending()
+}
+
 fn failed(stores: &Stores) -> bool {
   stores.product.phase() == Phase::Failed
 }
@@ -95,6 +99,16 @@ pub const COMMANDS: &[Command] = &[
   )
   .when(buyable)
   .footer(50),
+  // `a` / `b` before the product arrived: held, run once it is there (the page's effect),
+  // so a quick `⏎ a` from the list is not lost. No hint: nothing can be bought yet.
+  Command::new(
+    "detail.ahead",
+    Key::new("a", &["a", "b"]),
+    "a 加入",
+    PAGE,
+    |stores, stroke| stores.product.type_ahead(stroke == "b"),
+  )
+  .when(loading),
   Command::new(
     "detail.back",
     Key::new("Esc", &["escape", "backspace"]),
