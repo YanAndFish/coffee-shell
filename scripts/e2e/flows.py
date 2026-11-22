@@ -11,10 +11,10 @@ import os
 import time
 
 from harness import Failure, Stack, Term, log, wait_until
-from shop import (add_address, add_to_cart, browse_as_guest, cart_cursor_to, check_order_number,
-                  checkout, choose, clear_filters, enter_coupon, expect_amounts, fill_address,
-                  leave_field, login, on_login_page, open_new_address, open_product, quote,
-                  register, remove_line, search, set_login_field, set_quantity, sku_choice,
+from shop import (add_address, add_to_cart, auth_error, browse_as_guest, cart_cursor_to,
+                  check_order_number, checkout, choose, clear_filters, enter_coupon, expect_amounts,
+                  fill_address, leave_field, login, on_login_page, open_new_address, open_product,
+                  quote, register, remove_line, search, set_login_field, set_quantity, sku_choice,
                   to_cart, to_catalog, unit_price, yuan)
 
 SIZE = (160, 50)
@@ -272,7 +272,7 @@ def flow_stock(stack: Stack) -> None:
   # A second buyer: the name is taken first, then a free one.
   b = stack.connect("buyer-b", key=None, size=SIZE)
   register(b, "抢购_a")
-  b.wait("✗ 这个用户名已被注册")
+  auth_error(b, "✗ 这个用户名已被注册")
   b.snap("username-taken")
   set_login_field(b, "用户名", "抢购_b")
   b.key("enter")
@@ -329,12 +329,12 @@ def flow_stock(stack: Stack) -> None:
     if attempt <= 5:
       c.wait_for(lambda: stack.backend.log.read_text().count("login failed") == attempt,
                  f"the backend's answer to wrong password {attempt}")
-      c.wait("✗ 用户名或密码不正确")
+      auth_error(c, "✗ 用户名或密码不正确")
       failures += 1
       if attempt == 1:
         c.snap("wrong-password")
     else:
-      c.wait("操作太频繁")
+      auth_error(c, "✗ 操作太频繁，请稍后再试")
       c.snap("rate-limited")
   check(failures == 5, f"{failures} plain failures before the limit")
   c.quit()
@@ -430,7 +430,7 @@ def flow_gateway(stack: Stack) -> None:
   stack.stop_backend()
   t = stack.connect("backend-down", key=None, size=SIZE)
   login(t, "无人_e2e")
-  t.wait("✗ 连接服务器失败，按 ⏎ 重试")
+  auth_error(t, "✗ 连接服务器失败，按 ⏎ 重试")
   t.snap("login-backend-down")
   browse_as_guest_failing(t)
   t.snap("list-backend-down")

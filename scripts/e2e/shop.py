@@ -108,6 +108,13 @@ def set_login_field(t: Term, label: str, value: str) -> None:
   t.wait_for(lambda: field_value(t, label) == shown, f"{label} showing what was typed", 5)
 
 
+def auth_error(t: Term, message: str) -> None:
+  """A refused login or registration: the error shows, then the card gives the focus back to
+  a field (a frame later). Keys sent in between are undone by that focus: wait for it."""
+  t.wait(message)
+  t.wait_for(lambda: login_field(t) is not None, "the focus back in a field after the error")
+
+
 def leave_field(t: Term) -> None:
   if "离开输入" in t.footer():
     t.key("esc")

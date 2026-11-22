@@ -23,6 +23,7 @@ import re
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -271,16 +272,11 @@ class Stack:
 
   def sql(self, query: str) -> list[tuple]:
     """Reads the flow's database directly (the shop's truth, not the UI's)."""
-    import sqlite3
     db = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=10)
     try:
       return db.execute(query).fetchall()
     finally:
       db.close()
-
-  def logs(self) -> str:
-    return "\n".join(p.log.read_text(errors="replace") for p in (self.backend, self.sshd)
-                     if p and p.log.exists())
 
 
 class Term:
@@ -387,19 +383,6 @@ class Term:
 
   def wait_footer(self, needle: str, timeout: float = WAIT) -> None:
     self.wait_for(lambda: needle in self.footer(), f"status bar showing {needle!r}", timeout)
-
-  def settle(self, quiet: float = 0.4, timeout: float = WAIT) -> None:
-    """Until the screen stops changing for `quiet` seconds (an answer has landed)."""
-    deadline = time.monotonic() + timeout
-    last, since = self.text(), time.monotonic()
-    while time.monotonic() < deadline:
-      self.pump(0.05)
-      now = self.text()
-      if now != last:
-        last, since = now, time.monotonic()
-      elif time.monotonic() - since >= quiet:
-        return
-    raise self.fail(f"the screen kept changing for {timeout:g} s")
 
   def pause(self, seconds: float) -> None:
     self.pump(seconds)
