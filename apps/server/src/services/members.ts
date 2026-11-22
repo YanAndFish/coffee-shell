@@ -1,7 +1,7 @@
 // Member rows → contract values (User, RememberStatus) and the rows every member owns.
 // Shared foundation (auth, profile, test helpers).
 import type { RememberStatus, Tier, User } from '@coffee/contract'
-import type { PrismaClient } from '../db.ts'
+import type { Db } from '../db.ts'
 import { instant, rememberStatus } from './shop-time.ts'
 
 /** The tier every member shows for now: static display values (data.md#会员与个人统计). */
@@ -34,7 +34,7 @@ export function toUser(row: { id: number, username: string, createdAt: Date }): 
 }
 
 /** The 记住我 status of this connection (`fingerprint`) for `userId`, read from the database. */
-export async function loadRememberStatus(prisma: PrismaClient, userId: number, fingerprint: string | null, now: Date): Promise<RememberStatus> {
+export async function loadRememberStatus(prisma: Db, userId: number, fingerprint: string | null, now: Date): Promise<RememberStatus> {
   if (!fingerprint)
     return rememberStatus(null, null, userId, now)
   const binding = await prisma.rememberedKey.findUnique({
@@ -48,7 +48,7 @@ export async function loadRememberStatus(prisma: PrismaClient, userId: number, f
  * Creates the rows every member has (an empty cart, default settings) when missing.
  * Register calls it; it is idempotent.
  */
-export async function ensureMemberRows(prisma: PrismaClient, userId: number): Promise<void> {
+export async function ensureMemberRows(prisma: Db, userId: number): Promise<void> {
   await prisma.cart.upsert({
     where: { userId },
     create: { userId },

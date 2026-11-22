@@ -1,7 +1,7 @@
 // Address rows → contract values, and the order-address rule (本单寄往). Shared foundation:
 // the cart shows the order address, checkout snapshots it, the address book lists it.
 import type { Address, AddressList, AddressTag, OrderAddress } from '@coffee/contract'
-import type { PrismaClient } from '../db.ts'
+import type { Db } from '../db.ts'
 import type { Address as AddressRow } from '../generated/prisma/client.ts'
 import { AddressTagSchema } from '@coffee/contract'
 
@@ -38,7 +38,7 @@ export function toOrderAddress(row: Pick<AddressRow, 'recipient' | 'phone' | 're
 }
 
 /** A member's addresses, oldest first. */
-export function addressRows(prisma: PrismaClient, userId: number): Promise<AddressRow[]> {
+export function addressRows(prisma: Db, userId: number): Promise<AddressRow[]> {
   return prisma.address.findMany({
     where: { userId },
     orderBy: { id: 'asc' },
@@ -56,7 +56,7 @@ export function pickOrderAddress(rows: readonly AddressRow[], chosenId: number |
 }
 
 /** The order address of `userId` (see {@link pickOrderAddress}). */
-export async function loadOrderAddress(prisma: PrismaClient, userId: number): Promise<AddressRow | null> {
+export async function loadOrderAddress(prisma: Db, userId: number): Promise<AddressRow | null> {
   const [rows, cart] = await Promise.all([
     addressRows(prisma, userId),
     prisma.cart.findUnique({
@@ -68,7 +68,7 @@ export async function loadOrderAddress(prisma: PrismaClient, userId: number): Pr
 }
 
 /** The contract's `AddressList` of `userId`. */
-export async function loadAddressList(prisma: PrismaClient, userId: number): Promise<AddressList> {
+export async function loadAddressList(prisma: Db, userId: number): Promise<AddressList> {
   const [rows, cart] = await Promise.all([
     addressRows(prisma, userId),
     prisma.cart.findUnique({

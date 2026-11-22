@@ -2,7 +2,7 @@
 // (server-shop) answer it, the guest quote prices client lines with it, and checkout
 // (server-orders) answers the cart after placing an order.
 import type { AppliedCoupon, Cart, CartLine, Grind, Pack, Weight } from '@coffee/contract'
-import type { PrismaClient } from '../db.ts'
+import type { Db } from '../db.ts'
 import type { Address as AddressRow } from '../generated/prisma/client.ts'
 import type { ProductFacts } from './products.ts'
 import { GrindSchema, PackSchema, WeightSchema } from '@coffee/contract'
@@ -72,7 +72,7 @@ export function buildCart(lines: CartLine[], coupon: CouponFacts | null, address
 }
 
 /** The member's cart, priced now (lines by position, then id; inactive coupons ignored). */
-export async function loadCart(prisma: PrismaClient, userId: number): Promise<Cart> {
+export async function loadCart(prisma: Db, userId: number): Promise<Cart> {
   const [cart, items, addresses] = await Promise.all([
     prisma.cart.findUnique({
       where: { userId },
