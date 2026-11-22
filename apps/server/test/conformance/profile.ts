@@ -4,7 +4,7 @@ import type { ConformanceCase } from './types.ts'
 import { expect } from 'vitest'
 import { readFixture } from '../helpers.ts'
 import { addAddressRow, addOrderRow, rememberKey } from '../support/members.ts'
-import { FINGERPRINT, NOW } from './types.ts'
+import { fakeFingerprint, FINGERPRINT, NOW } from './types.ts'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -96,6 +96,20 @@ export const profileCases: ConformanceCase[] = [
     },
   },
   {
+    operationId: 'getProfile',
+    name: 'a new member whose key is not remembered',
+    request: async ({ member }) => ({
+      path: '/v1/profile',
+      token: (await member()).token,
+      fingerprint: fakeFingerprint('profile-new'),
+    }),
+    check: (body) => {
+      const profile = body as Profile
+      const expected = readFixture('v1/profile/profile-new.json') as Profile
+      expect({ ...profile, user: null }).toEqual({ ...expected, user: null })
+    },
+  },
+  {
     operationId: 'getSettings',
     name: 'both on for a new account',
     request: async ({ member }) => ({ path: '/v1/settings', token: (await member()).token }),
@@ -110,6 +124,23 @@ export const profileCases: ConformanceCase[] = [
       body: { animations: false },
     }),
     check: body => expect(body as Settings).toEqual(readFixture('v1/profile/settings-animations-off.json')),
+  },
+  {
+    operationId: 'updateSettings',
+    name: 'persists across reads',
+    request: async ({ member, prisma }) => {
+      const m = await member()
+      await prisma.setting.update({
+        where: { userId: m.id },
+        data: { animations: false },
+      })
+      return {
+        path: '/v1/settings',
+        token: m.token,
+        body: { mouseTracking: false },
+      }
+    },
+    check: body => expect(body as Settings).toEqual({ animations: false, mouseTracking: false }),
   },
   {
     operationId: 'updateSettings',

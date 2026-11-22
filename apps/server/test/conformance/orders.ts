@@ -107,6 +107,60 @@ export const orderCases: ConformanceCase[] = [
     expectError: 'price_changed',
   },
   {
+    operationId: 'placeOrder',
+    name: 'a sold-out weight',
+    request: async ({ member, prisma }) => {
+      const m = await member()
+      await addCartRow(prisma, m.id, { ...SAMPLE[2]!, weight: '1kg' })
+      await addAddressRow(prisma, m.id)
+      return {
+        path: '/v1/orders',
+        token: m.token,
+        body: { idempotencyKey: 'checkout-0005' },
+      }
+    },
+    expectError: 'sold_out',
+  },
+  {
+    operationId: 'placeOrder',
+    name: 'more than the stock over several lines of one product',
+    request: async ({ member, prisma }) => {
+      const m = await member()
+      // 瑰夏 has at most 6 units: each line fits, together they do not.
+      await addCartRow(prisma, m.id, { ...SAMPLE[2]!, quantity: 5 })
+      await addCartRow(prisma, m.id, { ...SAMPLE[2]!, grind: 'PO', quantity: 2 })
+      await addAddressRow(prisma, m.id)
+      return {
+        path: '/v1/orders',
+        token: m.token,
+        body: { idempotencyKey: 'checkout-0006' },
+      }
+    },
+    expectError: 'out_of_stock',
+  },
+  {
+    operationId: 'placeOrder',
+    name: 'a used key answers the same order again',
+    request: async ({ member, prisma }) => {
+      const m = await member()
+      const number = await addOrderRow(prisma, m.id, [SAMPLE[0]!], NOW)
+      const order = await prisma.order.findUniqueOrThrow({
+        where: { number },
+      })
+      await addCartRow(prisma, m.id, SAMPLE[1]!)
+      return {
+        path: '/v1/orders',
+        token: m.token,
+        body: { idempotencyKey: order.idempotencyKey, expectedTotal: 1 },
+      }
+    },
+    check: (body) => {
+      const placed = body as PlacedOrder
+      expect(placed.order.items.map(i => i.productId)).toEqual(['pinkb'])
+      expect(placed.cart.lines.map(l => l.productId)).toEqual(['night'])
+    },
+  },
+  {
     operationId: 'listOrders',
     name: 'newest first, status by time',
     request: async ({ member, prisma }) => {
@@ -120,6 +174,26 @@ export const orderCases: ConformanceCase[] = [
       const list = body as OrderList
       expect(list.total).toBe(3)
       expect(list.items.map(o => o.status)).toEqual(['roasting', 'shipping', 'delivered'])
+    },
+  },
+  {
+    operationId: 'listOrders',
+    name: 'limit keeps the total',
+    request: async ({ member, prisma }) => {
+      const m = await member()
+      for (let i = 0; i < 3; i++)
+        await addOrderRow(prisma, m.id, [SAMPLE[0]!], new Date(NOW.getTime() - i * DAY))
+      return {
+        path: '/v1/orders',
+        token: m.token,
+        query: { limit: '1' },
+      }
+    },
+    check: (body) => {
+      const list = body as OrderList
+      expect(list.items).toHaveLength(1)
+      expect(list.items[0]?.createdAt).toBe(NOW.toISOString())
+      expect(list.total).toBe(3)
     },
   },
   {
