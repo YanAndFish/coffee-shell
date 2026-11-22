@@ -17,8 +17,9 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "pnpm -r --if-present typecheck",
-    "check": "pnpm lint && pnpm typecheck && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "check": "pnpm lint && pnpm check:mocks && pnpm typecheck && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
     "check:tui": "cd apps/tui && nsh check",
+    "check:mocks": "python3 scripts/check-mocks.py",
     "verify": "pnpm check && pnpm check:tui && pnpm build && pnpm test && pnpm test:tui",
     "ssh": "ssh -p 2222 -o SendEnv=COLORTERM -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null localhost"
   },

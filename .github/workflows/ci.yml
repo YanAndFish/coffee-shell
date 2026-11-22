@@ -34,6 +34,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - name: Check the size of every terminal mock in docs/design
+        run: python3 scripts/check-mocks.py
       - run: pnpm typecheck
       - run: pnpm exec vitest run
       - run: pnpm -r --if-present build
@@ -105,3 +107,39 @@ jobs:
             apps/tui/nsh-test*.xml
             apps/tui/.nsh/tui.log
           if-no-files-found: ignore
+
+  docker:
+    name: docker (build the SSH gateway image, no push)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build deploy/Dockerfile
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: false
+          load: true
+          tags: roast-tty-ssh:ci
+          # The image layers; the Dockerfile's cargo cache mounts are not exported.
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,scope=gateway,mode=max
+      - name: Smoke-test the image (both binaries run as the non-root user)
+        run: |
+          set -euo pipefail
+          docker image ls roast-tty-ssh:ci
+          test "$(docker run --rm --entrypoint id roast-tty-ssh:ci -u)" = 10001
+          docker run --rm --entrypoint sh roast-tty-ssh:ci -c \
+            'test -x /usr/local/bin/coffee-sshd && test -x /usr/local/bin/coffee-tui'
+          # coffee-sshd starts, makes its host key in /data and listens; then stop it.
+          id=$(docker run -d -p 127.0.0.1:2222:2222 roast-tty-ssh:ci)
+          trap 'docker rm -f "$id" >/dev/null' EXIT
+          for _ in $(seq 1 30); do
+            if docker logs "$id" 2>&1 | grep -q listening; then break; fi
+            sleep 1
+          done
+          docker logs "$id" 2>&1 | tail -n 5
+          docker logs "$id" 2>&1 | grep -q listening
+          ssh-keyscan -p 2222 -t ed25519 127.0.0.1 | grep -q ssh-ed25519
