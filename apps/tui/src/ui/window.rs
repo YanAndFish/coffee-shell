@@ -8,7 +8,7 @@
 //!
 //! The system row (row 0, `surface`): left `roast@tty: ~/shop — {cols}×{rows}` (`mute`, live,
 //! left out under 100 columns); centred the demo notice `! 演示环境 · 不是真实商店` (bold
-//! `acc`; bold carries it in monochrome); right `● 公钥已识别` (`acc2`) or `○ 未提供公钥`
+//! `acc`; bold carries it in monochrome; on the left under 100 columns); right `● 公钥已识别` (`acc2`) or `○ 未提供公钥`
 //! (`mute`) and ` · HH:MM` (`mute`), one cell from each edge. It stays visible over dialogs.
 
 use nsh_core::prelude::*;
@@ -59,16 +59,18 @@ pub fn system_row(
     .h(layout::rows(1))
     .px(layout::cols(1))
     .bg(Fill::Surface.color())
-    .child(
-      view()
-        .flex_1()
-        .min_w(px(0.0))
-        .basis(px(0.0))
-        .child(dynamic(move || {
-          let viewport = layout.viewport();
-          (viewport.cols >= 100).then(|| label(title_text(viewport), Tone::Mute))
-        })),
-    )
+    // From 100 columns the path on the left and the notice centred; below, no path and the
+    // notice on the left (responsive.md, "系统行").
+    .child(dynamic(move || {
+      let viewport = layout.viewport();
+      (viewport.cols >= 100).then(|| {
+        view()
+          .flex_1()
+          .min_w(px(0.0))
+          .basis(px(0.0))
+          .child(label(title_text(viewport), Tone::Mute))
+      })
+    }))
     .child(strong(DEMO_NOTICE, Tone::Acc).flex_none())
     .child(
       view()
