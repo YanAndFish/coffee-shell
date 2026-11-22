@@ -79,6 +79,11 @@ command) and a press runs it.
 | `fixture:` / `fixture:guest` | a new visitor: the key (if any) is not remembered; logging in gives `林晓` and every fixture |
 | `fixture:member`             | the key is remembered for `林晓`: resume signs in at once (needs a key)                      |
 | `fixture:empty`              | no products, empty cart, no addresses, no orders, a new profile                              |
+| `fixture:new`                | `林晓` as a new member: the catalog, one cart line, no address, no orders                    |
+| `fixture:problem`            | short stock: a cart line flagged `out_of_stock`, checkout refused, saving an address fails   |
+| `fixture:expired`            | a key resumes at once, then every member call answers `401 session_expired`                  |
+| `fixture:member-error`       | signing in works, every member call answers `500 internal_error`                             |
+| `fixture:slow`               | `fixture:guest`, each answer 3 s later (loading and submitting states; tests: manual clock)  |
 | `fixture:down`               | every request fails as a refused connection                                                  |
 | `fixture:error`              | every request answers `500 internal_error`                                                   |
 
@@ -105,7 +110,9 @@ A screen worker edits **only its page's directory** `src/pages/<name>/`:
   away focused); see `pages::placeholder::field`. Then letters type, `⏎`/`Esc` reach the page's `Typing` commands and
   the footer shows the field's hints. A field asked to focus (`UiStore::focus_requested`) focuses itself.
 - Loads start from the page's entry: `effect(move || untracked(|| store.ensure_loaded()))`.
-- Tests: add `App.test.tsx` cases for the screen (they open the app with `platform: 'linux'` and explicit sizes).
+- Tests: the screen's own `<Name>.test.tsx`, opening the app with `testkit.ts` (`start`, `enterAsGuest` — the login
+  page opens with the focus in 用户名, so a guest leaves it with Esc before `g` —, `logInAsMember`, and
+  `startOnClock` + `runUntil` on `fixture:slow` for loading and submitting states).
 
 What each screen has today (the files are `pages/<name>/*`; `stores.x` is a field of `Stores`):
 

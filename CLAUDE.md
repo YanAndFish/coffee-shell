@@ -123,9 +123,10 @@ Module map and per-screen contract: `apps/tui/README.md`. Dependencies point dow
   default is a phone, whose shortcuts never fire. `nsh test --target tui` cannot resize an open app. vitest must
   never pick them up (`vitest.config.ts`).
 - **Fixture mode** (no backend; header `◇ 样例数据`): `COFFEE_API_URL=fixture:<scenario>` or storage
-  `coffee.transport` picks `guest` (default), `member`, `empty`, `new`, `problem`, `expired`, `member-error`, `down`
-  or `error` (`api::FixtureSet`); storage `coffee.fingerprint` / `COFFEE_SSH_FINGERPRINT` gives a key. Answers are
-  static: a change answers its fixture and is not remembered.
+  `coffee.transport` picks `guest` (default), `member`, `empty`, `new`, `problem`, `expired`, `member-error`, `down`,
+  `error` or `slow` (guest's answers 3 s later) (`api::FixtureSet`); storage `coffee.fingerprint` /
+  `COFFEE_SSH_FINGERPRINT` gives a key. Answers are static: a change answers its fixture and is not remembered.
+  Screen tests share `apps/tui/testkit.ts` (the login page opens focused in 用户名: a guest presses Esc, then `g`).
 - **Gallery**: every `ui/` component on 14 pages: `COFFEE_UI_GALLERY=1 target/debug/coffee-tui` (pinned colours,
   any `COFFEE_COLORS`), tested by `apps/tui/Gallery.test.tsx`.
 - Pressable chrome is `view().role(Button).focusable(false)`; key bindings need `KeyOptions { repeat: true }`.
