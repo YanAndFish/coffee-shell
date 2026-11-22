@@ -103,6 +103,28 @@ pub struct FieldError {
 /// The copy of a save that failed without a field (copy.md).
 pub const SAVE_FAILED: &str = "保存失败，请重试";
 
+/// The dialog's error line for a refused save: the server's message when it tells the user
+/// something (a field, `地址最多保存 20 条`, `操作太频繁，请稍后再试`), else `保存失败，请重试`
+/// (no connection, an unknown answer, a server fault such as `服务器内部错误`, which says
+/// nothing to do; states.md, "地址对话框 保存中 / 失败").
+pub fn save_failure_line(failure: &ApiFailure) -> String {
+  let says_nothing = match failure.code() {
+    None => true,
+    Some(code) => {
+      code.status() >= 500
+        || matches!(
+          code,
+          ErrorCode::BadRequest | ErrorCode::Unauthorized | ErrorCode::MethodNotAllowed
+        )
+    }
+  };
+  if failure.is_network() || says_nothing {
+    SAVE_FAILED.to_owned()
+  } else {
+    failure.message()
+  }
+}
+
 /// The new / edit address dialog.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AddressDraft {
@@ -439,11 +461,7 @@ impl AddressStore {
       Err(failure) => {
         let error = FieldError {
           field: field_of(&failure),
-          message: if failure.is_network() || failure.code().is_none() {
-            SAVE_FAILED.to_owned()
-          } else {
-            failure.message()
-          },
+          message: save_failure_line(&failure),
         };
         batch(|| {
           if let Some(field) = error.field {
@@ -486,6 +504,32 @@ mod tests {
     });
     test(store);
     owner.dispose();
+  }
+
+  #[test]
+  fn a_refused_save_says_what_the_user_can_do() {
+    // A server fault or no answer: `保存失败，请重试` (states.md), not `服务器内部错误`.
+    assert_eq!(
+      save_failure_line(&ApiFailure::of(ErrorCode::InternalError)),
+      SAVE_FAILED
+    );
+    assert_eq!(
+      save_failure_line(&ApiFailure::Network("refused".into())),
+      SAVE_FAILED
+    );
+    assert_eq!(
+      save_failure_line(&ApiFailure::Decode("x".into())),
+      SAVE_FAILED
+    );
+    // What the server says that helps stays.
+    assert_eq!(
+      save_failure_line(&ApiFailure::of(ErrorCode::AddressLimit)),
+      "地址最多保存 20 条"
+    );
+    assert_eq!(
+      save_failure_line(&ApiFailure::of(ErrorCode::PhoneInvalid)),
+      "手机号应为 11 位数字"
+    );
   }
 
   #[test]

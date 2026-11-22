@@ -253,7 +253,8 @@ fn row(stores: Stores, form: CartForm, name_cells: u16, spaced: bool, line: Cart
       .flex_row()
       .px_2()
       .child(hspace(7))
-      .child(label(problem, Tone::Danger).truncate())
+      // An error reads by its `!` and bold at every depth (tokens.md, 错误), not colour alone.
+      .child(ui::strong(problem, Tone::Danger).truncate())
   });
   let gap = (flag.is_none() && spaced).then(|| layout::vspace(1));
   view()

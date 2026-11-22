@@ -111,6 +111,9 @@ test('130×40: L narrower; below 139 columns the name keeps 24 cells by dropping
   expect(app.texts()).toContain('哥伦比亚 · 中浅烘 · 250g · 手冲 · 标准袋')
   await expectRow(app, '▶ [✓]', '慧兰 粉红波旁', '[ −   1   + ]', '¥118.00')
   await expectRow(app, '╭─ 购物车 · 3 件', '╭─ 结算 CHECKOUT')
+  // The demo notice is never cut: two rows in the 34-cell column, broken after the comma.
+  expect(app.texts()).toContain('! 演示订单 · 没有真实扣款，')
+  expect(app.texts()).toContain('  也不会发货')
 })
 
 test('150×40: L with every column', async () => {
@@ -130,6 +133,9 @@ test('100×30: M drops the unit price; the spec goes under the name', async () =
   // The address block: region and street on one row.
   expect(app.texts()).toContain('上海市 徐汇区 天平路 88 弄 3 号 602 室')
   await expectRow(app, '╭─ 购物车 · 3 件', '╭─ 结算 CHECKOUT')
+  // Short as it is, the column keeps the demo notice over the button, on two rows.
+  expect(app.texts()).toContain('! 演示订单 · 没有真实扣款，')
+  expect(app.texts()).toContain('  也不会发货')
 })
 
 test('80×24: S stacks the cart over the compact checkout block', async () => {
@@ -138,6 +144,8 @@ test('80×24: S stacks the cart over the compact checkout block', async () => {
   const texts = app.texts()
   expect(texts).toContain('250g · 手冲 · 标准袋 · ¥118')
   expect(texts).toContain('商品小计 ¥426.00 · 优惠 −¥0.00 · 运费 包邮')
+  // The compact block keeps the demo notice on the row over 合计.
+  expect(texts).toContain('! 演示订单 · 没有真实扣款，也不会发货')
   expect(shows(app, '寄往 林晓 138 **** 5521')).toBe(true)
   expect(texts).not.toContain('单价')
   const rows = await screenRows(app)
@@ -380,6 +388,8 @@ test('a problem line says why, and the checkout is refused with the server\'s re
   await app.keyboard.press('2')
   await app.waitFor('text:结算 CHECKOUT')
   await waitForPart(app, '! 库存不足 · 仅剩 2 份')
+  // An error reads by its `!` and bold, not by its colour alone (monochrome, 16 colours).
+  expect(app.spanStyle('text:! 库存不足 · 仅剩 2 份').fontWeight).toBe(700)
   await app.keyboard.press('c')
   await app.waitFor('text:下单失败')
   expect(shows(app, '波奎特 瑰夏 库存不足，购物车没有变化')).toBe(true)

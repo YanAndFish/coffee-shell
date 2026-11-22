@@ -164,7 +164,9 @@ impl ApiFailure {
 fn the_error_envelope_becomes_a_typed_failure() {
   let failure = decode::<ProductList>(404, ERROR.as_bytes()).unwrap_err();
   assert_eq!(failure, ApiFailure::of(ErrorCode::NotFound));
-  assert_eq!(failure.detail(), "资源不存在（HTTP 404 · not_found）");
+  assert_eq!(failure.technical(), "资源不存在（HTTP 404 · not_found）");
+  // People read the contract's message only.
+  assert_eq!(failure.detail(), "资源不存在");
 }
 
 #[test]
@@ -180,8 +182,29 @@ fn a_status_without_envelope_keeps_the_status() {
     }
   );
   assert_eq!(failure.code(), None);
-  assert_eq!(failure.detail(), "HTTP 502 · http_502");
+  assert_eq!(failure.technical(), "HTTP 502 · http_502");
+  assert_eq!(failure.detail(), "服务器返回了错误，请稍后重试");
   assert_eq!(failure.message(), "商店后端返回了错误");
+}
+
+#[test]
+fn a_failure_never_shows_people_its_transport_error() {
+  let down = ApiFailure::Network("io: Connection refused (os error 61)".into());
+  assert_eq!(down.detail(), "连接服务器失败，请稍后重试");
+  assert!(down.technical().contains("os error 61"));
+  let odd = ApiFailure::Decode("missing field `id`".into());
+  assert_eq!(odd.detail(), "服务器的应答无法识别，请稍后重试");
+  assert_eq!(
+    ApiFailure::of(ErrorCode::InternalError).detail(),
+    "服务器内部错误"
+  );
+  for failure in [down, odd, ApiFailure::of(ErrorCode::SessionExpired)] {
+    let detail = failure.detail();
+    assert!(
+      !detail.contains("HTTP") && !detail.contains("error") && !detail.contains('_'),
+      "{detail}"
+    );
+  }
 }
 
 #[test]

@@ -898,7 +898,7 @@ fn inputs_page(demo: Demo, layout: Layout) -> AnyElement {
   };
   let username = input(
     InputSpec {
-      hint: Some("2–16 个字符".into()),
+      hint: Some(std::rc::Rc::new(|| "2–16 个字符".into())),
       ..InputSpec::new(InputForm::Prompt, Some("用户名"))
     },
     move || demo.username.get(),

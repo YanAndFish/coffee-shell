@@ -282,6 +282,27 @@ test('a book that fails to load: ✗ 地址加载失败 and ⏎ 重试', async (
   await waitForPart(app, '地址加载失败')
 })
 
+test('a save the server refuses: ✗ 保存失败，请重试, the dialog and its input kept', async () => {
+  // `fixture:problem`: saving an address answers 500 internal_error.
+  const app = await start(130, 40, { transport: 'fixture:problem' })
+  await loginReady(app)
+  await logInAsMember(app)
+  await app.waitFor('text:商品列表 · 8 款 · 推荐')
+  await app.keyboard.press('3')
+  await waitForPart(app, '地址本 · 3 条')
+  await app.keyboard.press('n')
+  await app.waitFor('text:新增地址 NEW')
+  await app.type('label:收货人', '周一')
+  await app.type('label:所在地区', '北京市 海淀区')
+  await app.type('label:详细地址', '学院路 37 号')
+  await app.keyboard.press('enter')
+  await app.waitFor('text:✗ 保存失败，请重试')
+  expect(shows(app, '服务器内部错误')).toBe(false)
+  expect(shows(app, '新增地址 NEW')).toBe(true)
+  expect(app.value('label:收货人')).toBe('周一')
+  expect(app.value('label:详细地址')).toBe('学院路 37 号')
+})
+
 test('saving an address: ⠹ 保存中… in the button\'s place, nothing types, then saved', async () => {
   const { app, clock } = await startOnClock(130, 40)
   await logInOnClock(app, clock)

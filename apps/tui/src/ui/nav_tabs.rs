@@ -55,8 +55,8 @@ pub fn tab_content_width(tab: &NavTab, badge: u32, wide: bool) -> usize {
 }
 
 /// The column span (start, cells) of tab `index` from the first tab's column, for the
-/// underline: the whole 14 cells when wide; the key cap and the label when tight (02-list.md
-/// S: `─━━━━━━━━─` under `‹1› 选购`).
+/// underline: the whole 14 cells when wide; the key cap, the label and the badge when tight
+/// (02-list.md S: `─━━━━━━━━─` under `‹1› 选购`; 04-cart.md S: under `‹2› 购物车▐3▌`).
 pub fn tab_span(tabs: &[NavTab], badges: &[u32], index: usize, wide: bool) -> (usize, usize) {
   let badge = |i: usize| badges.get(i).copied().unwrap_or(0);
   if wide {
@@ -65,10 +65,8 @@ pub fn tab_span(tabs: &[NavTab], badges: &[u32], index: usize, wide: bool) -> (u
     let start: usize = (0..index)
       .map(|i| tab_content_width(&tabs[i], badge(i), false) + usize::from(TIGHT_GAP))
       .sum();
-    (
-      start,
-      kbd_width(tabs[index].key) + 1 + display_width(tabs[index].label),
-    )
+    // The badge too: 04-cart.md's S mock underlines `‹2› 购物车▐3▌` whole.
+    (start, tab_content_width(&tabs[index], badge(index), false))
   }
 }
 
@@ -99,10 +97,18 @@ pub fn nav_tabs_with(
     .label("主导航")
     .child(tabs.iter().enumerate().map(move |(index, tab)| {
       let selected = move || current() == Some(index);
-      pressable()
+      // Wide, each tab is a plain box of 14 cells around its pressable: nsh's terminal
+      // layout keeps two blank columns between controls side by side ("controls read as
+      // words"), which pushed every wide tab two cells right of the one before it and off
+      // its underline.
+      let tab_box = view()
+        .flex_none()
+        .flex_row()
+        .style_when(wide, |s| s.w(layout::cols(TAB_CELLS)));
+      let tab_view = pressable()
         .flex_row()
         .items_center()
-        .style_when(wide, |s| s.w(layout::cols(TAB_CELLS)).justify_center())
+        .style_when(wide, |s| s.flex_grow(1.0).justify_center())
         .on_press(move || on_select(index))
         .child(kbd(tab.key))
         .child(text(" "))
@@ -116,7 +122,8 @@ pub fn nav_tabs_with(
         .child(dynamic(move || {
           (wide() && badge(index) > 0).then(|| text(" "))
         }))
-        .child(count_badge(move || badge(index)))
+        .child(count_badge(move || badge(index)));
+      tab_box.child(tab_view)
     }))
 }
 
@@ -189,10 +196,10 @@ mod tests {
   }
 
   #[test]
-  fn tight_tabs_underline_their_key_and_label() {
+  fn tight_tabs_underline_their_key_label_and_badge() {
     // `‹1› 选购  ‹2› 购物车▐3▌  ‹3› 地址本`
     assert_eq!(tab_span(&TABS, &[0, 3, 0, 0], 0, false), (0, 8));
-    assert_eq!(tab_span(&TABS, &[0, 3, 0, 0], 1, false), (8 + 2, 10));
+    assert_eq!(tab_span(&TABS, &[0, 3, 0, 0], 1, false), (8 + 2, 13));
     assert_eq!(
       tab_span(&TABS, &[0, 3, 0, 0], 2, false),
       (8 + 2 + 13 + 2, 10)

@@ -128,6 +128,23 @@ export async function loginReady(app: App, legend = '登录 · SIGN IN') {
 }
 
 /**
+ * Presses `注册新账号 →` on the login card; waits for the register card with the focus in
+ * 用户名 (switching modes puts it there, 01-login.md "注册").
+ */
+export async function toRegister(app: App) {
+  await app.waitFor('text:登录 · SIGN IN')
+  await app.press('label:注册新账号')
+  await loginReady(app, '注册 · SIGN UP')
+}
+
+/** Presses `← 已有账号，去登录`; waits for the login card with the focus in 用户名. */
+export async function toLogin(app: App) {
+  await app.waitFor('text:注册 · SIGN UP')
+  await app.press('label:← 已有账号，去登录')
+  await loginReady(app)
+}
+
+/**
  * From the login page to the list as a guest: Esc leaves 用户名, then `g`; waits for the
  * list's legend (none: does not wait).
  */

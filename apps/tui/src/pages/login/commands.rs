@@ -128,6 +128,16 @@ pub const COMMANDS: &[Command] = &[
   .short("g 访客")
   .footer_full(30)
   .footer_s(40),
+  // keymap.md's login footers (XL/L/M) end in `? 快捷键`: a hint of the global `?` (the
+  // status bar's right end keeps `? 帮助`, as the mock does).
+  Command::new(
+    "login.keys",
+    Key::hint("?"),
+    "? 快捷键",
+    PAGE,
+    |stores, _| stores.ui.toggle_help(),
+  )
+  .footer_full(50),
   Command::new(
     "login.mode",
     Key::hint("→"),

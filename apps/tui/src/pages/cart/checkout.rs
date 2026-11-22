@@ -214,7 +214,7 @@ fn address(stores: Stores, one_row: bool) -> View {
         let ship = ship.get();
         untracked(|| match ship {
           ShipTo::Guest => label(copy::GUEST_ADDRESS, Tone::Mute).into_element(),
-          ShipTo::Nowhere => label(copy::NO_ADDRESS, Tone::Danger)
+          ShipTo::Nowhere => strong(copy::NO_ADDRESS, Tone::Danger)
             .truncate()
             .into_element(),
           ShipTo::Address(address) => {
@@ -307,7 +307,13 @@ pub fn panel(stores: Stores, shape: Shape) -> View {
           )),
       )
       .child(view().flex_1())
-      .child((!short).then(|| label(copy::DEMO_ORDER, Tone::Acc).truncate()))
+      // The demo notice over the button at every height (short: no blank row under it).
+      .child(
+        copy::demo_order_rows(usize::from(inner))
+          .iter()
+          .map(|row| strong(*row, Tone::Acc))
+          .collect::<Vec<_>>(),
+      )
       .child((!short).then(|| vspace(1)))
       .child(submit(stores, inner, true))
       .child(gap()),
@@ -336,7 +342,7 @@ pub fn compact(stores: Stores, shape: Shape) -> View {
             let ship = ship.get();
             untracked(|| match ship {
               ShipTo::Guest => label(copy::GUEST_ADDRESS, Tone::Mute).truncate(),
-              ShipTo::Nowhere => label(copy::NO_ADDRESS, Tone::Danger).truncate(),
+              ShipTo::Nowhere => strong(copy::NO_ADDRESS, Tone::Danger).truncate(),
               ShipTo::Address(address) => {
                 label(copy::ship_to_line(&address), Tone::Soft).truncate()
               }
@@ -368,10 +374,11 @@ pub fn compact(stores: Stores, shape: Shape) -> View {
             .truncate(),
           ),
       )
-      // The blank row gives way to the coupon's line or the two-row progress block.
+      // The demo notice's row gives way to the coupon's line or the two-row progress block
+      // (the checkout button's own row still says what it does; the receipt repeats it).
       .child(dynamic(move || {
         let busy = cart.coupon_feedback().is_some() || cart.submitting();
-        (!busy).then(|| vspace(1))
+        (!busy).then(|| strong(copy::DEMO_ORDER, Tone::Acc).truncate())
       }))
       .child(
         view()

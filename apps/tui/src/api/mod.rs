@@ -135,8 +135,22 @@ impl ApiFailure {
     }
   }
 
-  /// The detail for people: the cause as precisely as we know it.
+  /// The line under a load error, for people (copy.md, "空状态、载入与错误"): the network
+  /// copy, the contract's message of a known code (`服务器内部错误`), else what went wrong in
+  /// plain words with the next step. Never an OS error, a status or a code: those are
+  /// [`Self::technical`]'s.
   pub fn detail(&self) -> String {
+    match self {
+      ApiFailure::Network(_) => NETWORK_MESSAGE.to_owned(),
+      ApiFailure::Status { message, .. } if !message.is_empty() => message.clone(),
+      ApiFailure::Status { .. } => UNKNOWN_ANSWER.to_owned(),
+      ApiFailure::Decode(_) => UNREADABLE_ANSWER.to_owned(),
+    }
+  }
+
+  /// The cause as precisely as we know it, for logs and tests (never drawn): the transport's
+  /// message, the status and code, the decoder's complaint.
+  pub fn technical(&self) -> String {
     match self {
       ApiFailure::Network(message) => format!("网络错误：{message}"),
       ApiFailure::Status {
@@ -156,9 +170,14 @@ impl ApiFailure {
   }
 }
 
+/// [`ApiFailure::detail`] of an answer without the contract's envelope (copy.md).
+pub const UNKNOWN_ANSWER: &str = "服务器返回了错误，请稍后重试";
+/// [`ApiFailure::detail`] of an answer that is not what the contract says (copy.md).
+pub const UNREADABLE_ANSWER: &str = "服务器的应答无法识别，请稍后重试";
+
 impl fmt::Display for ApiFailure {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}：{}", self.title(), self.detail())
+    write!(f, "{}：{}", self.title(), self.technical())
   }
 }
 

@@ -135,6 +135,21 @@ pub fn render(route: &Route) -> Screen {
     _ => SharedString::default(),
   };
   let product = stores.product;
+  // `a` / `b` typed while the product loaded run once it is there (or are dropped if it
+  // cannot be bought or failed to load).
+  effect(move || {
+    let arrived = product.detail().is_some();
+    let failed = product.phase() == crate::stores::Phase::Failed;
+    if product.typed_ahead().is_some() && (arrived || failed) {
+      untracked(|| {
+        if let Some(buy_now) = product.take_typed_ahead()
+          && arrived
+        {
+          batch(|| crate::stores::actions::add_selection(&stores, buy_now));
+        }
+      });
+    }
+  });
   // The page's work: show its product, unless the list (`actions::open_product`) already
   // opened it. `ProductStore::open` alone would ask again here: its load task has not begun
   // yet in this commit, so the detail still reads idle, and the first answer is dropped.
@@ -238,16 +253,18 @@ fn ready(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyElement
 /// it; the brewing inset stays at its foot) beside the SKU panel.
 fn two_columns(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyElement {
   let (shape, short) = (key.shape, key.short);
+  // The padding goes inside the scroll view, so its bar (when the terminal is too short)
+  // stands against the panel's line, not inside the text's margin.
   let info = ui::panel_plain(
     view()
       .flex_1()
       .min_h(px(0.0))
-      .px(layout::pad_cols(2))
       .child(layout::vspace(1))
       .child(
         scroll().flex_1().min_h(px(0.0)).child(
           view()
             .flex_none()
+            .px(layout::pad_cols(2))
             .child(info::back_row(stores, &detail))
             .child(layout::vspace(1))
             .child(info::title_block(&detail))
@@ -258,7 +275,12 @@ fn two_columns(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyE
             .child(layout::vspace(1)),
         ),
       )
-      .child(info::brew(&detail))
+      .child(
+        view()
+          .flex_none()
+          .px(layout::pad_cols(2))
+          .child(info::brew(&detail)),
+      )
       .child(layout::vspace(1)),
   );
   let sku = view()
@@ -284,7 +306,7 @@ fn boxed(legend: Option<&'static str>, content: impl IntoElement) -> View {
   )
 }
 
-/// M and S: one scrolled column (the rightmost cell left to the scroll bar); a change of
+/// M and S: one scrolled column (the scroll bar right of it); a change of
 /// the selection scrolls its group into view. M pins the purchase row under it.
 fn stacked(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyElement {
   let (shape, short) = (key.shape, key.short);
@@ -327,12 +349,13 @@ fn stacked(stores: Stores, key: &BodyKey, detail: Rc<ProductDetail>) -> AnyEleme
       .child(info_panel)
       .child(sku_panel),
   };
+  // nsh keeps the scroll bar a column of its own, right of the content: the panels reach
+  // it (03-detail.md's S mock, `│┃`), no blank column between.
   let scrolled = scroll().flex_1().min_h(px(0.0)).child(
     view()
       .flex_none()
       .flex_row()
-      .child(view().flex_1().min_w(px(0.0)).child(column))
-      .child(layout::hspace(1)),
+      .child(view().flex_1().min_w(px(0.0)).child(column)),
   );
   view()
     .flex_1()

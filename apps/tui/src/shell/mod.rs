@@ -75,6 +75,8 @@ fn bind_keys(stores: Stores, layout: Layout) {
       ..KeyOptions::default()
     };
     on_key_with(binding.stroke, options, move |stroke| {
+      // Any key wakes what idles (the login page's steam), handled or not.
+      stores.ui.touch();
       if layout.too_small() {
         return;
       }

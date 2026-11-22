@@ -265,7 +265,9 @@ test('a backend that is down shows the error and ⏎ retries', async () => {
   const app = await start(100, 30, { transport: 'fixture:down' })
   await enterAsGuest(app, '商品列表 · 加载失败')
   expect(app.texts()).toContain('✗ 商品加载失败')
-  expect(app.texts()).toContain('网络错误：fixture:down · connection refused')
+  // The designed copy, never the transport's own message.
+  expect(app.texts()).toContain('连接服务器失败，请稍后重试')
+  expect(app.texts().some(text => text.includes('网络错误') || text.includes('connection refused'))).toBe(false)
   // The footer offers the retry; moving the cursor is not offered.
   expect(app.texts()).not.toContain('移动')
   await app.keyboard.press('enter')
@@ -310,6 +312,10 @@ test('the system row: the size, the demo notice, the key and the clock', async (
   const rows = await screenRows(app)
   if (rows)
     expect(rows[0]).toMatch(/^ roast@tty: ~\/shop — 160×50 +! 演示环境 · 不是真实商店 +● 公钥已识别 · \d\d:\d\d $/)
+  const cells = await screenCells(app)
+  // The notice centred, the odd half cell rounded down: the mock's column 67.
+  if (cells)
+    expect(column(cells[0], '!')).toBe(67)
 
   // Under 100 columns the path goes; without a key, `○ 未提供公钥`.
   const small = await start(80, 24)
@@ -342,6 +348,25 @@ test('the header: tabs with the cart badge, the rule under the current tab, the 
   rows = await screenRows(app)
   if (rows)
     expect(rows[4].indexOf('━')).toBe(37)
+  await app.keyboard.press('4')
+  await app.waitUntil(() => shows(app, '我的 PROFILE'))
+  const cells = await screenCells(app)
+  if (cells) {
+    // Each wide tab is 14 cells with its content centred, nothing between two tabs: tab 4
+    // (65–78) holds `‹4› 我的` at 68–75, right over its underline.
+    expect(column(cells[2], '4')).toBe(69)
+    expect(column(cells[4], '━')).toBe(65)
+    expect(column(cells[4], '━', true)).toBe(78)
+  }
+
+  // L: the wordmark two cells before the tabs, the search entry 40 cells at 130 columns.
+  const l = await start(130, 40, { transport: 'fixture:member', key: true })
+  await l.waitFor('text:商品列表 · 8 款 · 推荐')
+  const lCells = await screenCells(l)
+  if (lCells) {
+    expect(column(lCells[4], '━')).toBe(13)
+    expect(column(lCells[1], '╮') - column(lCells[1], '╭') + 1).toBe(40)
+  }
 
   // S: two rows, tight tabs, `‹/› 搜索`, the avatar alone.
   const small = await start(80, 24, { transport: 'fixture:member', key: true })
@@ -353,6 +378,16 @@ test('the header: tabs with the cart badge, the rule under the current tab, the 
     expect(smallRows[1]).toContain('购物车▐3▌')
     expect(smallRows[1]).toContain('搜索')
     expect(smallRows[2].indexOf('━')).toBeGreaterThan(12)
+  }
+  // S on the cart: the underline takes the cart tab with its badge whole (04-cart.md's S
+  // mock); the search entry sits four cells before the avatar.
+  await small.keyboard.press('2')
+  await small.waitUntil(() => shows(small, '购物车 CART'))
+  const smallCells = await screenCells(small)
+  if (smallCells) {
+    expect(column(smallCells[2], '━')).toBe(23)
+    expect(column(smallCells[2], '━', true)).toBe(35)
+    expect(column(smallCells[1], '搜')).toBe(66)
   }
 })
 

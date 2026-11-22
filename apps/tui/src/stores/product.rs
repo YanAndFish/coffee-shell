@@ -187,6 +187,7 @@ pub struct ProductStore {
   id: Signal<Option<SharedString>>,
   detail: Remote<ProductDetail>,
   selection: Signal<SkuSelection>,
+  ahead: Signal<Option<bool>>,
 }
 
 impl ProductStore {
@@ -197,7 +198,28 @@ impl ProductStore {
       id: signal(None),
       detail: Remote::new(|_| false),
       selection: signal(SkuSelection::default()),
+      ahead: signal(None),
     }
+  }
+
+  /// `a` (`false`) or `b` (`true`) pressed while the detail was still loading: the page runs
+  /// it once the product is there, as the list does with keys typed ahead (tracked).
+  pub fn typed_ahead(&self) -> Option<bool> {
+    self.ahead.get()
+  }
+
+  /// Remembers `a` / `b` pressed before the detail arrived (the last one wins).
+  pub fn type_ahead(&self, buy_now: bool) {
+    self.ahead.set(Some(buy_now));
+  }
+
+  /// Takes the key typed ahead, if any.
+  pub fn take_typed_ahead(&self) -> Option<bool> {
+    let ahead = self.ahead.get_untracked();
+    if ahead.is_some() {
+      self.ahead.set(None);
+    }
+    ahead
   }
 
   /// The product shown, by id (tracked).
@@ -287,6 +309,7 @@ impl ProductStore {
     batch(|| {
       self.id.set(Some(SharedString::from(id.to_owned())));
       self.selection.set(SkuSelection::default());
+      self.ahead.set(None);
       self.detail.reset();
     });
     self.load();
@@ -326,6 +349,7 @@ impl ProductStore {
     batch(|| {
       self.id.set(Some(SharedString::from(id.to_owned())));
       self.selection.set(SkuSelection::default());
+      self.ahead.set(None);
       self.detail.reset();
     });
     self.fetch().await;

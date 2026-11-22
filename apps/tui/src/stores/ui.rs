@@ -79,6 +79,7 @@ pub struct UiStore {
   focus_request: Signal<Option<&'static str>>,
   logout_focus: DialogFocus,
   restore: Signal<Option<Focused>>,
+  activity: Signal<u64>,
 }
 
 impl UiStore {
@@ -90,7 +91,18 @@ impl UiStore {
       focus_request: signal(None),
       logout_focus: DialogFocus::new(2, LogoutChoice::default().stop()),
       restore: signal(None),
+      activity: signal(0),
     }
+  }
+
+  /// A key reached the app (the shell's bindings call this for every stroke they hear).
+  pub fn touch(&self) {
+    self.activity.update(|n| *n = n.wrapping_add(1));
+  }
+
+  /// A count that moves with every key (tracked): what an idle clock restarts on.
+  pub fn activity(&self) -> u64 {
+    self.activity.get()
   }
 
   /// The overlay open (tracked).

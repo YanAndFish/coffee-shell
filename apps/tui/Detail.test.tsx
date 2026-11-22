@@ -11,7 +11,7 @@ import { expect, test } from 'nsh/test'
 
 import pinkb from '../../packages/contract/fixtures/v1/catalog/product-pinkb.json' with { type: 'json' }
 import products from '../../packages/contract/fixtures/v1/products.json' with { type: 'json' }
-import { enterAsGuest, isWide, start as open, rowsOf, screenCells, screenRows, shows, waitForPart } from './testkit'
+import { enterAsGuest, isWide, start as open, rowsOf, runUntil, screenCells, screenRows, shows, startOnClock, waitForPart } from './testkit'
 
 const SIZES: [number, number][] = [
   [160, 50],
@@ -331,6 +331,23 @@ test('a low-stock product: 仅剩 6 份, the quantity stops at 6', async () => {
   }
 })
 
+test('stock 0: 暂时缺货, a and b refused, their buttons struck and out of the footer', async () => {
+  // `fixture:problem`: 涅里 AA 双洗 has nothing left (`detail-no-stock.json`).
+  const app = await start(130, 40, 'fixture:problem')
+  await openProduct(app, 2, '肯尼亚')
+  await waitForPart(app, '暂时缺货')
+  expect(app.spanStyle('text:加入购物车').lineThrough).toBe(true)
+  expect(app.spanStyle('text:立即购买').lineThrough).toBe(true)
+  // The footer drops a and b (K9); the keys do nothing.
+  expect(app.shows('label:a 加入')).toBe(false)
+  expect(app.shows('label:b 购买')).toBe(false)
+  await app.keyboard.press('a')
+  await app.keyboard.press('b')
+  expect(shows(app, '已加入购物车')).toBe(false)
+  expect(shows(app, '购物车 CART')).toBe(false)
+  expect(shows(app, '详情 DETAIL')).toBe(true)
+})
+
 test('a adds with a toast; b adds and goes to the cart without one', async () => {
   const app = await start(160, 50)
   await openPinkb(app)
@@ -370,6 +387,24 @@ test('Esc and Backspace go back to the list, its cursor kept', async () => {
   expect(shows(app, '选购 BROWSE')).toBe(true)
 })
 
+test('a pressed while the product loads adds it once it is there', async () => {
+  // `fixture:slow` on a manual clock: every answer 3 s later.
+  const { app, clock } = await startOnClock(130, 40)
+  await runUntil(clock, () => app.texts().includes('离开输入'), 50)
+  await app.keyboard.press('escape')
+  await app.keyboard.press('g')
+  await runUntil(clock, () => shows(app, '商品列表 · 8 款'))
+  await runUntil(clock, () => !shows(app, '以访客身份浏览'))
+  await app.keyboard.press('enter')
+  await app.keyboard.press('a')
+  // Still loading: nothing added yet, and no `a 加入` hint.
+  await clock.runFor(100)
+  expect(shows(app, '已加入购物车')).toBe(false)
+  expect(app.shows('label:a 加入')).toBe(false)
+  expect(await runUntil(clock, () => shows(app, '已加入购物车'))).toBe(true)
+  expect(shows(app, '耶加雪菲 孔加 · 250g · 整豆 × 1')).toBe(true)
+})
+
 const API = 'http://127.0.0.1:3999'
 
 test('loading, then a failure with ⏎ 重试, then the product', async () => {
@@ -407,6 +442,9 @@ test('loading, then a failure with ⏎ 重试, then the product', async () => {
   expect(pending).not.toContain('加入')
   await app.waitFor('text:✗ 商品加载失败')
   expect(app.texts()).toContain('重试')
+  // The contract's message, without its status and code.
+  expect(app.texts()).toContain('服务器内部错误')
+  expect(app.texts().some(text => text.includes('HTTP 500'))).toBe(false)
   expect(app.texts()).not.toContain('正在载入…')
   await app.keyboard.press('enter')
   await app.waitFor('text:已选 250g · 整豆 · 标准袋')
