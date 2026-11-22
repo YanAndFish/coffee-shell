@@ -51,26 +51,28 @@ and prints the final screen as text. `expect` mangles multi-byte text; do not us
 ```sh
 SSH="ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR localhost"
 
-# The shop at the design size, with products from the backend:
-python3 scripts/pty-run.py --size 160x50 --step 'until=ROAST/TTY' --expect '演示环境' -- $SSH
+# A new connection opens on the login page (the focus in 用户名, so the status bar says 离开输入):
+python3 scripts/pty-run.py --size 160x50 --step 'until=离开输入' --expect '登录 · SIGN IN' --expect '演示环境' -- $SSH
 
 # Too small, then resized back (state kept):
 python3 scripts/pty-run.py --size 60x20 --step 'until=终端太小' --step resize=160x50 \
   --step 'gone=终端太小' -- $SSH
 
-# Keys: move, open, back; snapshots in between:
-python3 scripts/pty-run.py --size 100x30 --step 'until=选购' --step key=down*2 --step key=enter \
-  --step wait=0.5 --step snap --step key=esc -- $SSH
+# Keys: Esc leaves the field, g browses as a guest (wait between them: Esc+g at once reads as Alt+g), then move,
+# open a product (loaded once its SKU line shows; at 100×30 that line is below the fold), back; a snapshot:
+python3 scripts/pty-run.py --size 160x50 --step 'until=离开输入' --step key=esc --step 'until=访客' \
+  --step text=g --step 'until=商品列表' --step key=down*2 --step key=enter --step 'until=SKU RT-' --step snap \
+  --step key=esc --step 'until=商品列表' -- $SSH
 
 # Colour depth over SSH (grep the raw bytes: 38;2; = truecolor, 38;5; = 256). The session gets 24-bit colour
 # from a forwarded COLORTERM (pty-run sets COLORTERM=truecolor for its child unless --colorterm says otherwise):
-python3 scripts/pty-run.py --size 100x30 --raw /tmp/x.raw --step 'until=ROAST/TTY' \
+python3 scripts/pty-run.py --size 100x30 --raw /tmp/x.raw --step 'until=离开输入' \
   -- pnpm ssh                      # sends COLORTERM
 # ... or from a truecolor brand in TERM, which plain ssh does send (no COLORTERM at all here):
 python3 scripts/pty-run.py --size 100x30 --term xterm-kitty --colorterm '' --raw /tmp/kitty.raw \
-  --step 'until=ROAST/TTY' -- $SSH # 38;2; only
+  --step 'until=离开输入' -- $SSH # 38;2; only
 # ... while a plain xterm-256color session stays at 256 (pty-run does not answer XTGETTCAP):
-python3 scripts/pty-run.py --size 100x30 --colorterm '' --raw /tmp/plain.raw --step 'until=ROAST/TTY' -- $SSH
+python3 scripts/pty-run.py --size 100x30 --colorterm '' --raw /tmp/plain.raw --step 'until=离开输入' -- $SSH
 # The whole decision table: crates/coffee-host/src/color.rs.
 
 # Forcing a depth: sshd only forwards LANG, LC_* and COLORTERM from the client, so COFFEE_COLORS must be set on
@@ -93,7 +95,7 @@ lists the page's keys, nothing is cut mid-character, CJK columns line up.
 ## 5. Check cleanup
 
 ```sh
-python3 scripts/pty-run.py --size 100x30 --step 'until=ROAST/TTY' --step key=ctrl-c --step 'until=再按一次' \
+python3 scripts/pty-run.py --size 100x30 --step 'until=离开输入' --step key=ctrl-c --step 'until=再按一次' \
   --step key=ctrl-c --step exit=5 -- $SSH  # quitting ends the SSH session (status 0)
 pgrep -fl coffee-tui                       # after the client is gone: no children left (allow 2 s)
 ```
@@ -106,14 +108,42 @@ Killing the client (`kill -9` the `ssh` process) must also end its `coffee-tui` 
 
 ## 6. Automated end-to-end tests
 
-`pnpm test:e2e` (or `cargo test --workspace`) runs `crates/coffee-sshd/tests`, which start sshd and a client
-themselves. Report automated and manual evidence separately, with the commands and the screen tails.
-`COFFEE_SSH_LOG=info` (or `warn`) makes the tests' in-process servers log to stderr, uncaptured, for a failure that
-needs the server's side. The tests wait for conditions (never fixed sleeps); keep it that way, and time a session's
-idle clock from its first output, not from the connection.
+Two layers, both automated:
+
+- `pnpm test:e2e` (also part of `cargo test --workspace`) runs `crates/coffee-sshd/tests`: an in-process sshd, a
+  russh client with a `vt100` screen, a stub backend serving the contract fixtures. Fast; covers the gateway (auth,
+  limits, idle, crashes, colour depth, resize). `COFFEE_SSH_LOG=info` makes their servers log to stderr.
+- `pnpm test:e2e:real` builds `coffee-tui` + `coffee-sshd` and runs `scripts/e2e/run.py`: the shop's flows over the
+  **real** stack. Each flow gets a copy of a freshly migrated and seeded SQLite database, its own backend
+  (`node apps/server/src/main.ts`) and `coffee-sshd` on free ports, and stock `ssh` clients (throwaway keys in
+  `.data/e2e/work/keys`, or none) on PTYs read by `pty-run.py`'s emulator. Flows: `main`, `money`, `stock`,
+  `session`, `gateway` (what each checks: `docs/acceptance.md`). About 2 minutes.
+
+```sh
+pnpm test:e2e:real                          # all flows
+python3 scripts/e2e/run.py main money       # some (binaries already built)
+python3 scripts/e2e/run.py --repeat 5       # stability: a flaky flow is a bug to root-cause
+E2E_WAIT=30 python3 scripts/e2e/run.py      # more time per step on a slow machine (default 20 s)
+python3 scripts/e2e/run.py --gateway 127.0.0.1:2222 smoke   # a purchase on a gateway you started
+```
+
+Output: `.data/e2e/<flow>/NN-<session>-<step>.txt` (text screenshots), `backend.log`, `sshd.log`, `shop.db`, and on a
+failure `FAIL.txt` with the failing step, the last screen of every open session and the log tails. After each flow
+the runner fails if a `coffee-tui` is left or a log holds a password, the internal key or a bearer token.
+
+Writing or changing a flow (`scripts/e2e/flows.py`; shop steps in `shop.py`; the stack and `Term` in `harness.py`):
+
+- **Wait for the screen, never for time or a key count.** `t.wait("text", ...)`, `t.wait_any`, `t.gone`,
+  `t.wait_footer` (the status bar), `t.wait_for(predicate, "what")`; each has a timeout and fails with the screen.
+  Steps that move focus or a selection press their key until the screen confirms (`focus_login_field` reads the
+  status bar's `离开输入` and the cursor's row; `choose` reads the `▐ … ▌` option), with a bound.
+- Wait for a page to be ready before keys that act on it (a detail is ready when its `SKU RT-…` line shows).
+- `t.key("esc")` pauses after Esc so the next key is not read as Alt+key.
+- Money is checked against `shop.quote()` (an independent copy of the rules), the database through `stack.sql()`.
+- `t.snap("label")` keeps a screenshot; screens and logs must hold no real secrets (test passwords only).
 
 ## 7. The containers
 
-`deploy/smoke-test.sh` (Docker with compose needed; CI's `docker` job runs it) starts the gateway and backend images
-with `deploy/compose.yaml` and checks them over a stock `ssh`. With no local Docker daemon, rely on CI; do not start
-one just for this.
+`deploy/smoke-test.sh` (Docker with compose, `python3` and `ssh` needed; CI's `docker` job runs it) starts the gateway
+and backend images with `deploy/compose.yaml` and checks them over a stock `ssh`, including a purchase (the `smoke`
+flow above, screens in `.data/e2e-smoke/`). With no local Docker daemon, rely on CI; do not start one just for this.
