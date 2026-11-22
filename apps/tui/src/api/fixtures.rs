@@ -9,6 +9,9 @@ pub(super) const HEALTH: &str =
 /// `GET /v1/products`.
 pub(super) const PRODUCTS: &str =
   include_str!("../../../../packages/contract/fixtures/v1/products.json");
+/// `GET /v1/products` matching nothing (the empty state).
+pub(super) const PRODUCTS_EMPTY: &str =
+  include_str!("../../../../packages/contract/fixtures/v1/catalog/products-empty.json");
 /// The error envelope (`404 not_found`).
 pub(super) const ERROR: &str = include_str!("../../../../packages/contract/fixtures/v1/error.json");
 
@@ -50,7 +53,7 @@ impl FixtureSet {
         "fixture:down · connection refused".into(),
       )),
       (_, Method::Get, "/health") => ok(HEALTH),
-      (FixtureSet::Empty, Method::Get, "/products") => ok(r#"{"items":[]}"#),
+      (FixtureSet::Empty, Method::Get, "/products") => ok(PRODUCTS_EMPTY),
       (FixtureSet::Contract, Method::Get, "/products") => ok(PRODUCTS),
       _ => Ok(Answer {
         status: 404,
@@ -71,7 +74,7 @@ mod tests {
       .unwrap();
     assert_eq!((answer.status, answer.body), (200, PRODUCTS));
     let answer = FixtureSet::Empty.answer(Method::Get, "/products").unwrap();
-    assert_eq!(answer.body, r#"{"items":[]}"#);
+    assert_eq!(answer.body, PRODUCTS_EMPTY);
     let answer = FixtureSet::Contract.answer(Method::Get, "/nope").unwrap();
     assert_eq!((answer.status, answer.body), (404, ERROR));
     assert!(matches!(

@@ -235,6 +235,16 @@ mod tests {
 
   const PRODUCTS: &str = include_str!("../../../../packages/contract/fixtures/v1/products.json");
 
+  fn empty_list() -> ProductList {
+    ProductList {
+      items: vec![],
+      facets: coffee_api::ProductFacets {
+        total: 0,
+        origins: vec![],
+      },
+    }
+  }
+
   fn list() -> ProductList {
     serde_json::from_str(PRODUCTS).unwrap()
   }
@@ -250,10 +260,7 @@ mod tests {
   #[test]
   fn answers_settle_into_states() {
     assert!(matches!(CatalogState::settle(Ok(list())), CatalogState::Ready(p) if p.len() == 8));
-    assert_eq!(
-      CatalogState::settle(Ok(ProductList { items: vec![] })),
-      CatalogState::Empty
-    );
+    assert_eq!(CatalogState::settle(Ok(empty_list())), CatalogState::Empty);
     let failure = ApiFailure::Network("refused".into());
     assert_eq!(
       CatalogState::settle(Err(failure.clone())),
@@ -284,7 +291,7 @@ mod tests {
       assert!(store.failure().is_some());
       let retry = store.begin();
       assert_eq!(store.phase(), CatalogPhase::Loading);
-      store.finish(retry, Ok(ProductList { items: vec![] }));
+      store.finish(retry, Ok(empty_list()));
       assert_eq!(store.phase(), CatalogPhase::Empty);
       assert_eq!(store.cursor(), None);
     });

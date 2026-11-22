@@ -19,9 +19,6 @@ use serde::de::DeserializeOwned;
 
 pub use fixtures::FixtureSet;
 
-/// The header carrying the backend's shared secret.
-pub const INTERNAL_KEY_HEADER: &str = "X-Internal-Key";
-
 /// Where requests go.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Transport {
