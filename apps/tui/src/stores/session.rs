@@ -355,14 +355,18 @@ impl SessionStore {
     }
   }
 
-  /// Switches the form to `mode`, keeping the username and clearing password and error.
+  /// Switches the form to `mode`, keeping the username and clearing password and error; the
+  /// focus goes to `用户名` (01-login.md, "注册": whoever switched is about to type a name).
   pub fn set_mode(&self, mode: LoginMode) {
+    if self.draft.with_untracked(|draft| draft.mode) == mode {
+      return;
+    }
+    // The card keeps its fields across the modes, so 用户名 (on screen) takes this focus.
+    self.form_focus.set(Some(FormControl::Username));
     self.draft.update(|draft| {
-      if draft.mode != mode {
-        draft.mode = mode;
-        draft.password.clear();
-        draft.error = None;
-      }
+      draft.mode = mode;
+      draft.password.clear();
+      draft.error = None;
     });
   }
 
@@ -694,12 +698,22 @@ mod tests {
       assert_eq!(session.draft().error, None, "an edit clears the error");
       session.toggle_remember();
       assert!(!session.login_request().remember);
+      // Switched from the switch button: the focus goes to 用户名, both ways.
+      session.set_form_focus(Some(FormControl::SwitchMode));
       session.set_mode(LoginMode::Register);
       let draft = session.draft();
       assert_eq!(
         (draft.mode, draft.username.as_str(), draft.password.as_str()),
         (LoginMode::Register, "林晓", "")
       );
+      assert_eq!(session.form_focus(), Some(FormControl::Username));
+      session.set_form_focus(None);
+      session.set_mode(LoginMode::Login);
+      assert_eq!(session.form_focus(), Some(FormControl::Username));
+      // The same mode again moves nothing.
+      session.set_form_focus(Some(FormControl::Guest));
+      session.set_mode(LoginMode::Login);
+      assert_eq!(session.form_focus(), Some(FormControl::Guest));
     });
     with_session(fixture(None), |session| {
       assert!(!session.has_key());

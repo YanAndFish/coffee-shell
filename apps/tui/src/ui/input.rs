@@ -76,8 +76,9 @@ pub struct InputSpec {
   pub label: Option<SharedString>,
   /// Where the label goes.
   pub place: LabelPlace,
-  /// A note at the label row's right end (`mute`): "2–16 个字符".
-  pub hint: Option<SharedString>,
+  /// A note at the label row's right end (`mute`): "2–16 个字符"; it may change while the
+  /// field stays (the login card's two modes keep their fields, and their focus).
+  pub hint: Option<std::rc::Rc<dyn Fn() -> SharedString>>,
   /// The text shown while it is empty.
   pub placeholder: SharedString,
   /// Every character as `•`.
@@ -237,7 +238,12 @@ pub fn input(
         .flex_row()
         .child(label(text, Tone::Mute))
         .child(view().flex_1())
-        .child(spec.hint.clone().map(|hint| label(hint, Tone::Mute))),
+        .child(
+          spec
+            .hint
+            .clone()
+            .map(|hint| label(move || hint(), Tone::Mute)),
+        ),
     ),
     _ => None,
   };

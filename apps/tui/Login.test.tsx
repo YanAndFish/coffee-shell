@@ -5,7 +5,7 @@
 // headless (texts and values); `nsh test --target tui` also checks the terminal's cells.
 import type { App, Cell } from './testkit'
 import { expect, open, test } from 'nsh/test'
-import { cells, KEY, screenCells, shows, start } from './testkit'
+import { cells, KEY, screenCells, shows, start, toLogin, toRegister } from './testkit'
 
 const LIVE = 'http://login.test'
 
@@ -191,7 +191,7 @@ test('Tab cycles 用户名 → 密码 → 记住我 → 登录 → 访客浏览 
   await app.waitFor('text:以访客身份浏览')
 })
 
-test('Shift+Tab from 用户名 goes round to 注册新账号 →; ⏎ there switches to register', async () => {
+test('Shift+Tab from 用户名 goes round to 注册新账号 →; ⏎ there switches to register, focus in 用户名', async () => {
   const app = await start(130, 40)
   await ready(app)
   await typing(app)
@@ -200,6 +200,28 @@ test('Shift+Tab from 用户名 goes round to 注册新账号 →; ⏎ there swit
   await app.keyboard.press('enter')
   await ready(app, '注册 · SIGN UP')
   expect(shows(app, '注册 SIGN UP')).toBe(true)
+  // The switch put the focus in 用户名: the next letters are the name.
+  await typing(app)
+  await app.keyboard.press('b')
+  expect(app.value('label:用户名')).toBe('b')
+  // And back: Shift+Tab to `← 已有账号，去登录`, ⏎, typing goes on in 用户名.
+  await app.keyboard.press('shift+tab')
+  await app.waitUntil(() => !app.texts().includes('离开输入'))
+  await app.keyboard.press('enter')
+  await ready(app, '登录 · SIGN IN')
+  await typing(app)
+  await app.keyboard.press('e')
+  expect(app.value('label:用户名')).toBe('be')
+})
+
+test('a click on 注册新账号 → (and on 去登录) leaves the focus in 用户名', async () => {
+  const app = await start(100, 30)
+  await toRegister(app)
+  await app.keyboard.press('x')
+  expect(app.value('label:用户名')).toBe('x')
+  await toLogin(app)
+  await app.keyboard.press('y')
+  expect(app.value('label:用户名')).toBe('xy')
 })
 
 test('without a key 记住我 is disabled with its reason, and Tab passes it', async () => {
@@ -274,8 +296,7 @@ test('register: the card switches in place, keeps the username, and signs up', a
   await ready(app)
   await app.type('label:用户名', 'bean_lover')
   await app.type('label:密码', 'secret1')
-  await app.press('label:注册新账号')
-  await ready(app, '注册 · SIGN UP')
+  await toRegister(app)
   const texts = app.texts()
   for (const part of [
     '创建账号',
@@ -297,9 +318,7 @@ test('register: the card switches in place, keeps the username, and signs up', a
 
 test('register: a taken username says so; Esc (no focus) goes back to login', async () => {
   const app = await start(100, 30)
-  await ready(app)
-  await app.press('label:注册新账号')
-  await ready(app, '注册 · SIGN UP')
+  await toRegister(app)
   expect(app.texts()).toContain('只需要用户名和密码。')
   await app.type('label:用户名', '林晓')
   await app.type('label:密码', 'secret1')
@@ -313,6 +332,10 @@ test('register: a taken username says so; Esc (no focus) goes back to login', as
   await ready(app)
   expect(shows(app, '登录 LOGIN')).toBe(true)
   expect(app.value('label:用户名')).toBe('林晓')
+  // Back in login mode the focus is in 用户名 again.
+  await typing(app)
+  await app.keyboard.press('z')
+  expect(app.value('label:用户名')).toBe('林晓z')
 })
 
 test('submitting: the progress block replaces the button, only ? works, then the catalog', async () => {

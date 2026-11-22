@@ -271,26 +271,32 @@ fn field(
   )
 }
 
-fn fields(stores: Stores, compact: bool, mode: LoginMode) -> View {
+/// The two fields. They stay when the mode switches (only the register hints change), so
+/// the focus the switch puts in 用户名 reaches a field already on screen: a field mounted in
+/// the commit that moves the focus away from the switch button would not get it.
+fn fields(stores: Stores, compact: bool) -> View {
   let session = stores.session;
-  let (user_hint, password_hint) = copy(mode).hints;
-  let spec = |label: &'static str, hint: Option<&'static str>, masked: bool| InputSpec {
-    place: if compact {
-      LabelPlace::OnFrame
-    } else {
-      LabelPlace::Above
-    },
-    hint: if compact { None } else { hint.map(Into::into) },
-    masked,
-    ..InputSpec::new(InputForm::Prompt, Some(label))
-  };
+  let spec =
+    |label: &'static str, hint: fn(CardCopy) -> Option<&'static str>, masked: bool| InputSpec {
+      place: if compact {
+        LabelPlace::OnFrame
+      } else {
+        LabelPlace::Above
+      },
+      hint: (!compact).then(|| {
+        Rc::new(move || SharedString::from(hint(copy(session.mode())).unwrap_or("")))
+          as Rc<dyn Fn() -> SharedString>
+      }),
+      masked,
+      ..InputSpec::new(InputForm::Prompt, Some(label))
+    };
   view()
     .flex_none()
     .child(field(
       stores,
       FormControl::Username,
       super::USERNAME_FIELD,
-      spec("用户名", user_hint, false),
+      spec("用户名", |copy| copy.hints.0, false),
       move || session.draft().username,
       move |text| session.set_username(&text),
     ))
@@ -299,7 +305,7 @@ fn fields(stores: Stores, compact: bool, mode: LoginMode) -> View {
       stores,
       FormControl::Password,
       super::PASSWORD_FIELD,
-      spec("密码", password_hint, true),
+      spec("密码", |copy| copy.hints.1, true),
       move || session.draft().password,
       move |text| session.set_password(&text),
     ))
@@ -477,13 +483,8 @@ fn centred(content: impl IntoElement) -> View {
 /// The card: full (`compact` false) or compact.
 pub fn card(stores: Stores, compact: bool) -> View {
   let session = stores.session;
-  let mode = computed(move || session.mode());
   let legend = Legend::new(move || SharedString::from(copy(session.mode()).legend));
   let width = if compact { COMPACT_COLS } else { FULL_COLS };
-  let fields = dynamic(move || {
-    let mode = mode.get();
-    untracked(|| fields(stores, compact, mode))
-  });
   let head = if compact {
     view()
       .flex_none()
@@ -502,7 +503,7 @@ pub fn card(stores: Stores, compact: bool) -> View {
     .flex_none()
     .child(head)
     .child(layout::vspace(1))
-    .child(fields)
+    .child(fields(stores, compact))
     .child((!compact).then(|| layout::vspace(1)))
     .child(remember(stores, compact))
     .child(layout::vspace(1))
