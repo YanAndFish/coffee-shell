@@ -13,3 +13,5 @@ allowBuilds:
   # Native SQLite binding used by @prisma/adapter-better-sqlite3.
   better-sqlite3: true
   prisma: true
+  # Its postinstall would install the Git hooks; the root `prepare` script does that instead.
+  simple-git-hooks: false

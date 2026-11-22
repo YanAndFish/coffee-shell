@@ -9,6 +9,7 @@
     "node": ">=26"
   },
   "scripts": {
+    "prepare": "simple-git-hooks",
     "dev": "node scripts/dev.mjs",
     "build": "cargo build --workspace && pnpm -r --if-present build",
     "test": "cargo build -p coffee-host && cargo test --workspace && vitest run",
@@ -28,8 +29,17 @@
     "@types/node": "^26.6.6",
     "eslint": "^10.15.0",
     "eslint-plugin-format": "^2.0.1",
+    "lint-staged": "^17.6.1",
+    "simple-git-hooks": "^2.14.0",
     "tsdown": "^0.23.7",
     "typescript": "~6.0.3",
     "vitest": "^5.1.1"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint-staged"
+  },
+  "lint-staged": {
+    "*": "eslint --fix --no-warn-ignored",
+    "*.rs": "rustfmt"
   }
 }
