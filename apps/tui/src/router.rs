@@ -1,32 +1,40 @@
 //! Routes and the routes store: the pages of nsh's navigation stack, bottom to top.
 //!
 //! The shell renders one `nav_page` per route in a `nav_stack` (keyed by the route), so a
-//! page that stays in the stack keeps its state. Tabs `1`–`4` replace the whole stack with
-//! their root route; the detail page is pushed over the catalog. When the user goes back
-//! natively (Escape on the terminal), the page's `on_dismiss` truncates the routes.
+//! page that stays in the stack keeps its state. A new connection starts on the login page
+//! (01-login.md, "何时出现"); a remembered key replaces it with the catalog. Tabs `1`–`4`
+//! replace the whole stack with their root route; the detail page is pushed over the
+//! catalog and popped by Esc / Backspace. When the user goes back natively, the page's
+//! `on_dismiss` truncates the routes.
+//!
+//! The login gate is not a route rule: guests may open every tab (the address book and the
+//! profile show a guest card). Checkout is gated (`stores::actions::checkout`): a guest goes
+//! to the login page and comes back to the cart (D6, K7) through
+//! `SessionStore::set_return_to`.
 
 use nsh_core::prelude::*;
 
-use crate::ui::{Mode, NavTab};
+use crate::ui::NavTab;
 
 /// A page of the app.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Route {
-  /// Sign in or register (phase 2).
+  /// Sign in or register (`登录 LOGIN`): no tab, no global keys.
   Login,
   /// The bean list: the tab `1 选购`.
   Catalog,
   /// One bean, by product id (`yirga`), over the catalog.
   Detail(SharedString),
-  /// The tab `2 购物车` (phase 2).
+  /// The tab `2 购物车` (with the receipt after checkout).
   Cart,
-  /// The tab `3 地址本` (phase 2).
+  /// The tab `3 地址本`.
   Addresses,
-  /// The tab `4 我的` (phase 2).
+  /// The tab `4 我的`.
   Profile,
 }
 
-/// The kind of page a route shows, without its data: what command scopes name.
+/// The kind of page a route shows, without its data: what command scopes and page modules
+/// name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Page {
   /// [`Route::Login`].
@@ -41,6 +49,18 @@ pub enum Page {
   Addresses,
   /// [`Route::Profile`].
   Profile,
+}
+
+impl Page {
+  /// Every page, in the order of the page modules.
+  pub const ALL: [Page; 6] = [
+    Page::Login,
+    Page::Catalog,
+    Page::Detail,
+    Page::Cart,
+    Page::Addresses,
+    Page::Profile,
+  ];
 }
 
 /// The header's tabs, in the design's fixed order.
@@ -87,7 +107,7 @@ impl Route {
     }
   }
 
-  /// The tab this route belongs to (the detail page belongs to `选购`).
+  /// The tab this route belongs to (the detail page belongs to `选购`; login to none).
   pub fn tab(&self) -> Option<usize> {
     match self {
       Route::Login => None,
@@ -96,19 +116,6 @@ impl Route {
       Route::Addresses => Some(2),
       Route::Profile => Some(3),
     }
-  }
-
-  /// The status bar's mode for this page.
-  pub fn mode(&self) -> Mode {
-    let (zh, en) = match self {
-      Route::Login => ("登录", "LOGIN"),
-      Route::Catalog => ("选购", "BROWSE"),
-      Route::Detail(_) => ("详情", "DETAIL"),
-      Route::Cart => ("购物车", "CART"),
-      Route::Addresses => ("地址本", "ADDRESS"),
-      Route::Profile => ("我的", "PROFILE"),
-    };
-    Mode { zh, en }
   }
 
   /// The page's stable key in the navigation stack.
@@ -155,6 +162,11 @@ impl Router {
       .unwrap_or(Route::Catalog)
   }
 
+  /// The page on screen (tracked).
+  pub fn page(&self) -> Page {
+    self.top().page()
+  }
+
   /// The current tab (tracked).
   pub fn tab(&self) -> Option<usize> {
     self.top().tab()
@@ -164,6 +176,25 @@ impl Router {
   pub fn go_tab(&self, index: usize) {
     if let Some(root) = Route::tab_root(index) {
       self.replace(root);
+    }
+  }
+
+  /// Goes to `route`: a detail page is pushed over the catalog (the catalog is put under
+  /// it when the stack is elsewhere); any other route becomes the whole stack.
+  pub fn go(&self, route: Route) {
+    match route {
+      Route::Detail(_) => {
+        if self.top_untracked().page() != Page::Catalog
+          && self.top_untracked().page() != Page::Detail
+        {
+          self.replace(Route::Catalog);
+        }
+        if self.top_untracked().page() == Page::Detail {
+          self.pop();
+        }
+        self.push(route);
+      }
+      route => self.replace(route),
     }
   }
 
@@ -177,28 +208,34 @@ impl Router {
 
   /// Pushes `route` over the top one (not again when it is already on top).
   pub fn push(&self, route: Route) {
-    self.routes.update(|routes| {
-      if routes.last() != Some(&route) {
-        routes.push(route);
-      }
-    });
+    if self
+      .routes
+      .with_untracked(|routes| routes.last() == Some(&route))
+    {
+      return;
+    }
+    self.routes.update(|routes| routes.push(route));
   }
 
   /// Pops the top page; the bottom one stays. Whether one was popped.
   pub fn pop(&self) -> bool {
-    let mut popped = false;
+    if self.routes.with_untracked(|routes| routes.len() <= 1) {
+      return false;
+    }
     self.routes.update(|routes| {
-      if routes.len() > 1 {
-        routes.pop();
-        popped = true;
-      }
+      routes.pop();
     });
-    popped
+    true
   }
 
   /// Keeps the bottom `depth` pages (at least one): the user went back natively.
   pub fn truncate(&self, depth: usize) {
-    self.routes.update(|routes| routes.truncate(depth.max(1)));
+    if self
+      .routes
+      .with_untracked(|routes| routes.len() > depth.max(1))
+    {
+      self.routes.update(|routes| routes.truncate(depth.max(1)));
+    }
   }
 }
 
@@ -211,14 +248,17 @@ mod tests {
   fn with_router(test: impl FnOnce(Router)) {
     let runtime = Runtime::default();
     let _entered = runtime.enter();
-    let (owner, router) = create_root(|| Router::new(Route::Catalog));
+    let (owner, router) = create_root(|| Router::new(Route::Login));
     test(router);
     owner.dispose();
   }
 
   #[test]
-  fn tabs_replace_the_stack() {
+  fn a_connection_starts_on_the_login_page_and_tabs_replace_the_stack() {
     with_router(|router| {
+      assert_eq!(router.top(), Route::Login);
+      assert_eq!(router.tab(), None);
+      router.go_tab(0);
       router.push(Route::Detail("yirga".into()));
       assert_eq!(router.routes().len(), 2);
       router.go_tab(1);
@@ -230,14 +270,34 @@ mod tests {
   }
 
   #[test]
+  fn details_go_over_the_catalog() {
+    with_router(|router| {
+      router.go(Route::Detail("geisha".into()));
+      assert_eq!(
+        router.routes(),
+        vec![Route::Catalog, Route::Detail("geisha".into())]
+      );
+      // A detail from a detail (a recommendation) replaces it.
+      router.go(Route::Detail("pinkb".into()));
+      assert_eq!(
+        router.routes(),
+        vec![Route::Catalog, Route::Detail("pinkb".into())]
+      );
+      router.go(Route::Profile);
+      assert_eq!(router.routes(), vec![Route::Profile]);
+    });
+  }
+
+  #[test]
   fn push_pop_and_truncate() {
     with_router(|router| {
+      router.replace(Route::Catalog);
       assert!(!router.pop(), "the bottom page stays");
       router.push(Route::Detail("yirga".into()));
       router.push(Route::Detail("yirga".into()));
       assert_eq!(router.routes().len(), 2, "no second push of the top route");
       assert_eq!(router.top().tab(), Some(0));
-      assert_eq!(router.top().mode().en, "DETAIL");
+      assert_eq!(router.page(), Page::Detail);
       assert!(router.pop());
       assert_eq!(router.top(), Route::Catalog);
       router.push(Route::Detail("a".into()));
@@ -248,13 +308,13 @@ mod tests {
 
   #[test]
   fn tab_roots_and_keys() {
-    for (index, tab) in TABS.iter().enumerate() {
+    for (index, _) in TABS.iter().enumerate() {
       let root = Route::tab_root(index).unwrap();
       assert_eq!(root.tab(), Some(index));
-      assert_eq!(root.mode().zh, tab.label);
     }
     assert_eq!(Route::Login.tab(), None);
     assert_eq!(Route::Detail("yirga".into()).key(), "detail/yirga");
     assert_eq!(Route::Catalog.key(), "catalog");
+    assert_eq!(Page::ALL.len(), 6);
   }
 }

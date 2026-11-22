@@ -22,12 +22,18 @@
 //!
 //! - [`ui`]: the only module that touches `nsh_base` or theme tokens: styled terminal
 //!   components, breakpoints ([`ui::layout`]) and display widths ([`ui::text`]).
-//! - [`shell`]: header, page stack, status bar, too-small guard, key bindings.
-//! - [`pages`]: one page per [`router::Route`]; phase 1 implements the catalog.
-//! - [`stores`]: `Copy` structs of private signals, provided by [`App`].
-//! - [`commands`]: the one table of actions: keys, status bar hints, (later) help.
+//! - [`shell`]: header, page stack, dialog and toast outlets, status bar, too-small guard,
+//!   key bindings.
+//! - [`pages`]: one module per screen (`pages/<name>/{mod.rs,commands.rs}`), registered in
+//!   [`pages::PAGES`].
+//! - [`stores`]: `Copy` structs of private signals, provided by [`App`]; cross-store
+//!   flows in [`stores::actions`].
+//! - [`commands`]: the command model (keys, status bar hints, help), global and overlay
+//!   commands; each page adds its own.
 //! - [`router`]: the routes of the page stack.
-//! - [`api`]: the DTOs and the backend client (live or fixtures).
+//! - [`api`]: the DTOs and the backend client (live or the fixture scenarios).
+//!
+//! `apps/tui/README.md` maps the modules and says how to build a screen.
 
 pub mod api;
 pub mod commands;
