@@ -12,7 +12,8 @@
 //! ```
 //!
 //! Tall terminals (32 rows and more) from M up: 4 rows, the search entry a 3-row box (37
-//! cells at XL, the room left at L and M, at least 20). S and short terminals: 2 rows, the
+//! cells at XL, the room left at L and M, at least 20: 40 for a member at 130 columns, the
+//! wordmark two cells before the tabs). S and short terminals: 2 rows, the
 //! search entry one row (`‹/› 搜索` at S). Tabs are 14 cells wide at L and XL, tight (two
 //! apart) at M and S. Who is shopping: `‹林› 林晓 Lv.3` (XL, L), `‹林› 林晓` (M), `‹林›` (S);
 //! a guest `‹客› 访客 登录 →` (`‹客› 访客` at M). `◇ 样例数据` (XL) says the fixtures answer instead of a backend.
@@ -72,7 +73,12 @@ pub fn header_layout(viewport: Viewport) -> HeaderLayout {
   HeaderLayout {
     rows: if tall { 4 } else { 2 },
     margin: if bp == Bp::Xl { 2 } else { 1 },
-    gap: if wide { 11 } else { 2 },
+    // XL keeps the design's 11; L tightens it so the search entry gets its 40 cells at 130
+    // columns (responsive.md: "搜索框 = 剩余宽度（130 列时 40）").
+    gap: match bp {
+      Bp::Xl => 11,
+      _ => 2,
+    },
     wide,
     search: match bp {
       Bp::Xl => Some(37),
@@ -286,6 +292,9 @@ mod tests {
     assert!(xl.boxed && xl.wide);
     let l = header_layout(Viewport::new(130, 40));
     assert_eq!((l.rows, l.search, l.wide), (4, None, true));
+    // 130 = margin 1 + wordmark 10 + gap 2 + 4 tabs × 14 + 2 + search 40 + 4 + `‹林› 林晓
+    // Lv.3` 14 (a wide character's cap is 4 cells) + margin 1.
+    assert_eq!(130 - (1 + 10 + l.gap + 56 + 2 + 4 + 14 + 1), 40);
     let m = header_layout(Viewport::new(100, 30));
     assert_eq!(
       (m.rows, m.boxed, m.wide),

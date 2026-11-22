@@ -99,10 +99,18 @@ pub fn nav_tabs_with(
     .label("主导航")
     .child(tabs.iter().enumerate().map(move |(index, tab)| {
       let selected = move || current() == Some(index);
-      pressable()
+      // Wide, each tab is a plain box of 14 cells around its pressable: nsh's terminal
+      // layout keeps two blank columns between controls side by side ("controls read as
+      // words"), which pushed every wide tab two cells right of the one before it and off
+      // its underline.
+      let tab_box = view()
+        .flex_none()
+        .flex_row()
+        .style_when(wide, |s| s.w(layout::cols(TAB_CELLS)));
+      let tab_view = pressable()
         .flex_row()
         .items_center()
-        .style_when(wide, |s| s.w(layout::cols(TAB_CELLS)).justify_center())
+        .style_when(wide, |s| s.flex_grow(1.0).justify_center())
         .on_press(move || on_select(index))
         .child(kbd(tab.key))
         .child(text(" "))
@@ -116,7 +124,8 @@ pub fn nav_tabs_with(
         .child(dynamic(move || {
           (wide() && badge(index) > 0).then(|| text(" "))
         }))
-        .child(count_badge(move || badge(index)))
+        .child(count_badge(move || badge(index)));
+      tab_box.child(tab_view)
     }))
 }
 

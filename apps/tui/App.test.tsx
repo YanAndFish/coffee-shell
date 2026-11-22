@@ -342,6 +342,25 @@ test('the header: tabs with the cart badge, the rule under the current tab, the 
   rows = await screenRows(app)
   if (rows)
     expect(rows[4].indexOf('━')).toBe(37)
+  await app.keyboard.press('4')
+  await app.waitUntil(() => shows(app, '我的 PROFILE'))
+  const cells = await screenCells(app)
+  if (cells) {
+    // Each wide tab is 14 cells with its content centred, nothing between two tabs: tab 4
+    // (65–78) holds `‹4› 我的` at 68–75, right over its underline.
+    expect(column(cells[2], '4')).toBe(69)
+    expect(column(cells[4], '━')).toBe(65)
+    expect(column(cells[4], '━', true)).toBe(78)
+  }
+
+  // L: the wordmark two cells before the tabs, the search entry 40 cells at 130 columns.
+  const l = await start(130, 40, { transport: 'fixture:member', key: true })
+  await l.waitFor('text:商品列表 · 8 款 · 推荐')
+  const lCells = await screenCells(l)
+  if (lCells) {
+    expect(column(lCells[4], '━')).toBe(13)
+    expect(column(lCells[1], '╮') - column(lCells[1], '╭') + 1).toBe(40)
+  }
 
   // S: two rows, tight tabs, `‹/› 搜索`, the avatar alone.
   const small = await start(80, 24, { transport: 'fixture:member', key: true })
