@@ -41,6 +41,35 @@ pub enum AddressField {
   Default,
 }
 
+/// A stop of the address dialog's focus ring, in Tab order (05-address.md, "焦点顺序"):
+/// the six fields, then `Esc 取消` and `⏎ 保存`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DialogStop {
+  /// A field (`标签` and `设为默认` included).
+  Field(AddressField),
+  /// `Esc 取消`.
+  Cancel,
+  /// `⏎ 保存`.
+  Save,
+}
+
+impl DialogStop {
+  /// Every stop, in Tab order.
+  pub const ALL: [DialogStop; 8] = [
+    DialogStop::Field(AddressField::Recipient),
+    DialogStop::Field(AddressField::Phone),
+    DialogStop::Field(AddressField::Region),
+    DialogStop::Field(AddressField::Detail),
+    DialogStop::Field(AddressField::Tag),
+    DialogStop::Field(AddressField::Default),
+    DialogStop::Cancel,
+    DialogStop::Save,
+  ];
+
+  /// Where the dialog opens: `收货人`.
+  pub const FIRST: DialogStop = DialogStop::Field(AddressField::Recipient);
+}
+
 /// The field an error code is about (`None`: the whole form, `保存失败，请重试`).
 pub fn field_of(failure: &ApiFailure) -> Option<AddressField> {
   match failure.code()? {
@@ -111,6 +140,7 @@ pub struct AddressStore {
   book: Remote<AddressList>,
   cursor: Signal<Option<AddressCursor>>,
   dialog: Signal<Option<AddressDraft>>,
+  focus: Signal<DialogStop>,
 }
 
 impl AddressStore {
@@ -121,6 +151,7 @@ impl AddressStore {
       book: Remote::new(no_items),
       cursor: signal(None),
       dialog: signal(None),
+      focus: signal(DialogStop::FIRST),
     }
   }
 
@@ -306,9 +337,22 @@ impl AddressStore {
     self.dialog.with(|d| d.as_ref().is_some_and(|d| d.saving))
   }
 
+  /// The dialog's focus stop (tracked).
+  pub fn dialog_focus(&self) -> DialogStop {
+    self.focus.get()
+  }
+
+  /// Puts the dialog's focus on `stop` (the stop's own focus follows it).
+  pub fn focus_dialog(&self, stop: DialogStop) {
+    if self.focus.get_untracked() != stop {
+      self.focus.set(stop);
+    }
+  }
+
   /// `n`: a new address (`标签` 家; `设为默认` checked when the book is empty).
   pub fn open_new(&self) {
     let first = self.book.with_untracked(|book| book.is_none_or(no_items));
+    self.focus.set(DialogStop::FIRST);
     self.dialog.set(Some(AddressDraft {
       editing: None,
       input: AddressInput {
@@ -326,6 +370,7 @@ impl AddressStore {
     let Some(address) = untracked(|| self.address(id)) else {
       return;
     };
+    self.focus.set(DialogStop::FIRST);
     self.dialog.set(Some(AddressDraft {
       editing: Some(id),
       input: AddressInput {
@@ -359,8 +404,8 @@ impl AddressStore {
   }
 
   /// Saves the draft: the server validates; on success the dialog closes, the book is the
-  /// server's and the cursor goes to the saved card. The saved address and whether it was
-  /// new.
+  /// server's and the cursor goes to the saved card; a field's error puts the dialog's
+  /// focus on that field. The saved address and whether it was new.
   pub async fn save(self) -> Result<(Address, bool), ApiFailure> {
     let Some(draft) = self.dialog.get_untracked() else {
       return Err(ApiFailure::of(ErrorCode::NotFound));
@@ -400,11 +445,16 @@ impl AddressStore {
             failure.message()
           },
         };
-        self.dialog.update(|d| {
-          if let Some(d) = d {
-            d.saving = false;
-            d.error = Some(error);
+        batch(|| {
+          if let Some(field) = error.field {
+            self.focus_dialog(DialogStop::Field(field));
           }
+          self.dialog.update(|d| {
+            if let Some(d) = d {
+              d.saving = false;
+              d.error = Some(error);
+            }
+          });
         });
         Err(failure)
       }
@@ -497,10 +547,20 @@ mod tests {
           message: "请填写收货人".into(),
         })
       );
+      assert_eq!(book.dialog_focus(), DialogStop::FIRST);
       book.edit(|input| {
         input.recipient = "周一".into();
-        input.region = "上海市".into();
         input.detail = "某路 1 号".into();
+      });
+      book.focus_dialog(DialogStop::Save);
+      now_or_never(book.save()).unwrap_err();
+      assert_eq!(
+        book.dialog_focus(),
+        DialogStop::Field(AddressField::Region),
+        "the focus goes to the field in error"
+      );
+      book.edit(|input| {
+        input.region = "上海市".into();
         input.phone = Some(String::new());
       });
       assert_eq!(
@@ -515,7 +575,13 @@ mod tests {
       assert_eq!(book.cursor(), AddressCursor::Card(4));
       assert_eq!(book.count(), 4);
 
+      book.focus_dialog(DialogStop::Cancel);
       book.open_edit(2);
+      assert_eq!(
+        book.dialog_focus(),
+        DialogStop::FIRST,
+        "a dialog opens on 收货人"
+      );
       let draft = book.dialog().unwrap();
       assert_eq!(draft.editing, Some(2));
       assert_eq!(
