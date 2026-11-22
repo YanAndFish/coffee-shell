@@ -61,7 +61,7 @@ def flow_main(stack: Stack) -> None:
 
   # A product: 100g, 手冲, added.
   member.key("enter")
-  member.wait("详情 DETAIL", "规格 SKU")
+  member.wait("详情 DETAIL", "规格 SKU", "SKU RT-")
   choose(member, "重量", "100g")
   choose(member, "研磨", "手冲")
   member.wait(f"1 × ¥{unit_price(base['geisha'][0], '100g', 'STD')}", "已选 100g · 手冲 · 标准袋")

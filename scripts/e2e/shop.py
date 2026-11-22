@@ -179,7 +179,8 @@ def open_product(t: Term, query: str, name: str) -> None:
   search(t, query)
   t.wait("商品列表 · 1 款", name)
   t.key("enter")
-  t.wait("详情 DETAIL", name, "规格 SKU")
+  # The SKU code shows once the detail has loaded: keys before that do nothing.
+  t.wait("详情 DETAIL", name, "规格 SKU", "SKU RT-")
 
 
 SKU_GROUPS = ("重量", "研磨", "包装", "数量")
