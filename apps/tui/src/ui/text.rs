@@ -47,9 +47,44 @@ pub fn pad_start(text: &str, width: usize) -> String {
   out
 }
 
+/// `text` centred in `width` cells (the odd cell goes right); cut with `…` when wider.
+pub fn center(text: &str, width: usize) -> String {
+  let text = truncate(text, width);
+  let spare = width.saturating_sub(display_width(&text));
+  let left = spare / 2;
+  let mut out: String = std::iter::repeat_n(' ', left).collect();
+  out.push_str(&text);
+  out.extend(std::iter::repeat_n(' ', spare - left));
+  out
+}
+
+/// `text` cut to `width` cells (with `…`) and padded to exactly `width`.
+pub fn fit(text: &str, width: usize) -> String {
+  pad_end(&truncate(text, width), width)
+}
+
+/// `glyph` repeated to fill `width` cells (a wide glyph never overflows: the rest is spaces).
+pub fn repeat(glyph: char, width: usize) -> String {
+  let w = glyph.width().unwrap_or(1).max(1);
+  let mut out: String = std::iter::repeat_n(glyph, width / w).collect();
+  out.extend(std::iter::repeat_n(' ', width % w));
+  out
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn centring_and_fitting_count_cells() {
+    assert_eq!(center("登录", 8), "  登录  ");
+    assert_eq!(center("ok", 5), " ok  ");
+    assert_eq!(display_width(&center("退出登录 LOGOUT", 9)), 9);
+    assert_eq!(fit("耶加雪菲 孔加", 6), "耶加… ");
+    assert_eq!(display_width(&fit("耶加雪菲 孔加", 6)), 6);
+    assert_eq!(repeat('━', 4), "━━━━");
+    assert_eq!(repeat('空', 5), "空空 ");
+  }
 
   #[test]
   fn cjk_takes_two_cells() {

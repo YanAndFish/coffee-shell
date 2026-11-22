@@ -14,9 +14,23 @@
       "destructive": "#f08a6c",
       "success": "#8cc7a1",
       "soft": "#d9cfbf",
-      "kbd-bg": "#221d18",
+      "placeholder": "#9a8e7e",
+      "disabled": "#7d7264",
+      "steam": "#7d6f5f",
+      "dim": "#5a4d3f",
       "line-strong": "#4a4036",
-      "dim": "#5a4d3f"
+      "line-soft": "#2f2822",
+      "line-row": "#241f1a",
+      "success-border": "#3e5a48",
+      "destructive-border": "#6b4436",
+      "kbd": "#221d18",
+      "selection": "#30271a",
+      "hover": "#24201c",
+      "carrier-cyan": "#00afaf",
+      "carrier-magenta": "#af00af",
+      "carrier-blue": "#0087ff",
+      "carrier-kbd": "#008787",
+      "carrier-selection": "#870087"
     }
   }
 }

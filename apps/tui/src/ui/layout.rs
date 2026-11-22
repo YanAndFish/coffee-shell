@@ -32,6 +32,36 @@ pub fn rows(cells: u16) -> Points {
   px(f32::from(cells) * CELL_HEIGHT)
 }
 
+/// A gap of `cells` columns between the children of a row, as nsh's terminal layout reads
+/// gaps (`nsh_core`'s `terminal_layout`: a column from above 0, two from 24 points; it has
+/// no wider gap: use [`hspace`] for more).
+pub fn gap_cols(cells: u16) -> Points {
+  match cells {
+    0 => px(0.0),
+    1 => px(CELL_WIDTH),
+    _ => px(3.0 * CELL_WIDTH),
+  }
+}
+
+/// Horizontal padding of `cells` columns as nsh's terminal layout reads it (`terminal_layout`:
+/// a column from 8 points, two from 24; at most one on a box of text or a control).
+pub fn pad_cols(cells: u16) -> Points {
+  gap_cols(cells)
+}
+
+/// A blank of exactly `cells` columns in a row. nsh's terminal layout turns padding into at
+/// most two columns (one on a box of text) and keeps an empty box's explicit size, so
+/// exact insets are spacers.
+pub fn hspace(cells: u16) -> View {
+  view().flex_none().w(cols(cells))
+}
+
+/// A blank of exactly `count` rows in a column (vertical padding under 24 points and gaps
+/// under 16 are no rows in nsh's terminal layout, and none is more than one).
+pub fn vspace(count: u16) -> View {
+  view().flex_none().h(rows(count))
+}
+
 /// A width class of the terminal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Bp {

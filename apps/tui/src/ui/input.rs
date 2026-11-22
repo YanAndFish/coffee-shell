@@ -1,0 +1,231 @@
+//! Input: text entry (`components/Input`), three forms on nsh's own text field (which owns
+//! the editing, the caret and the terminal's cursor).
+//!
+//! ```text
+//! 用户名                                 ╭─ 优惠码 ───────────────╮
+//! ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓     │ 试试 TTY10             │
+//! ┃ › 林晓                          ┃     ╰────────────────────────╯
+//! ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+//! ✗ 请输入用户名                         ╭───────────────────────────────────╮
+//!                                        │ ‹/› 搜索豆子、产区或风味…         │
+//!                                        ╰───────────────────────────────────╯
+//! ```
+//!
+//! - A rounded `line` frame three rows tall; **focused** it turns heavy `┏━┓` and `acc`
+//!   (glyph and colour). The content starts one cell in.
+//! - [`InputForm::Prompt`] puts `› ` before the text (`mute`, bold `acc` while focused).
+//!   [`InputForm::Search`] puts the `‹/›` cap before it and `✕` (pressable: clears) after it
+//!   while it holds text. [`InputForm::Plain`] has neither.
+//! - The label sits on the row above (`mute`), or on the top line (`╭─ 标签 ─`, saving two
+//!   rows) with [`LabelPlace::OnFrame`] (short layouts, S).
+//! - `masked`: every character shows as `•` (nsh's secure field). `uppercase`: what is typed
+//!   is upper-cased (the coupon field). The placeholder is `placeholder`-toned.
+//! - The error line under the group: `✗ 原因` (bold `danger`).
+//!
+//! Focus: `focused()` is the caller's focus ring (the page's or the dialog's); when it turns
+//! to this field the field takes nsh's text focus, and when it turns away the field gives it
+//! up. What the frame shows is the field's real focus, and `on_focus_change(bool)` reports
+//! it (a click into the field, Esc or Tab handled by the field itself), so the caller keeps
+//! its ring in step. The command table's keys still reach the app while a field has the
+//! focus, except those the field types.
+
+use nsh_core::prelude::*;
+
+use super::{
+  action::pressable,
+  error_state::error_line,
+  frame::{FrameStyle, Legend, frame},
+  kbd::kbd,
+  label::{label, toned},
+  layout,
+  theme::Tone,
+};
+
+/// What leads the text inside an input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InputForm {
+  /// `› 林晓`: the login fields.
+  Prompt,
+  /// Plain text: dialog fields, the coupon.
+  Plain,
+  /// `‹/› 搜索…` and a `✕` to clear: the header's search.
+  Search,
+}
+
+/// Where an input's label goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LabelPlace {
+  /// On the row above the frame.
+  Above,
+  /// On the frame's top line: `╭─ 标签 ─`.
+  OnFrame,
+}
+
+/// What an input shows and how it behaves.
+#[derive(Clone)]
+pub struct InputSpec {
+  /// Its form.
+  pub form: InputForm,
+  /// Its label (none for the search field).
+  pub label: Option<SharedString>,
+  /// Where the label goes.
+  pub place: LabelPlace,
+  /// A note at the label row's right end (`mute`): "2–16 个字符".
+  pub hint: Option<SharedString>,
+  /// The text shown while it is empty.
+  pub placeholder: SharedString,
+  /// Every character as `•`.
+  pub masked: bool,
+  /// What is typed is upper-cased.
+  pub uppercase: bool,
+}
+
+impl InputSpec {
+  /// A field of `form` labelled `label` (above), no placeholder.
+  pub fn new(form: InputForm, label: Option<&'static str>) -> Self {
+    Self {
+      form,
+      label: label.map(SharedString::from),
+      place: LabelPlace::Above,
+      hint: None,
+      placeholder: SharedString::default(),
+      masked: false,
+      uppercase: false,
+    }
+  }
+}
+
+/// An input group: the label, the framed field and the error line. `value()` is the text,
+/// `on_change` gets every edit (upper-cased first when the spec says so), `on_submit` runs on
+/// ⏎ inside it; `focused()` is the caller's focus ring, `on_focus_change` hears the field's
+/// real focus come and go;
+/// `error()` is the current error (none: no line).
+pub fn input(
+  spec: InputSpec,
+  value: impl Fn() -> String + Copy + 'static,
+  focused: impl Fn() -> bool + Copy + 'static,
+  error: impl Fn() -> Option<SharedString> + 'static,
+  on_change: impl Fn(String) + Copy + 'static,
+  on_focus_change: impl Fn(bool) + 'static,
+  on_submit: impl Fn() + 'static,
+) -> View {
+  let field_ref = element_ref();
+  let has_focus = signal(false);
+  let on_focus_change = std::rc::Rc::new(on_focus_change);
+  let on_blur_change = on_focus_change.clone();
+  let focused_by_caller = focused;
+  let focused = move || has_focus.get();
+  // Follow the caller's focus on its changes only: blurring every field that is not the
+  // focused one would take the focus off the one that is.
+  let was = std::cell::Cell::new(false);
+  effect(move || {
+    let now = focused_by_caller();
+    if now && !was.get() {
+      field_ref.focus();
+    } else if !now && was.get() {
+      field_ref.blur();
+    }
+    was.set(now);
+  });
+  let uppercase = spec.uppercase;
+  let name = spec
+    .label
+    .clone()
+    .unwrap_or_else(|| spec.placeholder.clone());
+  let field = nsh_core::element::input()
+    .element_ref(&field_ref)
+    .label(name)
+    .flex_1()
+    .min_w(px(0.0))
+    .h(layout::rows(1))
+    .value(value)
+    .placeholder(spec.placeholder.to_string())
+    .text_color(move || Tone::Fg.color())
+    .masked(spec.masked)
+    .on_change(move |text: &str| {
+      on_change(if uppercase {
+        text.to_uppercase()
+      } else {
+        text.to_owned()
+      })
+    })
+    .on_submit(move |_: &str| on_submit())
+    .on_focus(move || {
+      has_focus.set(true);
+      on_focus_change(true);
+    })
+    .on_blur(move || {
+      has_focus.set(false);
+      on_blur_change(false);
+    });
+  let lead = match spec.form {
+    InputForm::Prompt => Some(
+      toned("› ", move || if focused() { Tone::Acc } else { Tone::Mute })
+        .style_when(focused, |s| s.font_weight(FontWeight::BOLD))
+        .into_element(),
+    ),
+    InputForm::Search => Some(
+      view()
+        .flex_row()
+        .child(kbd("/"))
+        .child(text(" "))
+        .into_element(),
+    ),
+    InputForm::Plain => None,
+  };
+  let clear = (spec.form == InputForm::Search).then(|| {
+    when(
+      move || !value().is_empty(),
+      move || {
+        pressable()
+          .label("清除")
+          .on_press(move || on_change(String::new()))
+          .child(label(" ✕", Tone::Mute))
+      },
+    )
+  });
+  let row = view().flex_row().child(lead).child(field).child(clear);
+  let style = move || {
+    if focused() {
+      FrameStyle::Heavy
+    } else {
+      FrameStyle::Round
+    }
+  };
+  let tone = move || if focused() { Tone::Acc } else { Tone::Line };
+  let legend = match (spec.place, &spec.label) {
+    (LabelPlace::OnFrame, Some(text)) => Some(Legend {
+      text: text.clone().into_reactive(),
+      tone: Tone::Mute,
+    }),
+    _ => None,
+  };
+  let above = match (spec.place, spec.label.clone()) {
+    (LabelPlace::Above, Some(text)) => Some(
+      view()
+        .flex_row()
+        .child(label(text, Tone::Mute))
+        .child(view().flex_1())
+        .child(spec.hint.clone().map(|hint| label(hint, Tone::Mute))),
+    ),
+    _ => None,
+  };
+  view()
+    .flex_none()
+    .child(above)
+    .child(frame(style, tone, legend, Some(3), 1, row))
+    .child(error_line(error))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn a_spec_starts_plain() {
+    let spec = InputSpec::new(InputForm::Prompt, Some("用户名"));
+    assert_eq!(spec.place, LabelPlace::Above);
+    assert!(!spec.masked && !spec.uppercase);
+    assert_eq!(spec.label.as_deref(), Some("用户名"));
+  }
+}
