@@ -73,6 +73,8 @@ async function openProduct(app: App, row: number, origin: string) {
   await app.keyboard.press('enter')
   await waitForPart(app, `选购 / ${origin} / `)
   await app.waitFor('text:规格 SKU')
+  // The guest toast (bottom right, 2.6 s) covers the SKU panel's last rows until it goes.
+  await app.waitUntil(() => !shows(app, '以访客身份浏览'), { timeout: 5000 })
 }
 
 const openPinkb = (app: App) => openProduct(app, 1, '哥伦比亚')

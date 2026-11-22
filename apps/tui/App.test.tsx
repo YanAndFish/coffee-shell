@@ -652,3 +652,36 @@ test('too small, then large again: the page comes back as it was', async () => {
   expect(shows(app, '选购 BROWSE')).toBe(true)
   expect(app.texts()).toContain('商品列表 · 2 款 · 推荐')
 })
+
+test('a session that expires: back to the login page, 登录已失效', async () => {
+  // `fixture:expired`: the key resumes at once, then every member call answers 401.
+  const app = await start(130, 40, { transport: 'fixture:expired', key: true })
+  await app.waitFor('text:登录 · SIGN IN')
+  await app.waitFor('text:登录已失效')
+  expect(shows(app, '请重新登录，购物车已保留')).toBe(true)
+  expect(app.shows('label:主导航')).toBe(false)
+  expect(shows(app, '林晓 Lv.3')).toBe(false)
+})
+
+test('a dialog\'s buttons take presses: the frames around them take none', async () => {
+  const app = await start(160, 50, { transport: 'fixture:member', key: true })
+  await app.waitFor('text:商品列表 · 8 款 · 推荐')
+  // `Esc 取消` twice: the status bar's hint and the dialog's button; both cancel.
+  for (const nth of [0, 1]) {
+    await app.keyboard.press('q')
+    await app.waitFor('text:确定退出登录吗？')
+    await app.press(`label:Esc 取消 >> nth=${nth}`)
+    await app.waitUntil(() => !shows(app, '确定退出登录吗？'))
+    expect(app.texts()).toContain('林晓 Lv.3')
+  }
+  await app.keyboard.press('3')
+  await app.waitFor('text:地址本 · 3 条')
+  await app.keyboard.press('n')
+  await app.waitFor('text:新增地址 NEW')
+  await app.press('label:Esc 取消 >> nth=1')
+  await app.waitUntil(() => !shows(app, '新增地址 NEW'))
+  await app.keyboard.press('q')
+  await app.waitFor('text:确定退出登录吗？')
+  await app.press('label:⏎ 退出登录')
+  await app.waitFor('text:已退出登录')
+})

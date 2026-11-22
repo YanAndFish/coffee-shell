@@ -9,7 +9,7 @@
 // `removed.json`, `added.json`, `cart-coupon.json`, `orders/placed.json`).
 import type { App } from './testkit'
 import { expect, test } from 'nsh/test'
-import { enterAsGuest, logInAsMember, screenRows, shows, start, waitForPart } from './testkit'
+import { enterAsGuest, logInAsMember, logInOnClock, loginReady, runUntil, screenRows, shows, start, startOnClock, waitForPart } from './testkit'
 
 /** Expects one screen row to hold every one of `parts` (on the terminal; headless draws no cells). */
 async function expectRow(app: App, ...parts: string[]) {
@@ -28,6 +28,8 @@ async function memberCart(cols: number, rows: number) {
   await app.keyboard.press('2')
   await app.waitFor('text:购物车 · 3 件')
   await app.waitFor('text:结算 3 件')
+  // The welcome toast (bottom right, 2.6 s) covers the checkout's last rows until it goes.
+  await app.waitUntil(() => !shows(app, '欢迎回来，林晓'), { timeout: 5000 })
   return app
 }
 
@@ -256,8 +258,7 @@ test('checkout gate 2: nothing selected says so and stays', async () => {
 })
 
 test('checkout gate 3 needs an address: a guest\'s empty cart sends nobody anywhere', async () => {
-  // No fixture scenario has a member cart without an address (see the report); the copy of
-  // that state is covered by the page's unit tests. Here: an empty guest cart.
+  // An empty guest cart (a member without an address: `fixture:new`, further down).
   const app = await guest(160, 50, 'fixture:empty')
   await app.keyboard.press('2')
   await app.waitFor('text:购物车 · 0 件')
@@ -276,9 +277,7 @@ test('checkout gate 3 needs an address: a guest\'s empty cart sends nobody anywh
 test('checkout places the order, then the receipt; ⏎ leaves it for the catalog', async () => {
   const app = await memberCart(160, 50)
   await app.keyboard.press('c')
-  // The progress block (`⠋ 锁定烘焙批次 45%`) replaces the button while the order is out;
-  // the fixture answers within the key's own turn, so no step of these tests sees it (the
-  // report asks for a slow fixture scenario). The receipt follows.
+  // The receipt follows at once (the submitting state: `fixture:slow`, further down).
   await app.waitFor('text:订单回执 RECEIPT')
   const texts = app.texts()
   expect(texts).toContain('订单已提交')
@@ -350,4 +349,64 @@ test('a backend that fails: ✗ and ⏎ 重试', async () => {
   expect(app.texts()).toContain('重试')
   await app.keyboard.press('enter')
   await app.waitFor('text:✗ 购物车加载失败')
+})
+
+// --- States the fixture scenarios open ----------------------------------------------------
+
+test('checkout gate 3: a member without an address is sent to the address book', async () => {
+  // `fixture:new`: 林晓 as a new member, one cart line, no address.
+  const app = await start(130, 40, { transport: 'fixture:new' })
+  await loginReady(app)
+  await logInAsMember(app)
+  await app.waitFor('text:商品列表 · 8 款 · 推荐')
+  await app.keyboard.press('2')
+  await app.waitFor('text:结算 CHECKOUT')
+  await waitForPart(app, '还没有收货地址，去地址本添加一个')
+  await app.keyboard.press('c')
+  await app.waitFor('text:请先选择收货地址')
+  expect(shows(app, '在地址本里按 ⏎ 指定')).toBe(true)
+  await waitForPart(app, '地址本 · 0 条')
+  expect(shows(app, '新增收货地址')).toBe(true)
+})
+
+test('a problem line says why, and the checkout is refused with the server\'s reason', async () => {
+  // `fixture:problem`: 3 Geisha in the cart, 2 left; checkout answers 409 out_of_stock.
+  const app = await start(160, 50, { transport: 'fixture:problem' })
+  await loginReady(app)
+  await logInAsMember(app)
+  await app.waitFor('text:商品列表 · 8 款 · 推荐')
+  await app.keyboard.press('2')
+  await app.waitFor('text:结算 CHECKOUT')
+  await waitForPart(app, '! 库存不足 · 仅剩 2 份')
+  await app.keyboard.press('c')
+  await app.waitFor('text:下单失败')
+  expect(shows(app, '波奎特 瑰夏 库存不足，购物车没有变化')).toBe(true)
+  expect(app.texts()).not.toContain('订单回执 RECEIPT')
+  // The button is back: the checkout can be tried again.
+  await waitForPart(app, '结算')
+})
+
+test('submitting the order: the progress block, only ? works, then the receipt', async () => {
+  const { app, clock } = await startOnClock(160, 50)
+  await logInOnClock(app, clock)
+  await app.keyboard.press('2')
+  await runUntil(clock, () => shows(app, '结算 3 件'))
+  await app.keyboard.press('c')
+  await clock.runFor(200)
+  // The block (4 steps, acc2) holds the button's place while the order is out (K6).
+  expect(shows(app, '校验库存') || shows(app, '锁定烘焙批次') || shows(app, '生成订单')).toBe(true)
+  expect(app.texts()).not.toContain('结算 3 件')
+  for (const key of ['1', 'q', 'x', 'escape', 'c']) {
+    await app.keyboard.press(key)
+    expect(shows(app, '结算 CHECKOUT')).toBe(true)
+    expect(shows(app, '退出登录 LOGOUT')).toBe(false)
+  }
+  // The coupon field takes no keys meanwhile.
+  await app.keyboard.press('tab')
+  await app.keyboard.press('t')
+  expect(app.value('label:优惠码')).toBe('')
+  await app.keyboard.press('shift+/')
+  expect(app.texts()).toContain('快捷键 KEYMAP')
+  await app.keyboard.press('escape')
+  expect(await runUntil(clock, () => shows(app, '订单回执 RECEIPT'))).toBe(true)
 })

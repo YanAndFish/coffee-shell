@@ -8,7 +8,7 @@
 // a delete always leaves cards 2 and 3, a new default is always card 3).
 import type { App } from './testkit'
 import { expect, test } from 'nsh/test'
-import { enterAsGuest, logInAsMember, loginReady, screenRows, shows, start, waitForPart } from './testkit'
+import { enterAsGuest, logInAsMember, logInOnClock, loginReady, runUntil, screenRows, shows, start, startOnClock, waitForPart } from './testkit'
 
 /** How many texts on screen are exactly `label` (a card button's; the footer says `默认`). */
 function buttons(app: App, label: string) {
@@ -21,6 +21,8 @@ async function book(cols: number, rows: number) {
   await waitForPart(app, '欢迎回来，林晓')
   await app.keyboard.press('3')
   await waitForPart(app, '地址本 · 3 条')
+  // The welcome toast (bottom right, 2.6 s) covers the last card until it goes.
+  await app.waitUntil(() => !shows(app, '欢迎回来，林晓'), { timeout: 5000 })
   return app
 }
 
@@ -274,4 +276,41 @@ test('a guest sees the login card; ⏎ goes to the login page', async () => {
     expect(card).toContain('│    你正在以访客身份浏览')
   await app.keyboard.press('enter')
   await app.waitUntil(() => app.count('label:用户名') > 0)
+})
+
+test('a book that fails to load: ✗ 地址加载失败 and ⏎ 重试', async () => {
+  // `fixture:member-error`: signing in works, every member call answers 500.
+  const app = await start(130, 40, { transport: 'fixture:member-error' })
+  await loginReady(app)
+  await logInAsMember(app)
+  await app.waitFor('text:商品列表 · 8 款 · 推荐')
+  await app.keyboard.press('3')
+  await waitForPart(app, '地址加载失败')
+  expect(app.texts()).toContain('重试')
+  expect(shows(app, '新增收货地址')).toBe(false)
+  await app.keyboard.press('enter')
+  await waitForPart(app, '地址加载失败')
+})
+
+test('saving an address: ⠹ 保存中… in the button\'s place, nothing types, then saved', async () => {
+  const { app, clock } = await startOnClock(130, 40)
+  await logInOnClock(app, clock)
+  await app.keyboard.press('3')
+  await runUntil(clock, () => shows(app, '地址本 · 3 条'))
+  await app.keyboard.press('n')
+  await runUntil(clock, () => shows(app, '新增地址 NEW'))
+  await app.type('label:收货人', '周一')
+  await app.type('label:所在地区', '北京市 海淀区')
+  await app.type('label:详细地址', '学院路 37 号')
+  await app.keyboard.press('enter')
+  await clock.runFor(100)
+  expect(shows(app, '保存中…')).toBe(true)
+  // Only Esc works while saving: letters do not type, ⏎ does not save twice.
+  await app.keyboard.press('z')
+  expect(app.value('label:收货人')).toBe('周一')
+  await app.keyboard.press('enter')
+  await app.keyboard.press('shift+/')
+  expect(app.texts()).not.toContain('快捷键 KEYMAP')
+  expect(await runUntil(clock, () => shows(app, '已新增地址'))).toBe(true)
+  expect(shows(app, '新增地址 NEW')).toBe(false)
 })

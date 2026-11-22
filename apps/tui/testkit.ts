@@ -146,3 +146,36 @@ export async function logInAsMember(app: App, password = 'secret1') {
   await app.type('label:密码', password)
   await app.keyboard.press('enter')
 }
+
+/**
+ * Opens the app on a manual clock (`fixture:slow` answers after 3 s; timers run only as the
+ * test says): a request stays under way while the test looks at the screen and presses keys.
+ */
+export async function startOnClock(cols: number, rows: number, { transport = 'fixture:slow', key }: Start = {}) {
+  const storage: Record<string, string> = { 'coffee.transport': transport }
+  if (key)
+    storage['coffee.fingerprint'] = KEY
+  const app = await open('.', {
+    ...cells(cols, rows),
+    platform: 'linux',
+    clock: {},
+    storage,
+  })
+  return { app, clock: app.clock! }
+}
+
+type Clock = NonNullable<App['clock']>
+
+/** Runs the clock `step` ms at a time until `done()` holds (at most `limit` ms). */
+export async function runUntil(clock: Clock, done: () => boolean, step = 100, limit = 20000) {
+  for (let spent = 0; spent < limit && !done(); spent += step)
+    await clock.runFor(step)
+  return done()
+}
+
+/** On a manual clock: the login page with the focus in 用户名, then logged in as `林晓`. */
+export async function logInOnClock(app: App, clock: Clock) {
+  await runUntil(clock, () => app.texts().includes('离开输入'), 50)
+  await logInAsMember(app)
+  await runUntil(clock, () => shows(app, '商品列表 · 8 款'))
+}

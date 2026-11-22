@@ -308,3 +308,17 @@ test('loading shows the spinner line until the orders arrive', async () => {
   expect(shows(app, 'RT2611220417')).toBe(true)
   expect(shows(app, '正在载入')).toBe(false)
 })
+
+test('a profile that fails to load: the account and the orders say so, ⏎ retries', async () => {
+  // `fixture:member-error`: signing in works, every member call answers 500.
+  const app = await start(160, 50, { transport: 'fixture:member-error' })
+  await loginReady(app)
+  await logInAsMember(app)
+  await app.waitFor('text:商品列表 · 8 款 · 推荐')
+  await app.keyboard.press('4')
+  await waitForPart(app, '个人信息加载失败')
+  await waitForPart(app, '订单加载失败')
+  expect(shows(app, 'RT2611220417')).toBe(false)
+  await app.keyboard.press('enter')
+  await waitForPart(app, '个人信息加载失败')
+})

@@ -5,7 +5,7 @@
 // headless (texts and values); `nsh test --target tui` also checks the terminal's cells.
 import type { App, Cell } from './testkit'
 import { expect, open, test } from 'nsh/test'
-import { cells, screenCells, shows, start } from './testkit'
+import { cells, KEY, screenCells, shows, start } from './testkit'
 
 const LIVE = 'http://login.test'
 
@@ -368,22 +368,22 @@ test('a network error ends the submit: the input stays, ⏎ retries', async () =
 })
 
 test('resume on connect: the card says so while a remembered key is tried', async () => {
-  const app = await start(100, 30, {
-    transport: LIVE,
-    key: true,
-    network: {
-      [`POST ${LIVE}/*`]: {
-        status: 404,
-        body: {
-          error: { code: 'not_remembered', message: '当前公钥没有记住的登录' },
-        },
-        delay: 1500,
-      },
-    },
+  // `fixture:slow` with a key nobody remembered: the resume answers `not_remembered` after
+  // 3 s, on a manual clock the test advances.
+  const app = await open('.', {
+    ...cells(100, 30),
+    platform: 'linux',
+    clock: {},
+    storage: { 'coffee.transport': 'fixture:slow', 'coffee.fingerprint': KEY },
   })
-  await ready(app)
-  await app.waitFor('text:正在通过 SSH 公钥恢复登录…')
-  await app.waitUntil(() => !shows(app, '正在通过 SSH 公钥恢复登录…'), { timeout: 5000 })
+  const clock = app.clock!
+  for (let i = 0; i < 40 && !shows(app, '正在通过 SSH 公钥恢复登录…'); i++)
+    await clock.runFor(50)
+  expect(shows(app, '正在通过 SSH 公钥恢复登录…')).toBe(true)
+  expect(app.texts()).toContain('登录 · SIGN IN')
+  for (let i = 0; i < 40 && shows(app, '正在通过 SSH 公钥恢复登录…'); i++)
+    await clock.runFor(250)
+  expect(shows(app, '正在通过 SSH 公钥恢复登录…')).toBe(false)
   expect(app.texts()).toContain('登录以同步购物车、地址本与订单。')
 })
 
@@ -400,4 +400,21 @@ test('guest entry: the 访客浏览 button, and the gated checkout coming back t
   await ready(app)
   await app.waitFor('text:结算前请先登录')
   await typing(app)
+})
+
+test('three quick Tabs from 用户名 end on 登录, not stuck in 密码', async () => {
+  // With a key: 用户名 → 密码 → 记住我 → 登录.
+  const app = await start(130, 40, { key: true })
+  await ready(app)
+  await typing(app)
+  await app.keyboard.press('tab')
+  await app.keyboard.press('tab')
+  await app.keyboard.press('tab')
+  await app.waitUntil(() => !app.texts().includes('离开输入'))
+  // A letter types nowhere; ⏎ presses 登录 (an empty form: the first error).
+  await app.keyboard.press('x')
+  expect(app.value('label:密码')).toBe('')
+  expect(app.value('label:用户名')).toBe('')
+  await app.keyboard.press('enter')
+  await app.waitFor('text:✗ 请输入用户名')
 })
