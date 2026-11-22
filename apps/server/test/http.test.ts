@@ -1,6 +1,6 @@
 // The shared request pipeline: sessions (requireUser / optionalUser), X-SSH-Fingerprint,
-// body parsing and contract validation, the route table. Uses endpoints that are still
-// stubs where it only needs the pipeline (they answer 501 once the request is accepted).
+// body parsing and contract validation, the route table. Where it only needs the pipeline it
+// asserts on what the pipeline rejects, never on what the handler behind it answers.
 import type { TestDatabase, TestServer } from './helpers.ts'
 import { ApiErrorSchema, endpoints, SSH_FINGERPRINT_HEADER } from '@coffee/contract'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -51,9 +51,10 @@ describe('sessions', () => {
     expect((await errorCode('GET', '/v1/cart', { token }))[1]).toBe('session_expired')
   })
 
-  it('a valid session passes (the stub then answers 501)', async () => {
+  it('a valid session passes the session check', async () => {
     const member = await createMember(db.prisma, { now: NOW })
-    expect((await errorCode('GET', '/v1/cart', { token: member.token }))[1]).toBe('not_implemented')
+    const response = await call(server.origin, 'GET', '/v1/cart', { token: member.token })
+    expect(response.status).not.toBe(401)
   })
 
   it('auth: none ignores tokens; optional would reject a bad one', async () => {
@@ -80,10 +81,11 @@ describe('x-SSH-Fingerprint', () => {
       ])
   })
 
-  it('a good one passes', async () => {
-    expect((await errorCode('POST', '/v1/auth/resume', {
+  it('a good one passes the header check', async () => {
+    const response = await call(server.origin, 'POST', '/v1/auth/resume', {
       headers: { [SSH_FINGERPRINT_HEADER]: FINGERPRINT },
-    }))[1]).toBe('not_implemented')
+    })
+    expect(response.status).not.toBe(400)
   })
 })
 
