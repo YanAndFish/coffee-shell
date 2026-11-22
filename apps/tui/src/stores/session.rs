@@ -156,6 +156,7 @@ pub struct SessionStore {
   auth_revision: Signal<u64>,
   logging_out: Signal<bool>,
   return_to: Signal<Option<Route>>,
+  expired: Signal<bool>,
   /// The owner tasks run under (the root's: a task outlives the page that started it).
   owner: Owner,
   /// Run tasks to their end in place (tests on the fixture transport).
@@ -200,6 +201,7 @@ impl SessionStore {
       auth_revision: signal(0),
       logging_out: signal(false),
       return_to: signal(None),
+      expired: signal(false),
       owner: Owner::current(),
       inline,
     }
@@ -454,6 +456,7 @@ impl SessionStore {
       self.token.set(None);
       self.member.set(None);
       self.logging_out.set(false);
+      self.expired.set(false);
       self.step.set(None);
       // A pending submit's answer is dropped.
       self
@@ -475,6 +478,20 @@ impl SessionStore {
   /// Marks a logout under way.
   pub fn set_logging_out(&self, logging_out: bool) {
     self.logging_out.set(logging_out);
+  }
+
+  /// A store's request failed with `failure`: when it says the member session is gone
+  /// (`401 session_expired` / `login_required` while signed in), the session is marked
+  /// expired and the shell runs `actions::session_expired` (back to the login page).
+  pub fn report(&self, failure: &ApiFailure) {
+    if failure.ends_session() && self.is_member_untracked() && !self.expired.get_untracked() {
+      self.expired.set(true);
+    }
+  }
+
+  /// Whether a store saw the member session end (tracked).
+  pub fn expired(&self) -> bool {
+    self.expired.get()
   }
 
   // --- Where to go after login ------------------------------------------------------
@@ -697,6 +714,28 @@ mod tests {
       session.auth_failed(revision, &ApiFailure::Network("late".into()));
       assert_eq!(session.draft().error, None);
       assert!(!session.submitting());
+    });
+  }
+
+  #[test]
+  fn an_expired_session_is_reported_once_signed_in() {
+    with_session(fixture(None), |session| {
+      let expired = ApiFailure::of(ErrorCode::SessionExpired);
+      session.report(&expired);
+      assert!(!session.expired(), "a guest has no session to lose");
+      let auth = now_or_never(session.client().login(&LoginRequest {
+        username: "林晓".into(),
+        password: "secret1".into(),
+        remember: false,
+      }))
+      .unwrap();
+      session.signed_in(auth);
+      session.report(&ApiFailure::of(ErrorCode::NotFound));
+      assert!(!session.expired());
+      session.report(&expired);
+      assert!(session.expired());
+      session.signed_out();
+      assert!(!session.expired());
     });
   }
 

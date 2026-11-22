@@ -67,6 +67,9 @@ impl OrdersStore {
     let client = self.session.client();
     let revision = self.list.begin();
     let result = client.orders(Some(ORDER_LIMIT)).await;
+    if let Err(failure) = &result {
+      self.session.report(failure);
+    }
     self.list.finish(revision, result);
   }
 
@@ -98,6 +101,9 @@ impl OrdersStore {
     let client = self.session.client();
     let revision = self.order.begin();
     let result = client.order(&number).await;
+    if let Err(failure) = &result {
+      self.session.report(failure);
+    }
     self.order.finish(revision, result);
   }
 

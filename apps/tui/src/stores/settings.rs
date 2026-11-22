@@ -66,10 +66,10 @@ impl SettingsStore {
   pub async fn fetch(self) {
     let client = self.session.client();
     let revision = self.bump();
-    if let Ok(settings) = client.settings().await
-      && revision == self.revision.get_untracked()
-    {
-      self.settings.set(settings);
+    match client.settings().await {
+      Ok(settings) if revision == self.revision.get_untracked() => self.settings.set(settings),
+      Ok(_) => {}
+      Err(failure) => self.session.report(&failure),
     }
   }
 

@@ -359,6 +359,9 @@ impl CartStore {
     {
       self.adopt_quote(cart);
     }
+    if let Err(failure) = &result {
+      self.session.report(failure);
+    }
     self.cart.finish(revision, result);
   }
 

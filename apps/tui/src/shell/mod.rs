@@ -24,6 +24,7 @@ mod too_small;
 use nsh_core::{keymap::When, prelude::*};
 
 use crate::{
+  api::{ApiFailure, ErrorCode},
   commands, pages,
   router::Route,
   stores::{Stores, actions},
@@ -87,6 +88,15 @@ pub fn shell() -> impl IntoElement {
   expire_toasts(stores);
   // The connection's start: resume a remembered key's session (once).
   effect(move || untracked(|| actions::start(&stores)));
+  // A store saw the member session end: back to the login page (`登录已失效`).
+  effect(move || {
+    if stores.session.expired() {
+      untracked(|| {
+        let failure = ApiFailure::of(ErrorCode::SessionExpired);
+        batch(|| actions::session_expired(&stores, &failure));
+      });
+    }
+  });
 
   let pages = ui::page_stack().child(each(
     move || stores.router.routes(),

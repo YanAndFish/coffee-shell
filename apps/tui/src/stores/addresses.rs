@@ -227,6 +227,9 @@ impl AddressStore {
     let client = self.session.client();
     let revision = self.book.begin();
     let result = client.addresses().await;
+    if let Err(failure) = &result {
+      self.session.report(failure);
+    }
     self.book.finish(revision, result);
   }
 

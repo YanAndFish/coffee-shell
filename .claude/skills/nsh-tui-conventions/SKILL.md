@@ -22,29 +22,50 @@ plus this project's decisions. Web pages are reference data; this file and `CLAU
 ## Layers (dependencies point down)
 
 ```
-App (lib.rs) ─▶ shell/ ─▶ pages/<name>.rs ─▶ stores/ ─▶ api/ ─▶ coffee_api (DTOs)
-                              └────────────▶ ui/ ─▶ nsh_base, nsh_core, theme tokens
+App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::actions) ─▶ api/ ─▶ coffee_api (DTOs)
+                              └──────────▶ ui/ ─▶ nsh_base, nsh_core, theme tokens
 ```
 
+`apps/tui/README.md` has the module map and the per-screen contract.
+
 - `src/ui/` is the **only** module that imports `nsh_base` or reads theme tokens/colours. One file per design-system
-  component (`ui/panel.rs`, `ui/status_bar.rs`, ...; re-exported from `ui/mod.rs`), each with a limited API: `variant`, `size`, states (`selected`,
-  `disabled`, `loading`, `invalid`), slots (label, children) and events. Never colours, radii or paddings as props.
-- `pages/` compose `ui::*` plus layout primitives (`view()`, `text()`, flex/gap/padding from the scale). A look a page
-  needs becomes a variant in `ui/` first.
-- `stores/` are `#[derive(Clone, Copy)]` structs of **private** signals with methods: `SessionStore`
-  (`stores/session.rs`: who is shopping, the API client), `CatalogStore` (`stores/catalog.rs`), `ToastStore`
-  (`stores/toast.rs`) and the `Router` (`router.rs`). All of them are fields of `stores::Stores` (`Copy`), made once
-  by `Stores::provide()` in the root; a component body gets them with `Stores::get()`. Phase 2 adds Cart, Address,
-  Orders and Settings stores as more fields. A page never writes another page's state.
-- `api/` is the HTTP client: base URL and `X-Internal-Key` from `coffee_app::session_env()`; DTOs from
-  `coffee_api`. **The TUI never computes money**: show the backend's prices, discounts, shipping and totals.
-- `commands.rs` is the single command table: `Command { id, key: Key, label, scope: Scope, footer_rank: Option<u8>,
-  enabled: fn(&Stores) -> bool, run: fn(&Stores, &str) }`. `shell/mod.rs` binds every `commands::strokes()` once;
-  buttons and status-bar hints run `commands::press(&stores, id)`; the footer comes from `commands::footer(..)`
-  and the `?` help from the same table. Do not call a key-binding API anywhere else.
+  component (`ui/panel.rs`, `ui/status_bar.rs`, ...; re-exported from `ui/mod.rs`), each with a limited API: `variant`,
+  `size`, states (`selected`, `disabled`, `loading`, `invalid`), slots (label, children) and events. Never colours,
+  radii or paddings as props.
+- `pages/<name>/{mod.rs,commands.rs}` (login, catalog, detail, cart, addresses, profile): each page registers a
+  `PageModule` (`MODULE`: page kind, `mode`, `commands`, view, dialogs) in `pages::PAGES`. A page composes `ui::*`
+  plus layout primitives (`view()`, `text()`, flex/gap/padding from the scale); a look it needs becomes a variant in
+  `ui/` first. Building a screen touches only its own directory. Shared helpers: `pages::format` (money and dates as
+  copy.md writes them), `pages::placeholder` (the plain bodies pages ship with).
+- `stores/` are `#[derive(Clone, Copy)]` structs of **private** signals with methods, all fields of `stores::Stores`
+  (`Copy`), made once by `Stores::provide()` in the root; a component body gets them with `Stores::get()`:
+  `SessionStore` (guest/member, token in memory, login form, resume, return-to route, the task spawner),
+  `CatalogStore`, `ProductStore`, `CartStore`, `AddressStore`, `OrdersStore`, `ProfileStore`, `SettingsStore`,
+  `ToastStore`, `UiStore` (overlays, focused field) and the `Router`. Remote data is a `stores::remote::Remote<T>`
+  (idle / loading / ready / empty / failed, last data kept, stale answers dropped by revision). Flows that cross
+  stores (login + cart merge, checkout, logout, session expiry, address changes) are `stores::actions`. A page never
+  writes another page's state.
+- Async work runs through `SessionStore::spawn` / `Stores::spawn` (the root's owner, so leaving a page never cancels a
+  request half way; each stretch between awaits runs in one `batch`). Store loads are `async fn fetch(self)` plus a
+  `load()` that spawns it; unit tests run them with `api::now_or_never` or `stores::testing::with_stores` (tasks run
+  in place on the fixture transport).
+- `api/` is the HTTP client: one typed async method per `/v1` operation (`api/endpoints.rs`), the contract's headers
+  (`X-Internal-Key`, `Authorization: Bearer`, `X-SSH-Fingerprint`, `X-Client-IP`), one `decode` for both transports,
+  typed `ApiFailure` (`code()`, `message()`, `details()`, `ends_session()`); the fixture transport answers every
+  endpoint in scenarios (`fixture:guest|member|empty|down|error`). **The TUI never computes money**: show the
+  backend's prices, discounts, shipping and totals.
+- `commands.rs` is the command model: `Command { id, key: Key, label, scope: Scope, typing: Typing, busy, footer:
+  Footer, enabled, run }`, built with `Command::new(..)` and `.footer(rank)` / `.footer_full` / `.footer_s` /
+  `.short("f 筛选")` / `.when(fn)` / `.typing(Typing::Only)` / `.while_busy()`. The table is `commands::all()`:
+  `GLOBAL` (`?` `1`–`4` `/` `q`), `OVERLAYS` (help, logout confirmation), then each page's `COMMANDS`.
+  `Command::active(&KeyContext)` applies keymap.md's order (help → dialog → text field → submitting → page);
+  `shell/mod.rs` binds every `commands::bindings()` once; hints and buttons run `commands::press(&stores, id)`; the
+  footer comes from `commands::footer(..)`, the mode from `commands::mode(..)`, the `?` help from the same table. Do
+  not call a key-binding API anywhere else.
 - `router.rs` owns navigation: `Route` (`Login`, `Catalog`, `Detail(id)`, `Cart`, `Addresses`, `Profile`), `Page`
-  (a route's kind, what command scopes name) and the `Router` store. `1–4` switch 选购/购物车/地址本/我的, Esc goes
-  back; `pages::page(&route)` picks the page.
+  and the `Router` store. A connection starts on `Login` (a remembered key replaces it with the catalog); `1–4`
+  replace the stack with a tab root; `router.go(Detail)` pushes over the catalog. The login gate is the checkout
+  action (`actions::checkout` → login page, `SessionStore::set_return_to(Some(Route::Cart))`).
 
 ## Reactivity
 
@@ -52,7 +73,11 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>.rs ─▶ stores/ ─▶ api/ ─
   `text(move || ...)`) re-run when a signal they read changes. Read signals inside closures, not in the body.
 - Never read a context inside an event handler or timer; read it in the body and keep the `Copy` handle.
 - Async work starts from an event, an effect or a resource, never unconditionally in a body. Model
-  loading / empty / error / ready explicitly and keep old data while refreshing.
+  loading / empty / error / ready explicitly and keep old data while refreshing (`Remote<T>`).
+- Change several signals in one `batch` (the shell runs every command in one; `SessionStore::spawn` batches each
+  stretch of a task). nsh 0.6.1 logs `a kept row is gone` when an `each` list changes twice before one commit (a row
+  made by the first change and kept by the second); fixture answers wait one engine turn
+  (`api::FIXTURE_LATENCY`) so they never land in the commit of the key that asked.
 - No effects that copy one signal into another; no signal holding unrelated app state; stable domain keys for lists
   (product id, address id), never indexes.
 
@@ -70,6 +95,19 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>.rs ─▶ stores/ ─▶ api/ ─
   (`a 加入购物车`, `⏎ 查看详情`); separators ` · `, ` / `, `→`. Copy table: `docs/design/copy.md`.
 - The demo notice (“演示环境 · 不是真实商店”) stays visible on every screen; login/register add “请勿使用真实密码”.
 - nsh's own toasts and Ctrl+S/Ctrl+R search use the bottom row; we draw our own `ui::Toast` and status bar there.
+
+## Text fields and focus
+
+- A text field reports its focus to `UiStore`: `on_focus` → `field_focused(name, Some(ref))` + `focus_taken(name)`,
+  `on_blur` → `field_blurred(name)`, and `cleanup(|| field_blurred(name))` (a field removed with the focus in it gets
+  no blur). Otherwise the command table thinks the user is still typing (`pages::placeholder::field` is the model).
+- While a field is focused, nsh does not fire `When::Auto` bindings for keys that edit text (letters, digits, and
+  also Enter, Esc, arrows); the shell binds a stroke `When::Always` only when some command takes it with
+  `Typing::Only`/`Also`, and such a stroke is then the app's in every field.
+- `ElementRef::focus()` does nothing before the element is mounted: a field shown *because* the focus was asked for
+  uses `.auto_focus(..)`; the ref's `focus()` serves a field already on screen.
+- When a pushed page goes (Esc on the detail page), nsh focuses the first text field of the page revealed. Keep a
+  field that should not take the keys off screen until it is asked for (the catalog's search box).
 
 ## Theme
 

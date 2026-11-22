@@ -50,6 +50,9 @@ impl ProfileStore {
     let client = self.session.client();
     let revision = self.profile.begin();
     let result = client.profile().await;
+    if let Err(failure) = &result {
+      self.session.report(failure);
+    }
     self.profile.finish(revision, result);
   }
 
