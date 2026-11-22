@@ -33,19 +33,19 @@ client sees a changed host key after a restart.
 
 ## Settings (environment)
 
-| Variable | Image default | Meaning |
-|---|---|---|
-| `COFFEE_SSH_ADDR` | `0.0.0.0:2222` | listen address (binary default `127.0.0.1:2222`) |
-| `COFFEE_SSH_HOST_KEY` | `/data/ssh_host_ed25519_key` | host key path; made on first run |
-| `COFFEE_TUI_BIN` | `/usr/local/bin/coffee-tui` | the per-session program |
-| `COFFEE_API_URL` | `http://127.0.0.1:3000` | backend base URL, passed to each session |
-| `COFFEE_INTERNAL_KEY` | unset | passed to each session as is; never logged |
-| `COFFEE_COLORS` | unset | force `truecolor` / `256` / `16` / `mono` for every session |
-| `COFFEE_SSH_MAX_SESSIONS` | `64` | concurrent sessions in all |
-| `COFFEE_SSH_MAX_SESSIONS_PER_IP` | `8` | concurrent sessions per client address |
-| `COFFEE_SSH_IDLE_TIMEOUT` | `1800` | seconds without input before a session closes (`0`: never) |
-| `COFFEE_SSH_AUTH_TIMEOUT` | `30` | seconds a connection may take to log in |
-| `COFFEE_SSH_LOG` | `info,russh=warn` | log filter (`tracing` syntax); logs go to stderr |
+| Variable                         | Image default                | Meaning                                                     |
+| -------------------------------- | ---------------------------- | ----------------------------------------------------------- |
+| `COFFEE_SSH_ADDR`                | `0.0.0.0:2222`               | listen address (binary default `127.0.0.1:2222`)            |
+| `COFFEE_SSH_HOST_KEY`            | `/data/ssh_host_ed25519_key` | host key path; made on first run                            |
+| `COFFEE_TUI_BIN`                 | `/usr/local/bin/coffee-tui`  | the per-session program                                     |
+| `COFFEE_API_URL`                 | `http://127.0.0.1:3000`      | backend base URL, passed to each session                    |
+| `COFFEE_INTERNAL_KEY`            | unset                        | passed to each session as is; never logged                  |
+| `COFFEE_COLORS`                  | unset                        | force `truecolor` / `256` / `16` / `mono` for every session |
+| `COFFEE_SSH_MAX_SESSIONS`        | `64`                         | concurrent sessions in all                                  |
+| `COFFEE_SSH_MAX_SESSIONS_PER_IP` | `8`                          | concurrent sessions per client address                      |
+| `COFFEE_SSH_IDLE_TIMEOUT`        | `1800`                       | seconds without input before a session closes (`0`: never)  |
+| `COFFEE_SSH_AUTH_TIMEOUT`        | `30`                         | seconds a connection may take to log in                     |
+| `COFFEE_SSH_LOG`                 | `info,russh=warn`            | log filter (`tracing` syntax); logs go to stderr            |
 
 Each idle session is one `coffee-tui` of about 16 MB RSS (see the ADR's measurement); size the
 container for `COFFEE_SSH_MAX_SESSIONS` of them plus the gateway.
