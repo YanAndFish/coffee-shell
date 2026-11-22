@@ -3,6 +3,7 @@
 import type { Cart, CartMergeResult } from '@coffee/contract'
 import type { TestLine } from '../support/members.ts'
 import type { CaseContext, ConformanceCase } from './types.ts'
+import { GRINDS, PACKS, WEIGHTS } from '@coffee/contract'
 import { expect } from 'vitest'
 import { readFixture } from '../helpers.ts'
 import { addAddressRow, addCartRow } from '../support/members.ts'
@@ -44,6 +45,34 @@ async function memberWith(ctx: CaseContext, lines: TestLine[], withAddress = tru
   if (withAddress)
     await addAddressRow(ctx.prisma, m.id)
   return m.token
+}
+
+/** `count` distinct yirga / nyeri SKUs (at most 80), one unit each. */
+export function distinctLines(count: number): TestLine[] {
+  const lines: TestLine[] = []
+  for (const productId of ['yirga', 'nyeri']) {
+    for (const weight of WEIGHTS) {
+      for (const grind of GRINDS) {
+        for (const pack of PACKS) {
+          lines.push({
+            productId,
+            weight,
+            grind,
+            pack,
+            quantity: 1,
+          })
+        }
+      }
+    }
+  }
+  return lines.slice(0, count)
+}
+
+/** Fills the member's cart with `count` distinct lines. */
+async function fillCart(ctx: CaseContext, userId: number, count: number): Promise<void> {
+  await ctx.prisma.cartItem.createMany({
+    data: distinctLines(count).map((line, position) => ({ userId, ...line, position })),
+  })
 }
 
 /** Compares lines and totals with a cart fixture (and the address but for its id). */
@@ -130,6 +159,51 @@ export const cartCases: ConformanceCase[] = [
     expectError: 'quantity_invalid',
   },
   {
+    operationId: 'addCartLine',
+    name: 're-adding a SKU sums the quantities and selects it again',
+    request: async ctx => ({
+      path: '/v1/cart/lines',
+      token: await memberWith(ctx, [
+        { ...YIRGA, quantity: 3, selected: false },
+      ]),
+      body: { ...YIRGA, quantity: 2 },
+    }),
+    check: (body) => {
+      const cart = body as Cart
+      expect(cart.lines).toHaveLength(1)
+      expect(cart.lines[0]).toMatchObject({
+        sku: 'RT-YIR-250G-WB-STD',
+        quantity: 5,
+        selected: true,
+        lineTotal: 490,
+      })
+    },
+  },
+  {
+    operationId: 'addCartLine',
+    name: 'an unknown product',
+    request: async ctx => ({
+      path: '/v1/cart/lines',
+      token: await memberWith(ctx, []),
+      body: { ...YIRGA, productId: 'nope' },
+    }),
+    expectError: 'not_found',
+  },
+  {
+    operationId: 'addCartLine',
+    name: 'refuses a 51st line',
+    request: async (ctx) => {
+      const m = await ctx.member()
+      await fillCart(ctx, m.id, 50)
+      return {
+        path: '/v1/cart/lines',
+        token: m.token,
+        body: { ...GEISHA, grind: 'CB', pack: 'STD' },
+      }
+    },
+    expectError: 'cart_full',
+  },
+  {
     operationId: 'updateCartLine',
     name: 'unselects a line',
     request: async ctx => ({
@@ -150,10 +224,36 @@ export const cartCases: ConformanceCase[] = [
     expectError: 'not_found',
   },
   {
+    operationId: 'updateCartLine',
+    name: 'more than the stock',
+    request: async ctx => ({
+      path: '/v1/cart/lines/RT-GSH-100G-WB-GIFT',
+      token: await memberWith(ctx, [GEISHA]),
+      body: { quantity: 7 },
+    }),
+    expectError: 'out_of_stock',
+  },
+  {
     operationId: 'removeCartLine',
     name: 'removes a line',
     request: async ctx => ({ path: '/v1/cart/lines/RT-PNK-250G-PO-STD', token: await memberWith(ctx, [PINKB, NIGHT, GEISHA]) }),
     check: body => expectCartLike(body, 'v1/cart/removed.json'),
+  },
+  {
+    operationId: 'removeCartLine',
+    name: 'a line not in the cart',
+    request: async ctx => ({ path: '/v1/cart/lines/RT-PNK-250G-PO-STD', token: await memberWith(ctx, [NIGHT]) }),
+    expectError: 'not_found',
+  },
+  {
+    operationId: 'addCartLine',
+    name: 'undo puts a removed line back at its index',
+    request: async ctx => ({
+      path: '/v1/cart/lines',
+      token: await memberWith(ctx, [NIGHT, GEISHA]),
+      body: { ...PINKB, index: 0 },
+    }),
+    check: body => expectCartLike(body, 'v1/cart/cart.json'),
   },
   {
     operationId: 'setCartSelection',
@@ -164,6 +264,20 @@ export const cartCases: ConformanceCase[] = [
       body: { selected: false },
     }),
     check: body => expectCartLike(body, 'v1/cart/none-selected.json'),
+  },
+  {
+    operationId: 'setCartSelection',
+    name: 'selects everything again',
+    request: async ctx => ({
+      path: '/v1/cart/selection',
+      token: await memberWith(ctx, [
+        { ...PINKB, selected: false },
+        { ...NIGHT, selected: false },
+        GEISHA,
+      ]),
+      body: { selected: true },
+    }),
+    check: body => expectCartLike(body, 'v1/cart/cart.json'),
   },
   {
     operationId: 'applyCoupon',
@@ -184,6 +298,25 @@ export const cartCases: ConformanceCase[] = [
       body: { code: 'FREE' },
     }),
     expectError: 'coupon_invalid',
+  },
+  {
+    operationId: 'applyCoupon',
+    name: 'an empty code removes the coupon',
+    request: async (ctx) => {
+      const m = await ctx.member()
+      await addCartRow(ctx.prisma, m.id, YIRGA)
+      await addAddressRow(ctx.prisma, m.id)
+      await ctx.prisma.cart.update({
+        where: { userId: m.id },
+        data: { couponCode: 'TTY10' },
+      })
+      return {
+        path: '/v1/cart/coupon',
+        token: m.token,
+        body: { code: '  ' },
+      }
+    },
+    check: body => expectCartLike(body, 'v1/cart/coupon-removed.json'),
   },
   {
     operationId: 'removeCoupon',
@@ -260,6 +393,74 @@ export const cartCases: ConformanceCase[] = [
     expectError: 'coupon_invalid',
   },
   {
+    operationId: 'quoteCart',
+    name: 'an unknown product',
+    request: async () => ({
+      path: '/v1/cart/quote',
+      body: {
+        lines: [
+          { ...YIRGA, productId: 'nope' },
+        ],
+      },
+    }),
+    expectError: 'not_found',
+  },
+  {
+    operationId: 'quoteCart',
+    name: 'quantity 0',
+    request: async () => ({
+      path: '/v1/cart/quote',
+      body: {
+        lines: [
+          { ...YIRGA, quantity: 0 },
+        ],
+      },
+    }),
+    expectError: 'quantity_invalid',
+  },
+  {
+    operationId: 'quoteCart',
+    name: 'more than 50 lines',
+    request: async () => ({
+      path: '/v1/cart/quote',
+      body: {
+        lines: Array.from({ length: 51 }).fill(YIRGA),
+      },
+    }),
+    expectError: 'cart_full',
+  },
+  {
+    operationId: 'quoteCart',
+    name: 'TTY10, a sold-out weight and too many units are priced and flagged',
+    request: async () => ({
+      path: '/v1/cart/quote',
+      body: {
+        lines: [
+          { ...PINKB, weight: '1kg' },
+          { ...GEISHA, quantity: 4 },
+          { ...GEISHA, quantity: 4 },
+        ],
+        couponCode: 'tty10',
+      },
+    }),
+    check: (body) => {
+      const cart = body as Cart
+      expect(cart.lines.map(l => [l.sku, l.quantity, l.problem])).toEqual([
+        ['RT-PNK-1KG-PO-STD', 1, 'sold_out'],
+        ['RT-GSH-100G-WB-GIFT', 8, 'out_of_stock'],
+      ])
+      expect(cart.coupon?.code).toBe('TTY10')
+      expect(cart.address).toBeNull()
+      // 425 + 141 × 8 = 1553; discount round(155.3) = 155.
+      expect(cart.totals).toMatchObject({
+        subtotal: 1553,
+        discount: 155,
+        shipping: 0,
+        total: 1398,
+      })
+    },
+  },
+  {
     operationId: 'mergeCart',
     name: 'merges the guest Geisha',
     request: async ctx => ({
@@ -283,6 +484,37 @@ export const cartCases: ConformanceCase[] = [
       expect(result.mergedCount).toBe(expected.mergedCount)
       expect(result.skippedCount).toBe(expected.skippedCount)
       expectCartLike(result.cart, 'v1/cart/cart.json')
+    },
+  },
+  {
+    operationId: 'mergeCart',
+    name: 'clamps to the stock, skips what cannot be bought, takes a valid coupon',
+    request: async ctx => ({
+      path: '/v1/cart/merge',
+      token: await memberWith(ctx, [
+        { ...GEISHA, quantity: 4 },
+      ]),
+      body: {
+        lines: [
+          { ...GEISHA, quantity: 5, selected: false },
+          { ...PINKB, weight: '1kg' },
+          { ...YIRGA, productId: 'nope' },
+          { ...YIRGA, quantity: 9, selected: false },
+          { ...YIRGA, quantity: 3 },
+        ],
+        couponCode: ' Tty10',
+      },
+    }),
+    check: (body) => {
+      const result = body as CartMergeResult
+      // Geisha 4 → 6 (stock): +2; yirga new 9 (+9), then already 9: +0.
+      expect(result.mergedCount).toBe(11)
+      expect(result.skippedCount).toBe(2)
+      expect(result.cart.lines.map(l => [l.sku, l.quantity, l.selected])).toEqual([
+        ['RT-GSH-100G-WB-GIFT', 6, true],
+        ['RT-YIR-250G-WB-STD', 9, true],
+      ])
+      expect(result.cart.coupon?.code).toBe('TTY10')
     },
   },
 ]

@@ -16,8 +16,10 @@ import type {
 } from '@coffee/contract'
 import type { Product } from '../generated/prisma/client.ts'
 import type { HandlerInput } from '../http/route.ts'
-import { notImplemented } from '../middleware/error-handler.ts'
-import { productFacts, toProductSummary } from './products.ts'
+import { PACKS, WEIGHTS } from '@coffee/contract'
+import { fail } from '../middleware/error-handler.ts'
+import { quantityTotals, unitPrice } from './pricing.ts'
+import { productFacts, productMaxQuantity, toProductSummary, weightAvailable } from './products.ts'
 
 /** Whether roast `level` is in `band`: light 1–2, medium 3, dark 4–5. */
 export function inRoastBand(level: number, band: RoastBand): boolean {
@@ -87,7 +89,42 @@ export async function listProducts({ deps, query }: HandlerInput<typeof listProd
   }
 }
 
+/**
+ * The detail of a product row: the summary, its dossier, the stepper bound, each weight's
+ * availability and the eight price cells (weight × STD, GIFT; sold-out weights priced too).
+ */
+export function toProductDetail(row: Product): ProductDetail {
+  const facts = productFacts(row)
+  const maxQuantity = productMaxQuantity(row)
+  return {
+    ...toProductSummary(row),
+    code: row.code,
+    farm: row.farm,
+    altitude: row.altitude,
+    variety: row.variety,
+    harvest: row.harvest,
+    brew: row.brew,
+    maxQuantity,
+    weights: WEIGHTS.map(weight => ({
+      weight,
+      available: weightAvailable(facts, weight),
+    })),
+    prices: WEIGHTS.flatMap(weight => PACKS.map((pack) => {
+      const unit = unitPrice(row.basePrice, weight, pack)
+      return {
+        weight,
+        pack,
+        unitPrice: unit,
+        totals: quantityTotals(unit, maxQuantity),
+      }
+    })),
+  }
+}
+
 /** `GET /v1/products/{id}`. */
-export function getProduct(_input: HandlerInput<typeof getProductEndpoint>): Promise<ProductDetail> {
-  notImplemented()
+export async function getProduct({ deps, params }: HandlerInput<typeof getProductEndpoint>): Promise<ProductDetail> {
+  const row = await deps.prisma.product.findUnique({
+    where: { id: params.id },
+  })
+  return toProductDetail(row ?? fail('not_found'))
 }
