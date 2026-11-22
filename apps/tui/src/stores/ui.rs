@@ -7,8 +7,15 @@
 //! fire and the footer shows the field's hints. [`UiStore::leave_field`] (Esc) blurs it.
 //! [`UiStore::request_focus`] asks the field named so to take the focus (`/` → the search
 //! box); the field's owner watches [`UiStore::focus_requested`].
+//!
+//! Opening an overlay over a focused field takes the keys from it (the field is blurred and
+//! remembered); closing the overlay gives the focus back to it ([`UiStore::open`],
+//! [`UiStore::close`]). The logout confirmation's buttons are a [`DialogFocus`] ring
+//! ([`UiStore::logout_focus`]: 0 `取消`, 1 `退出登录`), which `ui::confirm` draws.
 
 use nsh_core::prelude::*;
+
+use crate::ui::DialogFocus;
 
 /// A layer over the pages that takes the keys while it is open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -23,6 +30,14 @@ pub enum Overlay {
   FilterDialog,
 }
 
+impl Overlay {
+  /// Whether the overlay has text fields of its own (the address dialog): in the others no
+  /// field may take the keys while they are open.
+  pub fn has_fields(self) -> bool {
+    self == Overlay::AddressDialog
+  }
+}
+
 /// The button the logout confirmation's focus is on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum LogoutChoice {
@@ -31,6 +46,16 @@ pub enum LogoutChoice {
   Confirm,
   /// `Esc 取消`.
   Cancel,
+}
+
+impl LogoutChoice {
+  /// Its stop in the confirmation's focus ring: the buttons in their order, `取消` first.
+  pub fn stop(self) -> usize {
+    match self {
+      LogoutChoice::Cancel => 0,
+      LogoutChoice::Confirm => 1,
+    }
+  }
 }
 
 /// A text field with the keyboard focus.
@@ -52,7 +77,8 @@ pub struct UiStore {
   overlay: Signal<Option<Overlay>>,
   focused: Signal<Option<Focused>>,
   focus_request: Signal<Option<&'static str>>,
-  logout_choice: Signal<LogoutChoice>,
+  logout_focus: DialogFocus,
+  restore: Signal<Option<Focused>>,
 }
 
 impl UiStore {
@@ -62,7 +88,8 @@ impl UiStore {
       overlay: signal(None),
       focused: signal(None),
       focus_request: signal(None),
-      logout_choice: signal(LogoutChoice::default()),
+      logout_focus: DialogFocus::new(2, LogoutChoice::default().stop()),
+      restore: signal(None),
     }
   }
 
@@ -81,26 +108,50 @@ impl UiStore {
     self.overlay() == Some(overlay)
   }
 
-  /// Opens `overlay` (in place of any other). A field focused under it loses the keys.
+  /// Opens `overlay` (in place of any other). A field focused under it loses the keys: it
+  /// is blurred, and [`Self::close`] gives the focus back to it.
   pub fn open(&self, overlay: Overlay) {
     batch(|| {
       if overlay == Overlay::Logout {
-        self.logout_choice.set(LogoutChoice::Confirm);
+        self.set_logout_choice(LogoutChoice::Confirm);
+      }
+      if self.overlay.get_untracked().is_none()
+        && let Some(focused) = self.focused.get_untracked()
+      {
+        self.restore.set(Some(focused));
+        self.leave_field();
       }
       self.overlay.set(Some(overlay));
     });
   }
 
-  /// Closes the overlay open, if any.
+  /// Closes the overlay open, if any; the field it took the keys from gets them back (its
+  /// `on_focus` reports it again).
   pub fn close(&self) {
-    self.overlay.set(None);
+    batch(|| {
+      self.overlay.set(None);
+      if let Some(Focused {
+        element: Some(element),
+        ..
+      }) = self.restore.get_untracked()
+      {
+        element.focus();
+      }
+      self.restore.set(None);
+    });
   }
 
   /// Closes `overlay` if it is the one open.
   pub fn close_if(&self, overlay: Overlay) {
     if self.overlay.get_untracked() == Some(overlay) {
-      self.overlay.set(None);
+      self.close();
     }
+  }
+
+  /// The field an open overlay took the keys from, which gets them back when it closes
+  /// (tracked).
+  pub fn restores(&self) -> Option<&'static str> {
+    self.restore.with(|restore| restore.map(|f| f.field))
   }
 
   /// `?`: opens the help, or closes it when open.
@@ -114,22 +165,26 @@ impl UiStore {
 
   /// The logout confirmation's focused button (tracked).
   pub fn logout_choice(&self) -> LogoutChoice {
-    self.logout_choice.get()
+    if self.logout_focus.is(LogoutChoice::Confirm.stop()) {
+      LogoutChoice::Confirm
+    } else {
+      LogoutChoice::Cancel
+    }
+  }
+
+  /// The logout confirmation's focus ring (0 `取消`, 1 `退出登录`), for `ui::confirm`.
+  pub fn logout_focus(&self) -> DialogFocus {
+    self.logout_focus
   }
 
   /// Moves the logout confirmation's focus to the other button.
   pub fn toggle_logout_choice(&self) {
-    self.logout_choice.update(|choice| {
-      *choice = match choice {
-        LogoutChoice::Confirm => LogoutChoice::Cancel,
-        LogoutChoice::Cancel => LogoutChoice::Confirm,
-      }
-    });
+    self.logout_focus.next();
   }
 
   /// Puts the logout confirmation's focus on `choice`.
   pub fn set_logout_choice(&self, choice: LogoutChoice) {
-    self.logout_choice.set(choice);
+    self.logout_focus.set(choice.stop());
   }
 
   /// The text field with the keyboard focus (tracked): its name, as its page gave it.
@@ -191,6 +246,7 @@ impl UiStore {
       self.overlay.set(None);
       self.focused.set(None);
       self.focus_request.set(None);
+      self.restore.set(None);
     });
   }
 }
@@ -219,6 +275,11 @@ mod tests {
     assert_eq!(ui.overlay(), None);
     ui.open(Overlay::Logout);
     assert_eq!(ui.logout_choice(), LogoutChoice::Confirm);
+    assert_eq!(
+      ui.logout_focus().current(),
+      1,
+      "the ring's stop 1 is 退出登录"
+    );
     ui.toggle_logout_choice();
     assert_eq!(ui.logout_choice(), LogoutChoice::Cancel);
     ui.close_if(Overlay::Help);
@@ -241,6 +302,21 @@ mod tests {
     assert_eq!(ui.focused_field(), Some("login.password"));
     ui.leave_field();
     assert!(!ui.typing());
+
+    // An overlay over a focused field takes the keys from it, and gives them back.
+    ui.field_focused("catalog.search", None);
+    ui.open(Overlay::Help);
+    assert!(!ui.typing());
+    assert_eq!(ui.restores(), Some("catalog.search"));
+    ui.open(Overlay::Logout);
+    assert_eq!(
+      ui.restores(),
+      Some("catalog.search"),
+      "kept across overlays"
+    );
+    ui.close();
+    assert_eq!(ui.restores(), None);
+    assert!(Overlay::AddressDialog.has_fields() && !Overlay::Logout.has_fields());
 
     ui.request_focus("catalog.search");
     assert!(ui.focus_requested("catalog.search"));

@@ -77,12 +77,25 @@ pub fn color_depth_from(
 }
 
 /// The app's root as nsh's generated runners mount it from `nsh.json`: its theme
-/// (`coffee_app::THEME_JSON`), id (`coffee_app::APP_ID`) and dark appearance.
+/// (`coffee_app::THEME_JSON`), id (`coffee_app::APP_ID`) and dark appearance. With
+/// `COFFEE_UI_GALLERY=1` (not `0`) in the environment the root is the component gallery
+/// (`coffee_app::UiGallery`) instead of the shop: the way to look at every `ui` component
+/// through this host's palette pin and colour depths.
 pub fn app_root() -> io::Result<Root> {
+  app_root_for(coffee_app::ui::gallery::requested())
+}
+
+/// [`app_root`] with the shop (`gallery == false`) or the component gallery.
+pub fn app_root_for(gallery: bool) -> io::Result<Root> {
   let theme = nsh_base::Theme::from_json(coffee_app::THEME_JSON)
     .map_err(|error| io::Error::other(format!("theme.json: {error}")))?;
-  Ok(
+  let root = if gallery {
+    Root::of::<coffee_app::UiGallery>()
+  } else {
     Root::of::<coffee_app::App>()
+  };
+  Ok(
+    root
       .tokens(theme.into_tokens())
       .app_id(coffee_app::APP_ID)
       .appearance(Appearance::Dark),
@@ -407,6 +420,7 @@ mod tests {
   #[test]
   fn the_root_takes_the_theme() {
     assert!(app_root().is_ok());
+    assert!(app_root_for(true).is_ok(), "the gallery mounts as the root");
   }
 
   #[test]
