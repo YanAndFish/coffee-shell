@@ -537,6 +537,15 @@ async fn products_from_the_backend_show_at_160x50() {
   let server = TestServer::start(tui_bin(), |config| config.api_url = api).await;
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let mut terminal = Terminal::open(&handle, 160, 50).await;
+  // A new connection opens on the login page; `g` browses as a guest.
+  assert!(
+    terminal
+      .wait_text("登录 · SIGN IN", Duration::from_secs(15))
+      .await,
+    "screen:\n{}",
+    terminal.text()
+  );
+  terminal.send(b"g").await;
   assert!(
     terminal
       .wait_text("耶加雪菲 孔加", Duration::from_secs(15))
