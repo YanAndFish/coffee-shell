@@ -378,3 +378,157 @@ async fn the_stub_backend_serves_the_contract_fixtures() {
     assert!(response.contains(needle), "{path}");
   }
 }
+
+/// One process's resident memory (KiB) and CPU time (seconds), from `ps`.
+fn usage(pid: u32) -> Option<(u64, f64)> {
+  let output = std::process::Command::new("ps")
+    .args(["-o", "rss=,time=", "-p", &pid.to_string()])
+    .output()
+    .ok()?;
+  let text = String::from_utf8_lossy(&output.stdout);
+  let mut parts = text.split_whitespace();
+  let rss = parts.next()?.parse().ok()?;
+  // `m:ss.cc` (macOS) or `[dd-]hh:mm:ss` (procps).
+  let time = parts.next()?;
+  let seconds = time
+    .rsplit('-')
+    .next()?
+    .split(':')
+    .try_fold(0.0, |total, part| {
+      part.parse::<f64>().ok().map(|v| total * 60.0 + v)
+    })?;
+  Some((rss, seconds))
+}
+
+/// Children of `parent` (all of them, by pid).
+fn children_of(parent: u32) -> Vec<u32> {
+  let output = std::process::Command::new("ps")
+    .args(["-A", "-o", "pid=,ppid=,stat="])
+    .output()
+    .unwrap();
+  String::from_utf8_lossy(&output.stdout)
+    .lines()
+    .filter_map(|line| {
+      let mut parts = line.split_whitespace();
+      let pid: u32 = parts.next()?.parse().ok()?;
+      let ppid: u32 = parts.next()?.parse().ok()?;
+      let stat = parts.next()?;
+      (ppid == parent && !stat.starts_with('Z')).then_some(pid)
+    })
+    .collect()
+}
+
+/// The measurement behind `docs/adr/0001-ssh-session-model.md`: 20 concurrent sessions
+/// of the real `coffee-tui`. Against a running `coffee-sshd` when `COFFEE_SPIKE_ADDR`
+/// and `COFFEE_SPIKE_PID` are set, else an in-process server (`COFFEE_TUI_BIN` picks
+/// the program, e.g. a release build).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "measurement for docs/adr/0001; run with --ignored --nocapture"]
+async fn measure_twenty_sessions() {
+  const SESSIONS: usize = 20;
+  let external = std::env::var("COFFEE_SPIKE_ADDR")
+    .ok()
+    .zip(std::env::var("COFFEE_SPIKE_PID").ok());
+  let _server;
+  let (addr, server_pid) = match &external {
+    Some((addr, pid)) => (addr.parse().unwrap(), pid.parse().unwrap()),
+    None => {
+      let bin = std::env::var("COFFEE_TUI_BIN").map_or_else(|_| tui_bin(), Into::into);
+      let server = TestServer::start(bin, |config| {
+        config.max_sessions = 64;
+        config.max_sessions_per_ip = 64;
+      })
+      .await;
+      let addr = server.addr;
+      _server = server;
+      (addr, std::process::id())
+    }
+  };
+  let before = children_of(server_pid);
+  let server_rss_before = usage(server_pid).map_or(0, |(rss, _)| rss);
+
+  let mut tasks = Vec::new();
+  for _ in 0..SESSIONS {
+    tasks.push(tokio::spawn(async move {
+      let start = Instant::now();
+      let (handle, _) = connect(addr, Login::Keyless).await;
+      let mut terminal = Terminal::open(&handle, 160, 50).await;
+      assert!(terminal.wait_text("◆ROAST/TTY", WAIT).await);
+      (start.elapsed(), handle, terminal)
+    }));
+  }
+  let mut sessions = Vec::new();
+  for task in tasks {
+    sessions.push(task.await.unwrap());
+  }
+  let mut startup: Vec<Duration> = sessions.iter().map(|(elapsed, ..)| *elapsed).collect();
+  startup.sort();
+
+  tokio::time::sleep(Duration::from_secs(2)).await;
+  let children: Vec<u32> = children_of(server_pid)
+    .into_iter()
+    .filter(|pid| !before.contains(pid))
+    .collect();
+  assert_eq!(children.len(), SESSIONS, "{children:?}");
+  let first: Vec<(u64, f64)> = children.iter().filter_map(|pid| usage(*pid)).collect();
+  let server_first = usage(server_pid).map_or(0.0, |(_, cpu)| cpu);
+  let window = Duration::from_secs(10);
+  tokio::time::sleep(window).await;
+  let second: Vec<(u64, f64)> = children.iter().filter_map(|pid| usage(*pid)).collect();
+  let (server_rss, server_second) = usage(server_pid).unwrap_or_default();
+
+  let rss: Vec<f64> = second.iter().map(|(rss, _)| *rss as f64 / 1024.0).collect();
+  let cpu: Vec<f64> = first
+    .iter()
+    .zip(&second)
+    .map(|((_, a), (_, b))| (b - a) / window.as_secs_f64() * 100.0)
+    .collect();
+  let mean = |values: &[f64]| values.iter().sum::<f64>() / values.len() as f64;
+  let max = |values: &[f64]| values.iter().copied().fold(0.0, f64::max);
+  let min = |values: &[f64]| values.iter().copied().fold(f64::MAX, f64::min);
+
+  let left = Instant::now();
+  drop(sessions);
+  while children.iter().any(|pid| alive(*pid)) && left.elapsed() < Duration::from_secs(5) {
+    tokio::time::sleep(Duration::from_millis(20)).await;
+  }
+  let remaining = children.iter().filter(|pid| alive(**pid)).count();
+
+  println!("| measure | value |");
+  println!("|---|---|");
+  println!("| sessions | {SESSIONS} concurrent, 160×50, keyless |");
+  println!(
+    "| startup (connect → first frame) | p50 {:?} · p95 {:?} · max {:?} |",
+    startup[SESSIONS / 2],
+    startup[SESSIONS * 95 / 100],
+    startup[SESSIONS - 1]
+  );
+  println!(
+    "| RSS per coffee-tui | min {:.1} MB · mean {:.1} MB · max {:.1} MB |",
+    min(&rss),
+    mean(&rss),
+    max(&rss)
+  );
+  println!(
+    "| idle CPU per coffee-tui ({}s) | mean {:.2} % · max {:.2} % |",
+    window.as_secs(),
+    mean(&cpu),
+    max(&cpu)
+  );
+  println!(
+    "| server ({}) | RSS {:.1} MB (was {:.1} MB) · idle CPU {:.2} % |",
+    if external.is_some() {
+      "coffee-sshd"
+    } else {
+      "test process"
+    },
+    server_rss as f64 / 1024.0,
+    server_rss_before as f64 / 1024.0,
+    (server_second - server_first) / window.as_secs_f64() * 100.0
+  );
+  println!(
+    "| disconnect all at once | all {SESSIONS} children gone after {:?}, {remaining} left |",
+    left.elapsed()
+  );
+  assert_eq!(remaining, 0);
+}

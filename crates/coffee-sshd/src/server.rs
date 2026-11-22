@@ -222,13 +222,10 @@ impl Connection {
     Auth::Accept
   }
 
-  /// Tells the client `message` on the channel, then ends it with `status`.
-  async fn refuse(handle: &Handle, channel: ChannelId, message: &str, status: u32) {
-    let text = format!("\r\n{message}\r\n");
-    let _ = handle.data(channel, Bytes::from(text.into_bytes())).await;
-    let _ = handle.exit_status_request(channel, status).await;
-    let _ = handle.eof(channel).await;
-    let _ = handle.close(channel).await;
+  /// Tells the client `message` on the channel, then ends it with `status`, on a task
+  /// of its own: a handler callback must not wait on the session loop it runs in.
+  fn refuse(handle: Handle, channel: ChannelId, message: String, status: u32) {
+    tokio::spawn(async move { tell_and_close(&handle, channel, &message, status).await });
   }
 
   fn child_env(&self, pty: &PtyRequest) -> Vec<(String, String)> {
@@ -271,12 +268,11 @@ impl Connection {
     let Some(pty) = self.pty.clone() else {
       tracing::info!(conn = self.id, "shell without a pty refused");
       Self::refuse(
-        &handle,
+        handle,
         channel,
-        "ROAST/TTY 需要一个终端：请用 `ssh -t`，不要加 -T。",
+        "ROAST/TTY 需要一个终端：请用 `ssh -t`，不要加 -T。".into(),
         1,
-      )
-      .await;
+      );
       return;
     };
     let slot = match self.slot.take() {
@@ -287,7 +283,7 @@ impl Connection {
           refused = refusal.reason(),
           "session refused"
         );
-        Self::refuse(&handle, channel, &refusal.message(), 1).await;
+        Self::refuse(handle, channel, refusal.message(), 1);
         return;
       }
       None => return,
@@ -303,7 +299,12 @@ impl Connection {
           %error,
           "could not start the session program"
         );
-        Self::refuse(&handle, channel, "ROAST/TTY 暂时无法启动，请稍后再试。", 1).await;
+        Self::refuse(
+          handle,
+          channel,
+          "ROAST/TTY 暂时无法启动，请稍后再试。".into(),
+          1,
+        );
         return;
       }
     };
@@ -510,7 +511,7 @@ async fn run_session(task: SessionTask) {
       pump.abort();
       let minutes = idle.map_or(0, |idle| idle.as_secs() / 60);
       tracing::info!(conn, ?pid, how, "session ended: idle");
-      Connection::refuse(
+      tell_and_close(
         &handle,
         channel,
         &format!("ROAST/TTY 空闲超过 {minutes} 分钟，连接已关闭。"),
@@ -526,6 +527,15 @@ async fn run_session(task: SessionTask) {
         .await;
     }
   }
+}
+
+/// Writes `message` on the channel, then ends it with `status`.
+async fn tell_and_close(handle: &Handle, channel: ChannelId, message: &str, status: u32) {
+  let text = format!("\r\n{message}\r\n");
+  let _ = handle.data(channel, Bytes::from(text.into_bytes())).await;
+  let _ = handle.exit_status_request(channel, status).await;
+  let _ = handle.eof(channel).await;
+  let _ = handle.close(channel).await;
 }
 
 /// SIGHUP to the child's process group (it is a session leader on its own PTY), then

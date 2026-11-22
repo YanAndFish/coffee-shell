@@ -141,6 +141,8 @@ pub fn run(env: SessionEnv) -> io::Result<()> {
   options.ui_sets = vec![nsh_base::registry(), coffee_app::registry()];
   let clipboard = Arc::new(clipboard::TerminalClipboard::default());
   options.clipboard = Some(clipboard.clone());
+  let waker = terminal::Waker::new()?;
+  options.wake = Some(waker.callback());
   let mut view = AppView::new(options);
   let failure = Rc::new(RefCell::new(None));
   let reported = failure.clone();
@@ -159,6 +161,7 @@ pub fn run(env: SessionEnv) -> io::Result<()> {
   let mut host = Host {
     session: &session,
     shutdown: &shutdown,
+    waker: &waker,
     frames,
     pin,
     accent: if depth == ColorDepth::Monochrome {
@@ -198,6 +201,7 @@ pub fn run(env: SessionEnv) -> io::Result<()> {
 struct Host<'a> {
   session: &'a terminal::Session,
   shutdown: &'a terminal::Shutdown,
+  waker: &'a terminal::Waker,
   frames: terminal::Frames,
   pin: Option<Pin>,
   accent: Color,
@@ -237,7 +241,8 @@ impl Host<'_> {
     terminal: &mut Terminal<B>,
     view: &mut AppView,
   ) -> io::Result<()> {
-    const POLL_INTERVAL: Duration = Duration::from_millis(16);
+    // The longest wait without a wake-up: signals and hang-ups are seen within it.
+    const POLL_INTERVAL: Duration = Duration::from_millis(250);
     let mut redraw = true;
     let mut repaint = false;
     loop {
@@ -269,7 +274,7 @@ impl Host<'_> {
         wait = wait.min(until.saturating_duration_since(Instant::now()));
       }
       let waiting = Instant::now();
-      match terminal::poll(wait, self.shutdown)? {
+      match terminal::poll(wait, self.shutdown, self.waker)? {
         RunEvent::Input(input) if is_ctrl_c(&input) => {
           if is_press(&input) && self.interrupt.press(Instant::now()) == Press::Quit {
             return Ok(());

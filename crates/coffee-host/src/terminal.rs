@@ -588,27 +588,90 @@ pub fn set_cursor_style(output: &mut Output, style: CursorStyle) -> io::Result<(
   }
 }
 
-/// Waits up to `timeout` for input: a shutdown or a hung-up terminal is `Exit`.
-pub fn poll(timeout: Duration, shutdown: &Shutdown) -> io::Result<RunEvent> {
-  if shutdown.requested() || disconnected()? {
-    return Ok(RunEvent::Exit);
+/// Wakes the run loop from its wait: the engine has work (nsh's wake callback) or the
+/// terminal was resized (SIGWINCH). A self-pipe the loop polls next to stdin.
+pub struct Waker {
+  read: std::os::unix::net::UnixStream,
+  write: Arc<std::os::unix::net::UnixStream>,
+}
+
+impl Waker {
+  pub fn new() -> io::Result<Self> {
+    let (read, write) = std::os::unix::net::UnixStream::pair()?;
+    read.set_nonblocking(true)?;
+    write.set_nonblocking(true)?;
+    signal_hook::low_level::pipe::register(signal_hook::consts::SIGWINCH, write.try_clone()?)?;
+    Ok(Self {
+      read,
+      write: Arc::new(write),
+    })
   }
+
+  /// The callback nsh calls when the surface has pending work.
+  pub fn callback(&self) -> nsh_platform_tui::WakeCallback {
+    let write = self.write.clone();
+    Arc::new(move || {
+      // A full pipe already holds a wake-up.
+      let _ = (&*write).write(&[1]);
+    })
+  }
+
+  /// Empties the pipe; `true` when it held a wake-up.
+  fn drain(&self) -> bool {
+    let mut woke = false;
+    let mut chunk = [0u8; 64];
+    while let Ok(read) = std::io::Read::read(&mut &self.read, &mut chunk) {
+      if read == 0 {
+        break;
+      }
+      woke = true;
+    }
+    woke
+  }
+}
+
+/// Waits up to `timeout` for input, a wake-up or a resize: a shutdown or a hung-up
+/// terminal is `Exit`.
+///
+/// nsh's `run_app` polls crossterm every 16 ms because crossterm cannot be woken from
+/// the engine thread; that costs about 0.5 % CPU per idle session. Here the wait is a
+/// `poll` on stdin and the [`Waker`]'s pipe instead, so an idle session sleeps until
+/// something happens (or `timeout`, which the run loop keeps at most 250 ms).
+pub fn poll(timeout: Duration, shutdown: &Shutdown, waker: &Waker) -> io::Result<RunEvent> {
   // crossterm's poll-based reader skips buffered events at a zero timeout: give it a
-  // small budget. Off macOS its poll truncates milliseconds and spins through the
-  // rest, so it only decodes there and the run loop sleeps the remainder (as nsh-tui-host).
+  // small budget (as nsh-tui-host does).
   const DECODE_POLL: Duration = Duration::from_micros(50);
-  let timeout = timeout.max(DECODE_POLL);
-  #[cfg(not(target_os = "macos"))]
-  let timeout = timeout.min(DECODE_POLL);
-  let available = event::poll(timeout)?;
   if shutdown.requested() || disconnected()? {
     return Ok(RunEvent::Exit);
   }
-  if available {
-    Ok(convert(event::read()?))
-  } else {
-    Ok(RunEvent::Idle)
+  // Events crossterm already parsed (one read can carry several) come first.
+  if event::poll(DECODE_POLL)? {
+    return Ok(convert(event::read()?));
   }
+  let stdin = rustix::stdio::stdin();
+  let mut fds = [
+    PollFd::new(&stdin, PollFlags::IN),
+    PollFd::new(&waker.read, PollFlags::IN),
+  ];
+  let wait = Timespec::try_from(timeout).unwrap_or_default();
+  match rustix::event::poll(&mut fds, Some(&wait)) {
+    Ok(_) | Err(rustix::io::Errno::INTR) => {}
+    Err(error) => return Err(error.into()),
+  }
+  let input = !fds[0].revents().is_empty();
+  if shutdown.requested() || disconnected()? {
+    return Ok(RunEvent::Exit);
+  }
+  let woke = waker.drain();
+  if input && event::poll(DECODE_POLL)? {
+    return Ok(convert(event::read()?));
+  }
+  // A resize or engine work: draw (a resize is picked up by the draw's autoresize).
+  Ok(if woke {
+    RunEvent::Redraw
+  } else {
+    RunEvent::Idle
+  })
 }
 
 #[cfg(test)]
