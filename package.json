@@ -15,6 +15,7 @@
     "test": "cargo build -p coffee-host && cargo test --workspace && vitest run",
     "test:tui": "cd apps/tui && nsh test && nsh test --target tui",
     "test:e2e": "cargo build -p coffee-host && cargo test -p coffee-sshd --tests",
+    "test:e2e:real": "cargo build -p coffee-host -p coffee-sshd && python3 scripts/e2e/run.py",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "pnpm -r --if-present typecheck",
