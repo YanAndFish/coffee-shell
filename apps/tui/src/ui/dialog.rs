@@ -152,35 +152,42 @@ pub fn dialog(
     open().then(|| {
       let viewport = layout.viewport();
       let (w, h) = dialog_size(size.cols, size.rows, viewport);
-      overlay().absolute().inset(px(0.0)).child(
-        view()
-          .absolute()
-          .top(layout::rows(1))
-          .bottom(layout::rows(1))
-          .left(px(0.0))
-          .right(px(0.0))
-          .items_center()
-          .justify_center()
-          .child(
-            view()
-              .flex_none()
-              .w(layout::cols(w))
-              .h(layout::rows(h))
-              // A box of its own fill clears what is behind it; as the terminal's summary
-              // line, nsh leaves its own frame off it (the double frame is the dialog's).
-              .role(AccessibilityRole::Summary)
-              .label(title.clone())
-              .bg(theme::bg)
-              .child(dialog_box(
-                title.clone(),
-                w,
-                h,
-                size.pad,
-                content(),
-                footer(),
-              )),
-          ),
-      )
+      // The overlay covers the screen but takes presses only where its children are: the
+      // band between the system row and the status bar keeps them off the page under the
+      // dialog, and the status bar's hints (the dialog's keys) stay pressable.
+      overlay()
+        .absolute()
+        .inset(px(0.0))
+        .pointer_events(PointerEvents::BoxNone)
+        .child(
+          view()
+            .absolute()
+            .top(layout::rows(1))
+            .bottom(layout::rows(1))
+            .left(px(0.0))
+            .right(px(0.0))
+            .items_center()
+            .justify_center()
+            .child(
+              view()
+                .flex_none()
+                .w(layout::cols(w))
+                .h(layout::rows(h))
+                // A box of its own fill clears what is behind it; as the terminal's summary
+                // line, nsh leaves its own frame off it (the double frame is the dialog's).
+                .role(AccessibilityRole::Summary)
+                .label(title.clone())
+                .bg(theme::bg)
+                .child(dialog_box(
+                  title.clone(),
+                  w,
+                  h,
+                  size.pad,
+                  content(),
+                  footer(),
+                )),
+            ),
+        )
     })
   })
 }
