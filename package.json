@@ -20,7 +20,7 @@
     "check": "pnpm lint && pnpm typecheck && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
     "check:tui": "cd apps/tui && nsh check",
     "verify": "pnpm check && pnpm check:tui && pnpm build && pnpm test && pnpm test:tui",
-    "ssh": "ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null localhost"
+    "ssh": "ssh -p 2222 -o SendEnv=COLORTERM -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null localhost"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^10.0.0",
