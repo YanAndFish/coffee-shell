@@ -9,8 +9,9 @@
 //! - leaves cleanly on SIGHUP, SIGTERM and SIGINT, and when the terminal hangs up (the
 //!   SSH side closed the PTY), so no session outlives its client;
 //! - redraws on every resize (crossterm's SIGWINCH);
-//! - picks the colour depth from `COFFEE_COLORS`, then `NO_COLOR`, `COLORTERM`, `TERM`
-//!   ([`color_depth`]);
+//! - picks the colour depth from `COFFEE_COLORS`, then `NO_COLOR`, `COLORTERM`, the
+//!   terminal's brand in `TERM`, and for a `256color` terminal its answer to XTGETTCAP
+//!   `RGB` ([`color`]);
 //! - pins the design's exact colours over nsh's ANSI meanings in 24-bit and 256 colours
 //!   ([`palette`]);
 //! - turns Ctrl+C into press-twice-to-quit ([`interrupt`]);
@@ -36,6 +37,7 @@ use ratatui_crossterm::{
 };
 
 pub mod clipboard;
+pub mod color;
 pub mod interrupt;
 pub mod palette;
 pub mod terminal;
@@ -58,8 +60,10 @@ pub fn session_env_from_process() -> SessionEnv {
   }
 }
 
-/// The colour depth: `color_mode` when given (`truecolor`, `256`, `16`, `mono`), else
-/// what `NO_COLOR`, `COLORTERM` and `TERM` in this process's environment say.
+/// The colour depth before the terminal is asked: `color_mode` when given (`truecolor`,
+/// `256`, `16`, `mono`), else what `NO_COLOR`, `COLORTERM` and `TERM` (its brand, then its
+/// colour count) in this process's environment say. See [`color`] for the whole table;
+/// [`run`] may still raise 256 colours to 24-bit when the terminal reports `RGB`.
 pub fn color_depth(color_mode: Option<&str>) -> ColorDepth {
   color_depth_from(color_mode, |name| env::var(name).ok())
 }
@@ -69,25 +73,7 @@ pub fn color_depth_from(
   color_mode: Option<&str>,
   var: impl Fn(&str) -> Option<String>,
 ) -> ColorDepth {
-  match color_mode.map(str::to_ascii_lowercase).as_deref() {
-    Some("truecolor" | "24bit") => return ColorDepth::TrueColor,
-    Some("256") => return ColorDepth::Ansi256,
-    Some("16") => return ColorDepth::Ansi16,
-    Some("mono" | "none") => return ColorDepth::Monochrome,
-    _ => {}
-  }
-  let lower = |name: &str| var(name).map(|value| value.to_ascii_lowercase());
-  if var("NO_COLOR").is_some_and(|value| !value.is_empty()) {
-    ColorDepth::Monochrome
-  } else if lower("COLORTERM").is_some_and(|c| c == "truecolor" || c == "24bit") {
-    ColorDepth::TrueColor
-  } else if lower("TERM").is_some_and(|term| term.contains("256color")) {
-    ColorDepth::Ansi256
-  } else if lower("TERM").is_some_and(|term| term == "dumb") {
-    ColorDepth::Monochrome
-  } else {
-    ColorDepth::Ansi16
-  }
+  color::Choice::from_env(color_mode, var).depth
 }
 
 /// The app's root as nsh's generated runners mount it from `nsh.json`: its theme
@@ -127,13 +113,15 @@ pub fn capabilities(
 /// Configures `coffee_app` with `env` and runs its root until the app ends, the user
 /// presses Ctrl+C twice, a signal arrives or the terminal hangs up.
 pub fn run(env: SessionEnv) -> io::Result<()> {
-  let depth = color_depth(env.color_mode.as_deref());
-  let pin = Pin::new(Palette::app().map_err(io::Error::other)?, depth);
+  let choice = color::Choice::from_env(env.color_mode.as_deref(), |name| env::var(name).ok());
+  let palette = Palette::app().map_err(io::Error::other)?;
   coffee_app::configure(env);
   let root = app_root()?;
 
   let shutdown = terminal::Shutdown::install()?;
-  let session = terminal::Session::enter(&shutdown)?;
+  let session = terminal::Session::enter(&shutdown, choice.asks_terminal())?;
+  let depth = choice.answered(session.replies().truecolor).depth;
+  let pin = Pin::new(palette, depth);
 
   let mut options = AppOptions::default();
   options.capabilities = capabilities(depth, pin.is_some(), &session.replies());

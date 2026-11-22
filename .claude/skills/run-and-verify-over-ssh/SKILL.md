@@ -17,16 +17,24 @@ checkout needs no database step. `db:reset` is for humans only: Prisma refuses `
 
 `pnpm dev` (`scripts/dev.mjs`) prints `✓ ready — connect with: ssh -p 2222 localhost` once the backend answers
 `/v1/health` and sshd listens. It fails with a clear message when a piece is missing (no `dev` script in
-`apps/server`, cargo build failure, port in use, sshd exiting). Ctrl+C stops both. `pnpm dev --skip-build` reuses
-the built binaries. Run it in the background for automation (`run_in_background`), then wait for the ready line.
+`apps/server`, cargo build failure, port in use, sshd exiting). Ctrl+C (or SIGINT/SIGTERM to `node scripts/dev.mjs`)
+stops whatever runs, in any phase: the cargo build (with its rustc jobs) as well as backend and sshd, each in its own
+process group. `pnpm dev --skip-build` reuses the built binaries. Run it in the background for automation
+(`run_in_background`), then wait for the line containing `✓ ready` (plain `ready` also matches the seed's
+`already present`). Other ports: `PORT=3917 COFFEE_SSH_ADDR=127.0.0.1:2917`.
 Each session starts `target/debug/coffee-tui` afresh, so `cargo build -p coffee-host` is enough to try a TUI change
 without restarting `pnpm dev`.
 
 Environment it sets or passes on: `HOST`/`PORT` (backend, 127.0.0.1:3000), `COFFEE_SSH_ADDR` (127.0.0.1:2222),
 `COFFEE_SSH_HOST_KEY` (`.data/ssh_host_ed25519_key`), and it gives sshd `COFFEE_TUI_BIN`, `COFFEE_API_URL` and a
 random per-run `COFFEE_INTERNAL_KEY` (never printed). Everything else in your environment reaches `coffee-sshd`
-too: `COFFEE_COLORS`, `COFFEE_SSH_MAX_SESSIONS`, `COFFEE_SSH_MAX_SESSIONS_PER_IP`, `COFFEE_SSH_IDLE_TIMEOUT`,
-`COFFEE_SSH_AUTH_TIMEOUT`, `COFFEE_SSH_LOG` (see `deploy/README.md`).
+too: `COFFEE_COLORS`, `COFFEE_SSH_MAX_SESSIONS`, `COFFEE_SSH_MAX_SESSIONS_PER_IP`,
+`COFFEE_SSH_CONNECTIONS_PER_MINUTE` (30 new connections per address per minute: scripts that connect in a tight
+loop hit it; set `0` to turn it off), `COFFEE_SSH_IDLE_TIMEOUT`, `COFFEE_SSH_AUTH_TIMEOUT`, `COFFEE_SSH_LOG` (see
+`deploy/README.md`).
+
+Without a backend: `COFFEE_API_URL=fixture: cargo run -p coffee-sshd` (after `cargo build -p coffee-host`) serves
+sessions from the committed fixtures (the header shows `◇ 样例数据`).
 
 ## 2. Connect by hand
 
@@ -54,10 +62,16 @@ python3 scripts/pty-run.py --size 60x20 --step 'until=终端太小' --step resiz
 python3 scripts/pty-run.py --size 100x30 --step 'until=选购' --step key=down*2 --step key=enter \
   --step wait=0.5 --step snap --step key=esc -- $SSH
 
-# Colour depth over SSH: the session gets 24-bit colour only from a forwarded COLORTERM
-# (pty-run sets COLORTERM=truecolor for its child unless --colorterm says otherwise):
+# Colour depth over SSH (grep the raw bytes: 38;2; = truecolor, 38;5; = 256). The session gets 24-bit colour
+# from a forwarded COLORTERM (pty-run sets COLORTERM=truecolor for its child unless --colorterm says otherwise):
 python3 scripts/pty-run.py --size 100x30 --raw /tmp/x.raw --step 'until=ROAST/TTY' \
-  -- pnpm ssh                      # sends COLORTERM; grep the raw bytes: 38;2; = truecolor, 38;5; = 256
+  -- pnpm ssh                      # sends COLORTERM
+# ... or from a truecolor brand in TERM, which plain ssh does send (no COLORTERM at all here):
+python3 scripts/pty-run.py --size 100x30 --term xterm-kitty --colorterm '' --raw /tmp/kitty.raw \
+  --step 'until=ROAST/TTY' -- $SSH # 38;2; only
+# ... while a plain xterm-256color session stays at 256 (pty-run does not answer XTGETTCAP):
+python3 scripts/pty-run.py --size 100x30 --colorterm '' --raw /tmp/plain.raw --step 'until=ROAST/TTY' -- $SSH
+# The whole decision table: crates/coffee-host/src/color.rs.
 
 # Forcing a depth: sshd only forwards LANG, LC_* and COLORTERM from the client, so COFFEE_COLORS must be set on
 # the server (`COFFEE_COLORS=mono pnpm dev --skip-build`), or test the TUI alone:
@@ -94,3 +108,12 @@ Killing the client (`kill -9` the `ssh` process) must also end its `coffee-tui` 
 
 `pnpm test:e2e` (or `cargo test --workspace`) runs `crates/coffee-sshd/tests`, which start sshd and a client
 themselves. Report automated and manual evidence separately, with the commands and the screen tails.
+`COFFEE_SSH_LOG=info` (or `warn`) makes the tests' in-process servers log to stderr, uncaptured, for a failure that
+needs the server's side. The tests wait for conditions (never fixed sleeps); keep it that way, and time a session's
+idle clock from its first output, not from the connection.
+
+## 7. The containers
+
+`deploy/smoke-test.sh` (Docker with compose needed; CI's `docker` job runs it) starts the gateway and backend images
+with `deploy/compose.yaml` and checks them over a stock `ssh`. With no local Docker daemon, rely on CI; do not start
+one just for this.

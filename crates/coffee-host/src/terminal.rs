@@ -11,8 +11,9 @@
 //!   terminal hung up or a shutdown was requested ([`Output`]).
 //! - A hung-up terminal (the SSH side closed the PTY) ends the run ([`disconnected`]).
 //! - Startup asks the terminal for its colours (OSC 10/11), the kitty keyboard
-//!   protocol, synchronized output (DECRQM 2026) and DA1, which every terminal answers
-//!   and so ends the wait early ([`Session::enter`]).
+//!   protocol, synchronized output (DECRQM 2026), when it matters 24-bit colour
+//!   (XTGETTCAP `RGB`/`Tc`), and DA1, which every terminal answers and so ends the wait
+//!   early ([`Session::enter`]).
 //! - Frames are written whole, inside synchronized updates where supported ([`Frames`]).
 
 use std::{
@@ -38,8 +39,15 @@ use crate::convert;
 /// How long startup waits for the terminal to answer its queries; DA1 ends it sooner.
 /// Over SSH the answers take a network round trip.
 const QUERY_TIMEOUT: Duration = Duration::from_millis(1500);
-/// OSC 10, OSC 11, the kitty flags query, DECRQM 2026, and DA1 last.
-const QUERY: &[u8] = b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[?u\x1b[?2026$p\x1b[c";
+/// OSC 10, OSC 11, the kitty flags query and DECRQM 2026.
+const QUERY: &[u8] = b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[?u\x1b[?2026$p";
+/// XTGETTCAP for `RGB` and for `Tc` (names in hex), when the answer can raise the colour
+/// depth ([`crate::color`]). One request each: xterm stops a request at its first
+/// unknown name. A terminal that does not know XTGETTCAP skips the device control
+/// strings; one that does answers before DA1, so the wait is no longer.
+const QUERY_RGB: &[u8] = b"\x1bP+q524742\x1b\\\x1bP+q5463\x1b\\";
+/// DA1, last: every terminal answers it, which ends the wait.
+const QUERY_DA1: &[u8] = b"\x1b[c";
 /// How long one blocked write waits before it checks the terminal again.
 const OUTPUT_WAIT: Duration = Duration::from_millis(16);
 const ENABLE_ALTERNATE_SCROLL: &str = "\x1b[?1007h";
@@ -99,6 +107,8 @@ pub struct Replies {
   pub keyboard: bool,
   /// The terminal reported synchronized output (mode 2026) as known.
   pub synchronized: bool,
+  /// The terminal reported 24-bit colour (XTGETTCAP `RGB` or `Tc` found).
+  pub truecolor: bool,
   /// DA1 arrived: no further answer will come.
   pub complete: bool,
 }
@@ -120,9 +130,10 @@ pub struct Session {
 }
 
 impl Session {
-  /// Enters raw mode, queries the terminal, then switches to the alternate screen with
-  /// mouse capture, bracketed paste, focus reports and (when answered) kitty keys.
-  pub fn enter(shutdown: &Shutdown) -> io::Result<Self> {
+  /// Enters raw mode, queries the terminal (for 24-bit colour too when `ask_rgb`), then
+  /// switches to the alternate screen with mouse capture, bracketed paste, focus reports
+  /// and (when answered) kitty keys.
+  pub fn enter(shutdown: &Shutdown, ask_rgb: bool) -> io::Result<Self> {
     let stdin = rustix::stdio::stdin();
     let stdout = rustix::stdio::stdout();
     if !rustix::termios::isatty(stdin) || !rustix::termios::isatty(stdout) {
@@ -154,7 +165,12 @@ impl Session {
     }));
     terminal::enable_raw_mode()?;
     // Before crossterm's reader exists, so the answers are ours to read.
-    session.replies = query(QUERY, QUERY_TIMEOUT, &shutdown.flag())
+    let mut asked = QUERY.to_vec();
+    if ask_rgb {
+      asked.extend_from_slice(QUERY_RGB);
+    }
+    asked.extend_from_slice(QUERY_DA1);
+    session.replies = query(&asked, QUERY_TIMEOUT, &shutdown.flag())
       .map(|bytes| parse_replies(&bytes))
       .unwrap_or_default();
     let var = |name: &str| std::env::var(name).ok();
@@ -408,7 +424,8 @@ fn query(query: &[u8], timeout: Duration, shutdown: &Arc<AtomicBool>) -> io::Res
   }
 }
 
-/// Reads OSC 10/11 colours, the kitty flags answer, the mode 2026 report and DA1.
+/// Reads OSC 10/11 colours, the kitty flags answer, the mode 2026 report, XTGETTCAP
+/// answers and DA1.
 pub fn parse_replies(bytes: &[u8]) -> Replies {
   let mut replies = Replies::default();
   let mut i = 0;
@@ -418,6 +435,21 @@ pub fn parse_replies(bytes: &[u8]) -> Replies {
       continue;
     }
     match bytes[i + 1] {
+      // DCS ... ST: `1+r<name>[=<value>]` is XTGETTCAP's "known" answer.
+      b'P' => {
+        let body = &bytes[i + 2..];
+        // Only a whole answer counts.
+        let Some(end) = body.windows(2).position(|w| w == b"\x1b\\") else {
+          break;
+        };
+        if let Some(found) = body[..end].strip_prefix(b"1+r") {
+          replies.truecolor |= found.split(|&b| b == b';').any(|capability| {
+            let name = capability.split(|&b| b == b'=').next().unwrap_or_default();
+            name.eq_ignore_ascii_case(b"524742") || name.eq_ignore_ascii_case(b"5463")
+          });
+        }
+        i += 2 + end;
+      }
       b']' => {
         let body = &bytes[i + 2..];
         let end = body
@@ -688,6 +720,32 @@ mod tests {
     assert!(replies.keyboard && replies.synchronized && replies.complete);
     let none = parse_replies(b"\x1b[?1;2c");
     assert!(none.complete && !none.keyboard && none.background.is_none());
+    assert!(!none.truecolor);
+  }
+
+  #[test]
+  fn xtgettcap_answers_are_read() {
+    // kitty-style: one answer per name, `Tc` known.
+    let tc = parse_replies(b"\x1bP0+r524742\x1b\\\x1bP1+r5463\x1b\\\x1b[?62;22c");
+    assert!(tc.truecolor && tc.complete);
+    // A value, lower-case hex, several names in one answer.
+    let rgb = parse_replies(b"\x1bP1+r4e6f=31;524742=382f382f38\x1b\\\x1b[?1c");
+    assert!(rgb.truecolor);
+    // "Unknown" answers, another capability, or none at all: no.
+    for bytes in [
+      &b"\x1bP0+r524742\x1b\\\x1bP0+r5463\x1b\\\x1b[?1c"[..],
+      b"\x1bP1+r636f6c6f7273=323536\x1b\\\x1b[?1c",
+      b"\x1b[?62;22c",
+      // A cut-off answer (no ST) does not count, nor does it hide DA1 before it.
+      b"\x1b[?62c\x1bP1+r524742",
+    ] {
+      let replies = parse_replies(bytes);
+      assert!(!replies.truecolor, "{bytes:?}");
+      assert!(replies.complete, "{bytes:?}");
+    }
+    // Its hex never reads as another answer (no stray DA1 or kitty flags).
+    let inside = parse_replies(b"\x1bP1+r5463=5b3f75\x1b\\");
+    assert!(inside.truecolor && !inside.complete && !inside.keyboard);
   }
 
   #[test]

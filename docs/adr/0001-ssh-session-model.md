@@ -1,6 +1,6 @@
 # ADR 0001：SSH 会话模型——每个会话一个 PTY 子进程
 
-- 状态：已采纳（第一阶段 spike 结论）
+- 状态：已采纳（第一阶段 spike 结论；第二阶段补充真彩探测、加固与复测）
 - 日期：2026-11-22
 - 范围：`crates/coffee-sshd`、`crates/coffee-host`、`deploy/`
 
@@ -59,8 +59,25 @@ release 构建。连续两轮：
 多出 1 秒以上，Linux 容器里没有这个现象。
 
 结论：每会话内存与空闲 CPU 都远低于“≈60 MB、接近 0”的阈值 → **保留每会话一个进程**。
-注意当前首页还是占位页，商品页、图片缓存、HTTP 客户端上线后内存会增加，第二阶段需复测
-（同一个测试，改用真实后端即可）。
+
+### 第二阶段复测（2026-11-22，当前应用 + 真实后端）
+
+同一测试，同一台机器（8 核），release `coffee-sshd` + release `coffee-tui`（商品列表首页、HTTP 客户端），
+后端为 `deploy/server.Dockerfile` 的运行布局在本机组装（`node dist/main.mjs`，SQLite，迁移+种子数据，
+带内部密钥），`COFFEE_SPIKE_WAIT='耶加雪菲 孔加'` 另计“商品出现在屏幕上”的时间。先连一次预热（见上
+“首次启动被系统扫描”）。连续两轮：
+
+| 指标                                                  | 第 1 轮                        | 第 2 轮                      |
+| ----------------------------------------------------- | ------------------------------ | ---------------------------- |
+| 启动延迟（连接 → 首帧含 `◆ROAST/TTY`，20 个同时发起） | p50 75 ms · p95/最大 101 ms    | p50 125 ms · p95/最大 146 ms |
+| 连接 → 后端的商品列表出现在屏幕上                     | p50 86 ms · p95/最大 104 ms    | p50 134 ms · p95/最大 151 ms |
+| 每个 `coffee-tui` 常驻内存（RSS）                     | 19.8–20.3 MB，均值 20.1 MB     | 14.9–16.3 MB，均值 15.4 MB   |
+| 每个 `coffee-tui` 空闲 CPU（10 秒窗口）               | 均值 0.00 %，最大 0.00 %       | 均值 0.01 %，最大 0.10 %     |
+| `coffee-sshd` 自身                                    | RSS 7.5 MB，空闲 CPU 0.00 %    | RSS 7.0 MB，空闲 CPU 0.00 %  |
+| 20 个客户端同时断开                                   | 12 ms 内全部子进程退出，0 残留 | 13 ms 内全部退出，0 残留     |
+
+RSS 两轮之差来自 macOS 的内存压缩/回收时机（同一二进制、同一页面），按上限 20 MB 规划：64 个会话约
+1.3 GB + sshd。空闲 CPU 仍在测量下限。结论不变：**保留每会话一个进程**。
 
 断开行为：客户端断开（TCP 关闭）后 sshd 立即向子进程**进程组**发 SIGHUP，`coffee-tui` 收到后
 恢复终端并退出；1 秒内未退出则 SIGKILL（`KILL_GRACE`），所以 2 秒内必然回收。e2e 测试
@@ -88,22 +105,41 @@ release 构建。连续两轮：
   回答，回答到即结束等待；上限 1.5 秒，SSH 下需要一个往返）。支持则启用 kitty 键盘协议
   （Apple Terminal、VS Code、VTE、tmux < 3.3 除外）与同步输出（整帧写出、不撕裂）。
 - **剪贴板**：OSC 52 写到用户本机终端，不回退到服务器的系统剪贴板。
-- **色深**：`COFFEE_COLORS=truecolor|256|16|mono` 优先，其次 `NO_COLOR` → 单色，`COLORTERM`
-  为 `truecolor/24bit` → 真彩，`TERM` 含 `256color` → 256 色，`TERM=dumb` → 单色，否则 16 色。
-  注意：OpenSSH 默认不转发 `COLORTERM`（macOS 自带配置只 `SendEnv LANG LC_*`），所以经 SSH
-  的默认是 `xterm-256color` → 256 色；用户可 `ssh -o SendEnv=COLORTERM`（`pnpm ssh` 已带上），运维可设
-  服务器端 `COFFEE_COLORS=truecolor` 强制真彩（不支持 24 位色的终端会因此显示错色，只在确知客户端时用）。
-  客户端无法经 SSH 设 `COFFEE_COLORS`：sshd 只接受 `LANG`、`LC_*`、`COLORTERM`。集成时实测（原版
-  OpenSSH，`pnpm dev`）：不带 SendEnv → 只有 `38;5;…`；带 `-o SendEnv=COLORTERM` 且本地
-  `COLORTERM=truecolor` → 只有 `38;2;…`；服务器 `COFFEE_COLORS=truecolor` → 不带 SendEnv 也是真彩。
-- **第二阶段可选**（未实现）：不依赖 `COLORTERM` 的真彩探测。
-  1. 按 `TERM` 的品牌判断：`xterm-kitty`、`xterm-ghostty`、`foot`、`alacritty`、`wezterm`、`rio` 这类 `TERM`
-     会经 SSH 原样到达。nsh-tui-host 0.6.1 的 `truecolor_brand`（`terminal.rs`）就这么做（另读
-     `TERM_PROGRAM`、`KITTY_WINDOW_ID` 等，但这些经 SSH 到不了）；`coffee-host` 目前没有这一步。
-  2. 在已有的启动查询里加一个往返：`XTGETTCAP`（`DCS + q 524742 ST`，问 `RGB`/`Tc`）或“设一个 24 位
-     SGR 再用 `DECRQSS m` 读回”，回答完整即真彩。xterm、kitty、foot、WezTerm 支持，Apple Terminal、
-     部分 VTE 不答，所以只能“答了才升级”，不答维持 256 色。
-     两者都只会把 256 升到真彩、不会降级，风险低；需要各终端实测后再定。
+- **色深**（第二阶段实现，`crates/coffee-host/src/color.rs`，单元测试逐行覆盖下表）：按顺序，第一条
+  适用的规则决定：
+
+  | #   | 条件                                                    | 色深                                      |
+  | --- | ------------------------------------------------------- | ----------------------------------------- |
+  | 1   | 服务器 `COFFEE_COLORS=truecolor/24bit/256/16/mono/none` | 照办（终端的回答也不改它）                |
+  | 2   | `NO_COLOR` 非空                                         | 单色                                      |
+  | 3   | `COLORTERM` 为 `truecolor`/`24bit`                      | 真彩                                      |
+  | 4   | 真彩品牌（见下）                                        | 真彩                                      |
+  | 5   | `TERM` 含 `256color`                                    | 256；终端答了 XTGETTCAP `RGB`/`Tc` → 真彩 |
+  | 6   | `TERM=dumb`                                             | 单色                                      |
+  | 7   | 其余                                                    | 16                                        |
+
+  真彩品牌：`TERM` 含 `kitty`/`ghostty`/`alacritty`/`foot`/`wezterm`/`rio` 或以 `-direct` 结尾；本地运行时另认
+  `TERM_PROGRAM`（iTerm.app、ghostty、WezTerm、vscode、WarpTerminal、rio、alacritty）与 `KITTY_WINDOW_ID`、
+  `ALACRITTY_WINDOW_ID`、`WEZTERM_EXECUTABLE`、`GHOSTTY_RESOURCES_DIR`、`WT_SESSION`。
+
+  OpenSSH 默认不转发 `COLORTERM`（macOS 自带配置只 `SendEnv LANG LC_*`），而 `TERM` 原样到达，所以第 4 条
+  让 kitty、Ghostty、foot、Alacritty、WezTerm、rio 用原版 `ssh` 也是真彩（同 nsh-tui-host 0.6.1 的
+  `truecolor_brand`；`TERM_PROGRAM` 等经 SSH 到不了，只对本地运行有用）。
+  第 5 条只在“回答能改变结果”时才问：在已有的启动查询里、DA1 之前加两个 `XTGETTCAP` 请求
+  （`DCS + q 524742 ST` 问 `RGB`、`DCS + q 5463 ST` 问 `Tc`，分开发，因为 xterm 遇到第一个不认识的名字就
+  停）。终端按序回答，答复先于 DA1 到达，所以**不增加等待**（DA1 一到即结束，上限仍是 1.5 秒）；只有
+  完整的 `DCS 1 + r … ST` 才算数，`0 + r`、半截或沉默都维持 256 色——只会升级、不会降级。只问声称
+  `256color` 的终端：这类现代终端按 VT 状态机吞掉不认识的 DCS，不会把字节画到屏幕上；`TERM=linux`
+  （Linux 控制台不解析 DCS）这类 16 色终端从不问。e2e 测试固定了这些：`xterm-kitty` 且无 `COLORTERM` →
+  只有 `38;2;`/`48;2;`（底色 `48;2;20;17;14`）；`xterm-256color` 不回答 → 只有 `38;5;`/`48;5;`，且确实发了
+  查询；`xterm-256color` 回答 `RGB` → 真彩，屏幕上和应用输入里都没有回答的残留。
+  **未实现 DECRQSS 往返**（“设一个 24 位 SGR 再 `DCS $ q m ST` 读回”）：它要改终端的 SGR 状态并在之后
+  复位，多一段输出；支持 DECRQSS 但只有 256 色的终端会回报量化后的值，判断要比对数值；而 XTGETTCAP 已覆盖
+  会回答这类查询的终端（xterm、kitty、foot、WezTerm 等，各终端未在此逐一实测）。回答慢于 1.5 秒（极慢的
+  链路）时，迟到的回答会被当作按键送进应用——这是已有启动查询（OSC 10/11 等）同样的风险，不是新问题。
+  其余手段不变：用户可 `ssh -o SendEnv=COLORTERM`（`pnpm ssh` 已带上），运维可设服务器端
+  `COFFEE_COLORS=truecolor` 强制真彩（不支持 24 位色的终端会因此显示错色，只在确知客户端时用）。客户端
+  无法经 SSH 设 `COFFEE_COLORS`：sshd 只接受 `LANG`、`LC_*`、`COLORTERM`。
 
 ## 调色板钉色结果
 
@@ -165,7 +201,9 @@ nsh 默认“有选区则复制，否则立即退出”。经 SSH 时 raw 模式
   不接受 `none` 是有意的：一旦 `none` 成功，带密钥的客户端根本不会出示公钥，“记住我”就拿不到指纹。
 - 没有公钥（或 `-o PubkeyAuthentication=no`）时走 **keyboard-interactive，零个问题直接成功**：
   客户端不显示任何提示。
-- 认证横幅：`◆ROAST/TTY 终端咖啡馆 / 演示环境 · 不是真实商店 · 不收款、不发货 · 请勿使用真实密码`。
+- 认证横幅：`◆ROAST/TTY 终端咖啡馆 / 演示环境 · 不是真实商店 · 不收款、不发货 · 请勿使用真实密码、地址或电话`
+  （第二阶段有了账号与地址本，多提醒地址和电话）。横幅里没有版本号、主机名或其他内部信息；
+  SSH 版本串是固定的 `SSH-2.0-ROAST_TTY`。
 - 已验证：原版 `ssh`（OpenSSH_10.5p1）默认身份（RSA 密钥）与 `-o PubkeyAuthentication=no -o IdentitiesOnly=yes`
   两种方式都无提示进入。
 - 局限：如果用户默认密钥是**带口令且未载入 agent** 的，OpenSSH 会在签名前询问口令——服务器
@@ -180,10 +218,66 @@ nsh 默认“有选区则复制，否则立即退出”。经 SSH 时 raw 模式
   替换为 `xterm-256color`）、`LANG`（客户端的 UTF-8 locale，否则 `C.UTF-8`）、客户端的
   `LC_*`/`COLORTERM`、`COFFEE_API_URL`、`COFFEE_INTERNAL_KEY`（若配置）、`COFFEE_SSH_FINGERPRINT`
   （仅当公钥验证过）、`COFFEE_CLIENT_IP`、`COFFEE_COLORS`（若服务器配置）。
-- 限额：`COFFEE_SSH_MAX_SESSIONS`（64）、`COFFEE_SSH_MAX_SESSIONS_PER_IP`（8）。超限的连接仍能
-  看到横幅里的说明，并在通道里收到“会话已满/已达上限”后以状态 1 关闭；连接数超过
-  `2 × 上限 + 16` 时在握手前直接丢弃。空闲（无输入）超过 `COFFEE_SSH_IDLE_TIMEOUT`（1800 秒）
-  关闭会话（状态 124）；`COFFEE_SSH_AUTH_TIMEOUT`（30 秒）内未登录则断开。
+- 限额：`COFFEE_SSH_MAX_SESSIONS`（64）、`COFFEE_SSH_MAX_SESSIONS_PER_IP`（8）。名额在 **shell 请求时**
+  才占（第一阶段在 TCP accept 时就占，正在登录的连接也占名额）。超限的连接仍能看到横幅里的说明，并在
+  通道里收到“会话已满/已达上限”后以状态 1 关闭；连接数超过 `2 × 上限 + 16` 时在握手前直接丢弃。
+- 握手前的门（第二阶段）：同一地址最多 `2 × COFFEE_SSH_MAX_SESSIONS_PER_IP` 个打开的连接，新连接
+  `COFFEE_SSH_CONNECTIONS_PER_MINUTE`（30，令牌桶，可一次用满；0 关闭）。超出的连接在握手前直接关闭，
+  同一地址连续被拒只记一行日志。
+- 时限：从 accept 到会话开始（握手、登录、shell 请求）共 `COFFEE_SSH_AUTH_TIMEOUT`（30 秒）。第一阶段只在
+  握手完成后计时、且只看“是否登录”：不发 SSH 版本行的连接会**永远**挂着（`russh` 在
+  `inactivity_timeout: None` 时读版本行不设时限），登录后不开 shell 的连接也永远挂着——一个地址开
+  `2 × 64 + 16` 个这样的连接就能让所有人连不上。e2e `a_silent_connection_is_cut_off_at_the_login_deadline`
+  固定了这一点。
+- 空闲：`COFFEE_SSH_IDLE_TIMEOUT`（第二阶段默认 900 秒，原 1800）内无输入则关闭会话（状态 124，提示
+  “空闲超过 N 分钟”）。**从会话程序第一次输出开始计时**，输入重新计时（见下“空闲计时的缺陷”）。
+- 会话程序非 0 退出（崩溃、被信号杀死、报错退出）：sshd 先发一段终端复位（弹出 kitty 键盘标志、关鼠标/
+  粘贴/焦点报告、结束同步更新、离开备用屏、显示光标、复位颜色），再显示
+  “ROAST/TTY 出错了，会话已结束（代码 N）。请重新连接；如果一直这样，请稍后再试。”，以该代码关闭通道，
+  日志 `warn`。正常退出（0）不提示。
+
+### 空闲计时的缺陷（第二阶段修复）
+
+`an_idle_session_is_closed`（空闲 1 秒）在满载的 `pnpm verify` 中偶发失败：会话在探针子进程打印任何
+东西之前就被当作空闲关闭。根因不在测试：空闲时钟的起点是 TCP accept（`Connection::new` 里初始化
+`last_input`），而 debug 构建里 russh 的握手与登录本身就要数百毫秒，机器繁忙时超过 1 秒，于是会话
+一启动就已“空闲”超时，子进程刚 spawn 就收到 SIGHUP。生产环境同理：登录慢于空闲时限的客户端（时限
+设得很小时）会被立刻踢掉。修复：时钟从会话程序第一次输出开始（之前不会判空闲），输入重新计时。
+新测试 `a_slow_login_does_not_count_as_idle`（登录后停 1.5 倍时限再开 shell）在旧逻辑下失败、新逻辑下
+通过；`an_idle_session_is_closed` 改为等第一行输出并断言关闭不早于时限。同类时间假设的排查：测试客户端
+原来只在同一条消息里看到 `ESC [ c` 才回答 DA1（被拆到两条消息时，宿主要多等 1.5 秒），现在按累计输出
+计数回答；`alive()` 先用 `kill(pid, 0)` 判断（不用等一次 `ps`，繁忙时 `ps` 本身可能要上百毫秒，计入
+“2 秒内退出”的测量）；其余测试的等待都是“直到条件成立，上限 10/15 秒”，没有固定睡眠。
+
+### 公开演示的加固审查（第二阶段）
+
+| 项               | 现状                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| 每地址连接速率   | 已加：`COFFEE_SSH_CONNECTIONS_PER_MINUTE`（30），握手前拒绝                                   |
+| 每地址打开的连接 | 已加：`2 × COFFEE_SSH_MAX_SESSIONS_PER_IP`（16）；总连接 `2 × 上限 + 16`                      |
+| 登录时限         | 已改：accept → 会话开始整段 30 秒，含握手前（原先不发版本行的连接永不超时）                   |
+| 名额             | 已改：shell 请求时才占；登录中的连接不占                                                      |
+| 会话上限         | 64 / 每地址 8（不变）                                                                         |
+| 空闲             | 已改：默认 900 秒，从首个输出算起                                                             |
+| 横幅             | 演示声明 + 不要用真实密码、地址、电话；无版本/主机信息                                        |
+| 日志             | 见下                                                                                          |
+| 子进程崩溃       | 已加：终端复位 + 中文说明 + 非 0 状态（见上）                                                 |
+| 容器             | uid 10001、`cap_drop: ALL`、`no-new-privileges`、`init`；后端不发布端口、在无出网的内部网络上 |
+
+日志（`info`）：连接（地址）、登录（方式、公钥指纹——按设计）、会话（pid、`TERM`、尺寸、结束方式）、拒绝。
+从不记内部密钥、环境变量值、输入内容；同一地址连续被拒只记一行。
+
+尚未做（成本不低或需要取舍，列在这里）：
+
+- **会话最长时长**：持续有输入的会话可以一直占着名额（每地址 8 个）。可加 `COFFEE_SSH_MAX_SESSION_TIME`。
+- **全局握手速率 / 分布式来源**：每地址的限制挡不住大量不同地址；需要前置防火墙或代理（如 nftables
+  `limit`、云负载均衡的连接限速）。russh 的密钥交换在 release 下约毫秒级，但仍是 CPU 开销。
+- **按指纹/账号的限制**：公钥可随意生成，按指纹限流意义不大；账号层面的滥用（批量注册、刷单）属于后端。
+- **子进程资源上限**：没有给每个 `coffee-tui` 设 RLIMIT（内存、CPU、文件数）或 cgroup；容器整体的
+  `mem_limit`/`pids_limit` 由运维按“64 × 单会话内存”设。
+- **Docker 本机连接共用一个地址**：userland proxy 下，从 Docker 主机本机连入的客户端都显示为网桥地址，
+  共享一个地址的限额（外部客户端经 iptables DNAT 保留真实地址）。
+- **日志量**：每个连接仍有 `connected`/`disconnected` 两行；洪泛时靠前置限速与日志轮转。
 
 ## 对其他切片的请求
 

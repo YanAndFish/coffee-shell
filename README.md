@@ -37,12 +37,18 @@ Any SSH key works, and so does none: there is no password prompt. Inside, press 
 
 ### Colours
 
-The shop is drawn in 24-bit colour when the session knows the terminal can show it. OpenSSH does not send
-`COLORTERM` by default, so a plain `ssh -p 2222 localhost` gets 256 colours (close, not exact). For exact colours:
+The shop is drawn in 24-bit colour when the session knows the terminal can show it, else in the nearest of 256
+colours (close, not exact). OpenSSH does not send `COLORTERM` by default, so a session finds out from:
 
-- `pnpm ssh` (or `ssh -o SendEnv=COLORTERM -p 2222 localhost`) passes your terminal's `COLORTERM=truecolor` along;
-- or the server forces a depth for everyone: `COFFEE_COLORS=truecolor pnpm dev` (also `256`, `16`, `mono`).
-  Only force truecolor when you know the clients support it.
+- the terminal's own `TERM`, which does reach it: kitty, Ghostty, foot, Alacritty, WezTerm, rio (`xterm-kitty`,
+  `xterm-ghostty`, `foot`, …) and any `*-direct` get 24-bit colour with a plain `ssh -p 2222 localhost`;
+- the terminal itself: a `*-256color` terminal is asked once at startup (XTGETTCAP `RGB`/`Tc`); one that answers
+  gets 24-bit colour, one that stays silent (most do) keeps 256;
+- `pnpm ssh` (or `ssh -o SendEnv=COLORTERM -p 2222 localhost`), which passes your `COLORTERM=truecolor` along;
+- or the server forcing a depth for everyone: `COFFEE_COLORS=truecolor pnpm dev` (also `256`, `16`, `mono`). Only
+  force truecolor when you know the clients support it.
+
+The whole rule (`NO_COLOR` included) is in [`crates/coffee-host/src/color.rs`](crates/coffee-host/src/color.rs).
 
 ## Scripts
 
@@ -70,6 +76,8 @@ cargo run -p coffee-host --bin coffee-tui                              # the UI 
 python3 scripts/pty-run.py --size 100x30 -- target/debug/coffee-tui     # its screen as text, no terminal needed
 pnpm --filter @coffee/server db:reset     # recreate and seed the database (run it yourself: Prisma refuses AI agents)
 docker build -f deploy/Dockerfile -t roast-tty-ssh .   # the SSH gateway image (see deploy/README.md)
+docker build -f deploy/server.Dockerfile -t roast-tty-server .   # the backend image
+COFFEE_INTERNAL_KEY="$(openssl rand -base64 32)" docker compose -f deploy/compose.yaml up -d --build  # both, port 2222
 ```
 
 ## Layout
@@ -84,7 +92,7 @@ docker build -f deploy/Dockerfile -t roast-tty-ssh .   # the SSH gateway image (
 | `packages/contract`  | `@coffee/contract`: the API contract (zod → `openapi.json` + fixtures)                               |
 | `docs/design`        | screens, keymap, copy, responsive rules, tokens; `raw/` holds the exported designs (read-only)       |
 | `docs/adr`           | architecture decisions ([0001: one PTY process per SSH session](docs/adr/0001-ssh-session-model.md)) |
-| `deploy`             | the SSH gateway image and its settings                                                               |
+| `deploy`             | the SSH gateway and backend images, `compose.yaml` for the pair, their settings and smoke test       |
 | `scripts`            | `dev.mjs`, `pty-run.py`, `check-mocks.py`                                                            |
 | `.github/workflows`  | CI: `node`, `rust`, `nsh` and `docker` jobs                                                          |
 | `.claude/skills`     | step-by-step guides for coding agents                                                                |
@@ -95,7 +103,7 @@ docker build -f deploy/Dockerfile -t roast-tty-ssh .   # the SSH gateway image (
 - [`docs/design/`](docs/design/README.md): screens, keymap, copy, states, responsive rules and tokens.
 - [`docs/adr/0001-ssh-session-model.md`](docs/adr/0001-ssh-session-model.md): the SSH session model, auth, Ctrl+C,
   colour pinning, limits and measurements.
-- [`deploy/README.md`](deploy/README.md): the gateway image and every `COFFEE_*` setting.
+- [`deploy/README.md`](deploy/README.md): the two images, running them with compose, and every `COFFEE_*` setting.
 
 ## Editor and hooks
 
