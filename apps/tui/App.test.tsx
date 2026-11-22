@@ -373,6 +373,16 @@ test('the header: tabs with the cart badge, the rule under the current tab, the 
     expect(smallRows[1]).toContain('搜索')
     expect(smallRows[2].indexOf('━')).toBeGreaterThan(12)
   }
+  // S on the cart: the underline takes the cart tab with its badge whole (04-cart.md's S
+  // mock); the search entry sits four cells before the avatar.
+  await small.keyboard.press('2')
+  await small.waitUntil(() => shows(small, '购物车 CART'))
+  const smallCells = await screenCells(small)
+  if (smallCells) {
+    expect(column(smallCells[2], '━')).toBe(23)
+    expect(column(smallCells[2], '━', true)).toBe(35)
+    expect(column(smallCells[1], '搜')).toBe(66)
+  }
 })
 
 test('status-bar hints per page: 7 at 160 columns, 4 and help at 80', async () => {

@@ -248,7 +248,13 @@ fn top(stores: Stores, layout: Layout, header: HeaderLayout) -> View {
       },
     ))
     .child(search_entry(stores, layout, header))
-    .child(layout::hspace(if header.wide { 4 } else { 2 }))
+    // Four cells before the account where the search entry has its own width (XL, L, and
+    // S: 02-list.md's S mock, `‹/› 搜索     ‹林›`); two where it takes the room left (M).
+    .child(layout::hspace(if header.wide || header.search.is_some() {
+      4
+    } else {
+      2
+    }))
     .child(account_chip(stores, layout))
     .child(layout::hspace(header.margin))
 }
