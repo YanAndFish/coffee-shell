@@ -60,7 +60,10 @@ fi
   })"
 
 step "a stock ssh session (no key) shows the products from the backend"
+# A new connection opens on the login page with the focus in 用户名: Esc leaves the field,
+# then `g` browses as a guest. The pause keeps Esc and g from reading as Alt+g.
 python3 scripts/pty-run.py --size 160x50 --timeout 60 \
+  --step 'until=用户名' --step 'wait=1' --step 'key=esc' --step 'wait=1' --step 'text=g' \
   --step 'until=耶加雪菲 孔加' --expect '演示环境' \
   -- ssh -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   -o LogLevel=ERROR -o PubkeyAuthentication=no -o IdentitiesOnly=yes guest@127.0.0.1 \
