@@ -267,8 +267,8 @@ test('80×24: one column of compact cards; the stacked dialog fits; it scrolls t
     expect(top).toBeGreaterThan(0)
     expect(bottom).toBeLessThan(23)
     expect(bottom - top + 1).toBe(21)
-    // 收货人 above 手机号.
-    const name = rows.findIndex(row => row.includes('─ 收货人 ─'))
+    // 收货人 (focused: heavy) above 手机号.
+    const name = rows.findIndex(row => row.includes('┏━ 收货人 ━'))
     const phone = rows.findIndex(row => row.includes('─ 手机号 ─'))
     expect(phone).toBe(name + 3)
   }
@@ -277,17 +277,28 @@ test('80×24: one column of compact cards; the stacked dialog fits; it scrolls t
   await app.type('label:详细地址', '学院路 37 号')
   await app.keyboard.press('enter')
   await waitForPart(app, '地址本 · 4 条')
-  // Five cells no longer fit: the window follows the cursor (the new, last card).
+  // Five cells hardly fit (20 rows): wherever the cursor goes, its card shows whole (the
+  // window's arithmetic is `grid::window`'s unit test).
+  const whole = (rows: string[], part: string) => {
+    const at = rows.findIndex(row => row.includes(part))
+    return at > 0 && rows.slice(at).some(row => row.includes('┗') || row.includes('╰╌'))
+  }
+  rows = await screenRows(app)
+  if (rows)
+    expect(whole(rows, '▶ 周一')).toBe(true)
+  for (let i = 0; i < 3; i++)
+    await app.keyboard.press('up')
   rows = await screenRows(app)
   if (rows) {
-    expect(rows.some(row => row.includes('▶ 周一'))).toBe(true)
-    expect(rows.some(row => row.includes('+ 新增收货地址'))).toBe(false)
+    expect(whole(rows, '▶ 林晓  138 **** 5521')).toBe(true)
+    expect(rows.some(row => row.includes('天平路'))).toBe(true)
   }
-  await app.keyboard.press('down')
+  for (let i = 0; i < 4; i++)
+    await app.keyboard.press('down')
   rows = await screenRows(app)
   if (rows) {
     expect(rows.some(row => row.includes('▶') && row.includes('+ 新增收货地址'))).toBe(true)
-    expect(rows.some(row => row.includes('天平路'))).toBe(false)
+    expect(rows[23]).toContain('帮助')
   }
 })
 
