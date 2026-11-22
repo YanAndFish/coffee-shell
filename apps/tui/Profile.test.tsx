@@ -67,8 +67,8 @@ test('160×50: the design layout, every block from the server', async () => {
     '涅里 AA 双洗 →',
     '保山 小粒 日晒 →',
     '订单号',
-    '● 烘焙中',
-    '● 运输中',
+    '◔ 烘焙中',
+    '◑ 运输中',
     '● 已签收',
     '¥426.00',
     '11-22',
@@ -114,7 +114,7 @@ test('160×50: the design layout, every block from the server', async () => {
     expect(cellOf(rows[first], 'RT2611220417')).toBe(54)
     expect(cellOf(rows[first], '11-22')).toBe(73)
     expect(cellOf(rows[first], '¥426.00') + 7).toBe(144)
-    expect(cellOf(rows[first], '● 烘焙中') + 8).toBe(155)
+    expect(cellOf(rows[first], '◔ 烘焙中') + 8).toBe(155)
     expect(rows[first + 1]).toContain('┈┈┈┈')
     // The logout button fills the left column.
     const logout = rows.findIndex(row => row.includes('q 退出登录') && row.includes('['))
@@ -143,7 +143,7 @@ test('100×30: two columns, meters instead of the radar, the avatar a pill', asy
   const app = await memberProfile(100, 30)
   expect(shows(app, '甜感 ')).toBe(true)
   expect(shows(app, '8/10')).toBe(true)
-  expect(shows(app, '● 运输中')).toBe(true)
+  expect(shows(app, '◑ 运输中')).toBe(true)
   const rows = await screenRows(app)
   if (rows) {
     expect(rows.length).toBe(30)

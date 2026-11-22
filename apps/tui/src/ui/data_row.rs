@@ -320,23 +320,33 @@ pub fn cart_row(
     )
 }
 
-/// An order's status.
+/// An order's status. The glyph fills as the order goes (a quarter, a half, whole), so the
+/// three read apart without colour (monochrome: `acc` and `acc2` look alike).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OrderStatus {
-  /// `● 烘焙中` (`acc`).
+  /// `◔ 烘焙中` (`acc`).
   Roasting,
-  /// `● 运输中` (`acc`).
+  /// `◑ 运输中` (`acc`).
   Shipping,
   /// `● 已签收` (`acc2`).
   Delivered,
 }
 
 impl OrderStatus {
-  /// Its text with the dot.
+  /// Its glyph.
+  pub fn glyph(self) -> &'static str {
+    match self {
+      OrderStatus::Roasting => "◔",
+      OrderStatus::Shipping => "◑",
+      OrderStatus::Delivered => "●",
+    }
+  }
+
+  /// Its text with the glyph.
   pub fn text(self) -> &'static str {
     match self {
-      OrderStatus::Roasting => "● 烘焙中",
-      OrderStatus::Shipping => "● 运输中",
+      OrderStatus::Roasting => "◔ 烘焙中",
+      OrderStatus::Shipping => "◑ 运输中",
       OrderStatus::Delivered => "● 已签收",
     }
   }
@@ -402,14 +412,18 @@ mod tests {
   }
 
   #[test]
-  fn statuses_lead_with_the_dot() {
-    for status in [
+  fn statuses_lead_with_their_own_glyph() {
+    let all = [
       OrderStatus::Roasting,
       OrderStatus::Shipping,
       OrderStatus::Delivered,
-    ] {
-      assert!(status.text().starts_with("● "));
+    ];
+    for status in all {
+      assert!(status.text().starts_with(&format!("{} ", status.glyph())));
     }
+    // Apart by glyph, not only by text and colour.
+    assert_ne!(all[0].glyph(), all[1].glyph());
+    assert_ne!(all[1].glyph(), all[2].glyph());
     assert_eq!(OrderStatus::Delivered.tone(), Tone::Acc2);
   }
 }

@@ -64,9 +64,14 @@ pub fn month_day_zh(date: &str) -> String {
   }
 }
 
-/// `● 烘焙中`.
+/// `◔ 烘焙中`, `◑ 运输中`, `● 已签收` (the glyph fills as the order goes).
 pub fn order_status(status: OrderStatus) -> String {
-  format!("● {}", status.label())
+  let glyph = match status {
+    OrderStatus::Roasting => "◔",
+    OrderStatus::Shipping => "◑",
+    OrderStatus::Delivered => "●",
+  };
+  format!("{glyph} {}", status.label())
 }
 
 #[cfg(test)]
@@ -88,6 +93,7 @@ mod tests {
     assert_eq!(order_line(Weight::G250, 1), "250g ×1");
     assert_eq!(month_day("2026-11-18"), "11-18");
     assert_eq!(month_day_zh("2026-11-05"), "11 月 5 日");
-    assert_eq!(order_status(OrderStatus::Roasting), "● 烘焙中");
+    assert_eq!(order_status(OrderStatus::Roasting), "◔ 烘焙中");
+    assert_eq!(order_status(OrderStatus::Delivered), "● 已签收");
   }
 }
