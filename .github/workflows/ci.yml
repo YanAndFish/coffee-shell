@@ -109,13 +109,13 @@ jobs:
           if-no-files-found: ignore
 
   docker:
-    name: docker (build the SSH gateway image, no push)
+    name: docker (gateway + backend images, compose smoke test, no push)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
-      - name: Build deploy/Dockerfile
+      - name: Build deploy/Dockerfile (SSH gateway)
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -126,20 +126,30 @@ jobs:
           # The image layers; the Dockerfile's cargo cache mounts are not exported.
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,scope=gateway,mode=max
-      - name: Smoke-test the image (both binaries run as the non-root user)
+      - name: Build deploy/server.Dockerfile (backend)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/server.Dockerfile
+          push: false
+          load: true
+          tags: roast-tty-server:ci
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,scope=server,mode=max
+      - name: Smoke-test the images (non-root users, both gateway binaries)
         run: |
           set -euo pipefail
-          docker image ls roast-tty-ssh:ci
+          docker image ls 'roast-tty-*'
           test "$(docker run --rm --entrypoint id roast-tty-ssh:ci -u)" = 10001
+          test "$(docker run --rm --entrypoint id roast-tty-server:ci -u)" = 10001
           docker run --rm --entrypoint sh roast-tty-ssh:ci -c \
             'test -x /usr/local/bin/coffee-sshd && test -x /usr/local/bin/coffee-tui'
-          # coffee-sshd starts, makes its host key in /data and listens; then stop it.
-          id=$(docker run -d -p 127.0.0.1:2222:2222 roast-tty-ssh:ci)
-          trap 'docker rm -f "$id" >/dev/null' EXIT
-          for _ in $(seq 1 30); do
-            if docker logs "$id" 2>&1 | grep -q listening; then break; fi
-            sleep 1
+          # No secret is baked into either image.
+          for image in roast-tty-ssh:ci roast-tty-server:ci; do
+            ! docker image inspect "$image" --format '{{json .Config.Env}}' | grep -q COFFEE_INTERNAL_KEY
           done
-          docker logs "$id" 2>&1 | tail -n 5
-          docker logs "$id" 2>&1 | grep -q listening
-          ssh-keyscan -p 2222 -t ed25519 127.0.0.1 | grep -q ssh-ed25519
+      - name: Smoke-test the pair with deploy/compose.yaml (SSH banner, products from the backend over ssh)
+        env:
+          COFFEE_GATEWAY_IMAGE: roast-tty-ssh:ci
+          COFFEE_SERVER_IMAGE: roast-tty-server:ci
+        run: deploy/smoke-test.sh
