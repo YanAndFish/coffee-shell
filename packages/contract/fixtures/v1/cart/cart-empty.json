@@ -1,0 +1,19 @@
+{
+  "lines": [],
+  "coupon": null,
+  "address": null,
+  "totals": {
+    "itemCount": 0,
+    "selectedCount": 0,
+    "subtotal": 0,
+    "discount": 0,
+    "shipping": 0,
+    "total": 0,
+    "freeShipping": {
+      "threshold": 199,
+      "reached": false,
+      "progress": 0,
+      "gap": 199
+    }
+  }
+}

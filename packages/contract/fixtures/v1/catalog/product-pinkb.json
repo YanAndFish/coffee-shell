@@ -1,0 +1,184 @@
+{
+  "id": "pinkb",
+  "name": "慧兰 粉红波旁",
+  "subtitle": "Colombia · Huila Pink Bourbon",
+  "origin": "哥伦比亚",
+  "region": "慧兰 · 皮塔利托",
+  "process": "水洗",
+  "roast": 2,
+  "tag": "店长推荐",
+  "notes": [
+    "荔枝",
+    "蔓越莓",
+    "蜂蜜",
+    "可可"
+  ],
+  "flavor": [
+    7,
+    8,
+    5,
+    2,
+    8,
+    8
+  ],
+  "score": 88,
+  "description": "粉红波旁的甜感是它最大的特点。荔枝与蔓越莓的果汁感包裹着蜂蜜甜，收尾带一点干净的可可，冷热都好喝。",
+  "price250": 118,
+  "stock": 26,
+  "defaultWeight": "250g",
+  "code": "PNK",
+  "farm": "小农合作批次",
+  "altitude": "1,700–1,850 m",
+  "variety": "粉红波旁",
+  "harvest": "2025/26",
+  "brew": "1:15 · 91°C · 2′20″",
+  "maxQuantity": 9,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": true
+    },
+    {
+      "weight": "1kg",
+      "available": false
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 53,
+      "totals": [
+        53,
+        106,
+        159,
+        212,
+        265,
+        318,
+        371,
+        424,
+        477
+      ]
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 73,
+      "totals": [
+        73,
+        146,
+        219,
+        292,
+        365,
+        438,
+        511,
+        584,
+        657
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 118,
+      "totals": [
+        118,
+        236,
+        354,
+        472,
+        590,
+        708,
+        826,
+        944,
+        1062
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 138,
+      "totals": [
+        138,
+        276,
+        414,
+        552,
+        690,
+        828,
+        966,
+        1104,
+        1242
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 224,
+      "totals": [
+        224,
+        448,
+        672,
+        896,
+        1120,
+        1344,
+        1568,
+        1792,
+        2016
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 244,
+      "totals": [
+        244,
+        488,
+        732,
+        976,
+        1220,
+        1464,
+        1708,
+        1952,
+        2196
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 425,
+      "totals": [
+        425,
+        850,
+        1275,
+        1700,
+        2125,
+        2550,
+        2975,
+        3400,
+        3825
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 445,
+      "totals": [
+        445,
+        890,
+        1335,
+        1780,
+        2225,
+        2670,
+        3115,
+        3560,
+        4005
+      ]
+    }
+  ]
+}

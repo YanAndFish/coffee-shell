@@ -1,0 +1,45 @@
+{
+  "lines": [
+    {
+      "sku": "RT-YIR-250G-WB-STD",
+      "productId": "yirga",
+      "name": "耶加雪菲 孔加",
+      "origin": "埃塞俄比亚",
+      "roast": 1,
+      "weight": "250g",
+      "grind": "WB",
+      "pack": "STD",
+      "quantity": 1,
+      "selected": true,
+      "unitPrice": 98,
+      "lineTotal": 98,
+      "maxQuantity": 9,
+      "problem": null
+    }
+  ],
+  "coupon": null,
+  "address": {
+    "id": 1,
+    "recipient": "林晓",
+    "phone": "13800005521",
+    "phoneMasked": "138 **** 5521",
+    "region": "上海市 徐汇区",
+    "detail": "天平路 88 弄 3 号 602 室",
+    "tag": "home",
+    "isDefault": true
+  },
+  "totals": {
+    "itemCount": 1,
+    "selectedCount": 1,
+    "subtotal": 98,
+    "discount": 0,
+    "shipping": 12,
+    "total": 110,
+    "freeShipping": {
+      "threshold": 199,
+      "reached": false,
+      "progress": 49,
+      "gap": 101
+    }
+  }
+}

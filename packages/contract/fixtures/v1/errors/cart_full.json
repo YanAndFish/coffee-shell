@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "cart_full",
+    "message": "购物车最多放 50 种规格"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "fingerprint_required",
+    "message": "当前连接没有 SSH 公钥，无法记住登录"
+  }
+}

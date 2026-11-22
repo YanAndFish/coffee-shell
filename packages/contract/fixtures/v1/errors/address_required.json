@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "address_required",
+    "message": "请先选择收货地址"
+  }
+}

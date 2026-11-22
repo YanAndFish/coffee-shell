@@ -1,0 +1,77 @@
+{
+  "lines": [
+    {
+      "sku": "RT-PNK-250G-PO-STD",
+      "productId": "pinkb",
+      "name": "慧兰 粉红波旁",
+      "origin": "哥伦比亚",
+      "roast": 2,
+      "weight": "250g",
+      "grind": "PO",
+      "pack": "STD",
+      "quantity": 1,
+      "selected": false,
+      "unitPrice": 118,
+      "lineTotal": 118,
+      "maxQuantity": 9,
+      "problem": null
+    },
+    {
+      "sku": "RT-NGT-500G-ES-STD",
+      "productId": "night",
+      "name": "「夜班」意式拼配",
+      "origin": "拼配",
+      "roast": 4,
+      "weight": "500g",
+      "grind": "ES",
+      "pack": "STD",
+      "quantity": 1,
+      "selected": false,
+      "unitPrice": 167,
+      "lineTotal": 167,
+      "maxQuantity": 9,
+      "problem": null
+    },
+    {
+      "sku": "RT-GSH-100G-WB-GIFT",
+      "productId": "geisha",
+      "name": "波奎特 瑰夏",
+      "origin": "巴拿马",
+      "roast": 1,
+      "weight": "100g",
+      "grind": "WB",
+      "pack": "GIFT",
+      "quantity": 1,
+      "selected": false,
+      "unitPrice": 141,
+      "lineTotal": 141,
+      "maxQuantity": 6,
+      "problem": null
+    }
+  ],
+  "coupon": null,
+  "address": {
+    "id": 1,
+    "recipient": "林晓",
+    "phone": "13800005521",
+    "phoneMasked": "138 **** 5521",
+    "region": "上海市 徐汇区",
+    "detail": "天平路 88 弄 3 号 602 室",
+    "tag": "home",
+    "isDefault": true
+  },
+  "totals": {
+    "itemCount": 3,
+    "selectedCount": 0,
+    "subtotal": 0,
+    "discount": 0,
+    "shipping": 0,
+    "total": 0,
+    "freeShipping": {
+      "threshold": 199,
+      "reached": false,
+      "progress": 0,
+      "gap": 199
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "not_remembered",
+    "message": "当前公钥没有记住的登录"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "username_invalid",
+    "message": "用户名需为 2–16 个字符，可用中文、字母、数字和下划线"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "empty_selection",
+    "message": "还没有勾选商品"
+  }
+}

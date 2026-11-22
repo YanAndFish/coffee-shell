@@ -1,0 +1,160 @@
+{
+  "id": "geisha",
+  "name": "波奎特 瑰夏",
+  "subtitle": "Panama · Boquete Geisha Washed",
+  "origin": "巴拿马",
+  "region": "奇里基 · 波奎特",
+  "process": "水洗",
+  "roast": 1,
+  "tag": "限量",
+  "notes": [
+    "茉莉",
+    "白桃",
+    "柑橘",
+    "蜂蜜"
+  ],
+  "flavor": [
+    7,
+    8,
+    3,
+    1,
+    9,
+    10
+  ],
+  "score": 90,
+  "description": "每批只烘几公斤的限量瑰夏。花香极为饱满，白桃与柑橘层层展开，口感轻盈如茶，余韵是长长的蜂蜜甜。",
+  "price250": 268,
+  "stock": 6,
+  "defaultWeight": "250g",
+  "code": "GSH",
+  "farm": "精品庄园批次",
+  "altitude": "1,600–1,800 m",
+  "variety": "瑰夏 Geisha",
+  "harvest": "2025/26",
+  "brew": "1:16 · 92°C · 2′15″",
+  "maxQuantity": 6,
+  "weights": [
+    {
+      "weight": "100g",
+      "available": true
+    },
+    {
+      "weight": "250g",
+      "available": true
+    },
+    {
+      "weight": "500g",
+      "available": false
+    },
+    {
+      "weight": "1kg",
+      "available": false
+    }
+  ],
+  "prices": [
+    {
+      "weight": "100g",
+      "pack": "STD",
+      "unitPrice": 121,
+      "totals": [
+        121,
+        242,
+        363,
+        484,
+        605,
+        726
+      ]
+    },
+    {
+      "weight": "100g",
+      "pack": "GIFT",
+      "unitPrice": 141,
+      "totals": [
+        141,
+        282,
+        423,
+        564,
+        705,
+        846
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "STD",
+      "unitPrice": 268,
+      "totals": [
+        268,
+        536,
+        804,
+        1072,
+        1340,
+        1608
+      ]
+    },
+    {
+      "weight": "250g",
+      "pack": "GIFT",
+      "unitPrice": 288,
+      "totals": [
+        288,
+        576,
+        864,
+        1152,
+        1440,
+        1728
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "STD",
+      "unitPrice": 509,
+      "totals": [
+        509,
+        1018,
+        1527,
+        2036,
+        2545,
+        3054
+      ]
+    },
+    {
+      "weight": "500g",
+      "pack": "GIFT",
+      "unitPrice": 529,
+      "totals": [
+        529,
+        1058,
+        1587,
+        2116,
+        2645,
+        3174
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "STD",
+      "unitPrice": 965,
+      "totals": [
+        965,
+        1930,
+        2895,
+        3860,
+        4825,
+        5790
+      ]
+    },
+    {
+      "weight": "1kg",
+      "pack": "GIFT",
+      "unitPrice": 985,
+      "totals": [
+        985,
+        1970,
+        2955,
+        3940,
+        4925,
+        5910
+      ]
+    }
+  ]
+}

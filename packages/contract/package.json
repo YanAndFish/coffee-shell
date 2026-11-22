@@ -6,6 +6,7 @@
   "description": "ROAST/TTY API contract: zod schemas -> openapi.json + fixtures.",
   "exports": {
     ".": "./src/index.ts",
+    "./examples": "./src/examples/index.ts",
     "./openapi.json": "./openapi.json",
     "./fixtures/*": "./fixtures/*"
   },

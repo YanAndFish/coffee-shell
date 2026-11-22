@@ -1,0 +1,28 @@
+{
+  "user": {
+    "id": 2,
+    "username": "bean_lover",
+    "createdAt": "2026-11-22T13:04:00.000Z",
+    "tier": {
+      "name": "熟豆会员",
+      "level": 3,
+      "points": 1280,
+      "nextLevel": 4,
+      "nextLevelPoints": 2000,
+      "pointsToNext": 720,
+      "progress": 64
+    }
+  },
+  "remembered": {
+    "state": "no_key",
+    "expiresAt": null,
+    "expiresOn": null
+  },
+  "stats": {
+    "orders": 0,
+    "addresses": 0,
+    "coupons": 1
+  },
+  "taste": null,
+  "recommendations": []
+}

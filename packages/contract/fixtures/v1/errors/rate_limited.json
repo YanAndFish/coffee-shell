@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "操作太频繁，请稍后再试",
+    "details": {
+      "retryAfter": 60
+    }
+  }
+}

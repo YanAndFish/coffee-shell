@@ -1,0 +1,28 @@
+{
+  "address": {
+    "id": 1,
+    "recipient": "林晓",
+    "phone": "13800005521",
+    "phoneMasked": "138 **** 5521",
+    "region": "上海市 徐汇区",
+    "detail": "天平路 88 弄 3 号 602 室",
+    "tag": "home",
+    "isDefault": true
+  },
+  "book": {
+    "items": [
+      {
+        "id": 1,
+        "recipient": "林晓",
+        "phone": "13800005521",
+        "phoneMasked": "138 **** 5521",
+        "region": "上海市 徐汇区",
+        "detail": "天平路 88 弄 3 号 602 室",
+        "tag": "home",
+        "isDefault": true
+      }
+    ],
+    "defaultAddressId": 1,
+    "orderAddressId": 1
+  }
+}

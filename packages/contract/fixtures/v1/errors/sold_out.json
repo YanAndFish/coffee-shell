@@ -1,0 +1,11 @@
+{
+  "error": {
+    "code": "sold_out",
+    "message": "该重量暂时缺货",
+    "details": {
+      "productId": "pinkb",
+      "productName": "慧兰 粉红波旁",
+      "weight": "1kg"
+    }
+  }
+}

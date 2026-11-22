@@ -1,0 +1,33 @@
+{
+  "number": "RT2611060117",
+  "createdAt": "2026-11-06T09:30:00.000Z",
+  "orderDate": "2026-11-06",
+  "etaAt": "2026-11-09T09:30:00.000Z",
+  "etaDate": "2026-11-09",
+  "status": "delivered",
+  "items": [
+    {
+      "sku": "RT-YIR-250G-PO-STD",
+      "productId": "yirga",
+      "name": "耶加雪菲 孔加",
+      "weight": "250g",
+      "grind": "PO",
+      "pack": "STD",
+      "quantity": 2,
+      "unitPrice": 98,
+      "lineTotal": 196
+    }
+  ],
+  "subtotal": 196,
+  "discount": 0,
+  "shipping": 12,
+  "total": 208,
+  "couponCode": null,
+  "address": {
+    "recipient": "林晓",
+    "phone": "13800005521",
+    "phoneMasked": "138 **** 5521",
+    "region": "上海市 徐汇区",
+    "detail": "天平路 88 弄 3 号 602 室"
+  }
+}

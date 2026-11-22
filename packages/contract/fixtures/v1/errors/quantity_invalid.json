@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "quantity_invalid",
+    "message": "数量应为 1–9"
+  }
+}

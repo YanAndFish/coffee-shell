@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "detail_required",
+    "message": "请填写详细地址"
+  }
+}

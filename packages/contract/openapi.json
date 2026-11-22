@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "ROAST/TTY API",
-    "version": "0.1.0",
-    "description": "ROAST/TTY 终端咖啡馆的后端接口。这是演示站，不是真的商店。金额单位为整数元。"
+    "version": "0.2.0",
+    "description": "ROAST/TTY 终端咖啡馆的后端接口。这是演示站，不是真的商店：不接支付，下单即完成。\n\n- 金额一律是整数元，全部由服务端计算；TUI 只负责显示。\n- 除 `/v1/health` 外，后端设置了 COFFEE_INTERNAL_KEY 时每个请求都要带 `X-Internal-Key`。\n- 会员会话：`Authorization: Bearer <token>`（注册、登录、恢复登录时得到）。\n- `X-SSH-Fingerprint`：本次 SSH 连接的公钥指纹，用于“记住我”；`X-Client-IP`：客户端 IP，仅用于限流。\n- 日期：`*At` 是 UTC 时刻（ISO 8601）；`*Date` / `*On` 是店铺时区（Asia/Shanghai）的日历日期。\n- 错误一律是 `{ \"error\": { \"code\", \"message\", \"details\"? } }`，`message` 与 code 一一对应：\n\n| code | HTTP | message |\n| --- | --- | --- |\n| `bad_request` | 400 | 请求格式错误 |\n| `validation_failed` | 400 | 请求参数不合法 |\n| `unauthorized` | 401 | 缺少或错误的内部密钥 |\n| `not_found` | 404 | 资源不存在 |\n| `method_not_allowed` | 405 | 不支持该请求方法 |\n| `rate_limited` | 429 | 操作太频繁，请稍后再试 |\n| `internal_error` | 500 | 服务器内部错误 |\n| `not_implemented` | 501 | 功能尚未实现 |\n| `login_required` | 401 | 请先登录 |\n| `session_expired` | 401 | 登录已失效 |\n| `username_required` | 422 | 请输入用户名 |\n| `username_invalid` | 422 | 用户名需为 2–16 个字符，可用中文、字母、数字和下划线 |\n| `password_too_short` | 422 | 密码至少 6 位 |\n| `password_too_long` | 422 | 密码最多 128 位 |\n| `username_taken` | 409 | 这个用户名已被注册 |\n| `invalid_credentials` | 401 | 用户名或密码不正确 |\n| `fingerprint_required` | 400 | 当前连接没有 SSH 公钥，无法记住登录 |\n| `not_remembered` | 404 | 当前公钥没有记住的登录 |\n| `quantity_invalid` | 422 | 数量应为 1–9 |\n| `sold_out` | 409 | 该重量暂时缺货 |\n| `out_of_stock` | 409 | 库存不足 |\n| `cart_full` | 409 | 购物车最多放 50 种规格 |\n| `coupon_invalid` | 422 | 优惠码无效或已过期 |\n| `empty_selection` | 409 | 还没有勾选商品 |\n| `address_required` | 409 | 请先选择收货地址 |\n| `price_changed` | 409 | 价格有变化，请确认后再结算 |\n| `recipient_required` | 422 | 请填写收货人 |\n| `region_required` | 422 | 请填写所在地区 |\n| `detail_required` | 422 | 请填写详细地址 |\n| `phone_invalid` | 422 | 手机号应为 11 位数字 |\n| `text_too_long` | 422 | 内容太长了 |\n| `address_limit` | 409 | 地址最多保存 20 条 |"
   },
   "servers": [
     {
@@ -35,6 +35,16 @@
               }
             }
           },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "default": {
             "description": "错误（统一错误信封）",
             "content": {
@@ -45,16 +55,585 @@
               }
             }
           }
-        }
+        },
+        "x-auth": "none",
+        "x-error-codes": [
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/auth/register": {
+      "post": {
+        "operationId": "register",
+        "tags": [
+          "auth"
+        ],
+        "summary": "注册（用户名 + 密码）并登录",
+        "description": "Creates the user (password hashed with argon2id), its empty cart and default settings, then a session, as login does. With `remember` and `X-SSH-Fingerprint`, binds the key to the new user for 30 days (replacing any binding of that key). Rate limit: see `docs/design/decisions.md` (P-auth-3).",
+        "parameters": [
+          {
+            "name": "X-SSH-Fingerprint",
+            "in": "header",
+            "required": false,
+            "description": "本次 SSH 连接的公钥指纹（`SHA256:…`），由 TUI 从会话环境转发；只在带内部密钥的请求里可信。",
+            "schema": {
+              "type": "string",
+              "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+            }
+          },
+          {
+            "name": "X-Client-IP",
+            "in": "header",
+            "required": false,
+            "description": "SSH 客户端的 IP（`COFFEE_CLIENT_IP`），仅用于限流与日志。",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`username_taken` 这个用户名已被注册",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`username_required` 请输入用户名；`username_invalid` 用户名需为 2–16 个字符，可用中文、字母、数字和下划线；`password_too_short` 密码至少 6 位；`password_too_long` 密码最多 128 位",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` 操作太频繁，请稍后再试",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "none",
+        "x-error-codes": [
+          "username_required",
+          "username_invalid",
+          "password_too_short",
+          "password_too_long",
+          "username_taken",
+          "rate_limited",
+          "unauthorized",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/auth/login": {
+      "post": {
+        "operationId": "login",
+        "tags": [
+          "auth"
+        ],
+        "summary": "登录（用户名 + 密码），可选记住当前 SSH 公钥 30 天",
+        "description": "Username matching ignores the case of ASCII letters. A wrong username and a wrong password are the same `invalid_credentials`. With `remember` and `X-SSH-Fingerprint`, (re)binds the key to this user for 30 days from now; without `remember` an existing binding is left alone. The guest cart is merged afterwards by `POST /v1/cart/merge`.",
+        "parameters": [
+          {
+            "name": "X-SSH-Fingerprint",
+            "in": "header",
+            "required": false,
+            "description": "本次 SSH 连接的公钥指纹（`SHA256:…`），由 TUI 从会话环境转发；只在带内部密钥的请求里可信。",
+            "schema": {
+              "type": "string",
+              "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+            }
+          },
+          {
+            "name": "X-Client-IP",
+            "in": "header",
+            "required": false,
+            "description": "SSH 客户端的 IP（`COFFEE_CLIENT_IP`），仅用于限流与日志。",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_credentials` 用户名或密码不正确；`unauthorized` 缺少或错误的内部密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`username_required` 请输入用户名；`password_too_short` 密码至少 6 位；`password_too_long` 密码最多 128 位",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` 操作太频繁，请稍后再试",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "none",
+        "x-error-codes": [
+          "username_required",
+          "password_too_short",
+          "password_too_long",
+          "invalid_credentials",
+          "rate_limited",
+          "unauthorized",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/auth/resume": {
+      "post": {
+        "operationId": "resume",
+        "tags": [
+          "auth"
+        ],
+        "summary": "用已记住的 SSH 公钥恢复登录（无需密码）",
+        "description": "No body. A binding of `X-SSH-Fingerprint` that has not expired yields a new session; it does not extend the binding.",
+        "parameters": [
+          {
+            "name": "X-SSH-Fingerprint",
+            "in": "header",
+            "required": true,
+            "description": "本次 SSH 连接的公钥指纹（`SHA256:…`），由 TUI 从会话环境转发；只在带内部密钥的请求里可信。",
+            "schema": {
+              "type": "string",
+              "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+            }
+          },
+          {
+            "name": "X-Client-IP",
+            "in": "header",
+            "required": false,
+            "description": "SSH 客户端的 IP（`COFFEE_CLIENT_IP`），仅用于限流与日志。",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`fingerprint_required` 当前连接没有 SSH 公钥，无法记住登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_remembered` 当前公钥没有记住的登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "none",
+        "x-error-codes": [
+          "fingerprint_required",
+          "not_remembered",
+          "unauthorized",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "tags": [
+          "auth"
+        ],
+        "summary": "退出登录：结束会话，并删除当前公钥的“记住我”",
+        "description": "No body. Deletes the session and, when `X-SSH-Fingerprint` is bound to this user, that binding.",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-SSH-Fingerprint",
+            "in": "header",
+            "required": false,
+            "description": "本次 SSH 连接的公钥指纹（`SHA256:…`），由 TUI 从会话环境转发；只在带内部密钥的请求里可信。",
+            "schema": {
+              "type": "string",
+              "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/auth/me": {
+      "get": {
+        "operationId": "getMe",
+        "tags": [
+          "auth"
+        ],
+        "summary": "当前会员与“记住我”状态",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-SSH-Fingerprint",
+            "in": "header",
+            "required": false,
+            "description": "本次 SSH 连接的公钥指纹（`SHA256:…`），由 TUI 从会话环境转发；只在带内部密钥的请求里可信。",
+            "schema": {
+              "type": "string",
+              "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "internal_error"
+        ]
       }
     },
     "/v1/products": {
       "get": {
         "operationId": "listProducts",
         "tags": [
-          "products"
+          "catalog"
         ],
-        "summary": "商品列表（按陈列顺序）",
+        "summary": "商品列表：筛选、排序、搜索与筛选栏计数",
+        "description": "Filters combine (AND). `facets` always count the whole catalog. Each product keeps the same fields whatever the filters.",
+        "parameters": [
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 32
+            }
+          },
+          {
+            "name": "roast",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "light",
+                "medium",
+                "dark"
+              ]
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "price_asc",
+                "price_desc",
+                "score"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "成功",
@@ -66,8 +645,28 @@
               }
             }
           },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "401": {
-            "description": "缺少或错误的内部密钥",
+            "description": "`unauthorized` 缺少或错误的内部密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
             "content": {
               "application/json": {
                 "schema": {
@@ -86,7 +685,2060 @@
               }
             }
           }
-        }
+        },
+        "x-auth": "none",
+        "x-error-codes": [
+          "unauthorized",
+          "validation_failed",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/products/{id}": {
+      "get": {
+        "operationId": "getProduct",
+        "tags": [
+          "catalog"
+        ],
+        "summary": "商品详情：档案、风味、冲煮建议、各重量价格与库存",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "none",
+        "x-error-codes": [
+          "not_found",
+          "unauthorized",
+          "validation_failed",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/cart": {
+      "get": {
+        "operationId": "getCart",
+        "tags": [
+          "cart"
+        ],
+        "summary": "会员购物车（服务端计价）",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/cart/lines": {
+      "post": {
+        "operationId": "addCartLine",
+        "tags": [
+          "cart"
+        ],
+        "summary": "加入购物车（同一 SKU 数量相加，上限 9，并重新勾选）",
+        "description": "Same SKU: quantity = min(9, old + new) and selected = true; otherwise a new selected line at `index` (default: last). Rejects a sold-out weight (`sold_out`), a resulting quantity above stock (`out_of_stock`, details.available) and a 51st line (`cart_full`).",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddCartLineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`sold_out` 该重量暂时缺货；`out_of_stock` 库存不足；`cart_full` 购物车最多放 50 种规格",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`quantity_invalid` 数量应为 1–9",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "not_found",
+          "quantity_invalid",
+          "sold_out",
+          "out_of_stock",
+          "cart_full",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/cart/lines/{sku}": {
+      "patch": {
+        "operationId": "updateCartLine",
+        "tags": [
+          "cart"
+        ],
+        "summary": "改数量或勾选",
+        "description": "A quantity above stock is `out_of_stock` (details.available). Unselecting is always allowed.",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sku",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^RT-[A-Z]{3}-(?:100G|250G|500G|1KG)-(?:WB|PO|ES|FP|CB)-(?:STD|GIFT)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCartLineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`out_of_stock` 库存不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`quantity_invalid` 数量应为 1–9",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "not_found",
+          "quantity_invalid",
+          "out_of_stock",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      },
+      "delete": {
+        "operationId": "removeCartLine",
+        "tags": [
+          "cart"
+        ],
+        "summary": "删除一行（撤销 = 带 index 重新加入）",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sku",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^RT-[A-Z]{3}-(?:100G|250G|500G|1KG)-(?:WB|PO|ES|FP|CB)-(?:STD|GIFT)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "not_found",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/cart/selection": {
+      "put": {
+        "operationId": "setCartSelection",
+        "tags": [
+          "cart"
+        ],
+        "summary": "全选 / 全不选",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CartSelectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/cart/coupon": {
+      "put": {
+        "operationId": "applyCoupon",
+        "tags": [
+          "cart"
+        ],
+        "summary": "使用优惠码（空码 = 取消）",
+        "description": "An invalid code leaves the cart (and its current coupon) unchanged.",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyCouponRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`coupon_invalid` 优惠码无效或已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "coupon_invalid",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      },
+      "delete": {
+        "operationId": "removeCoupon",
+        "tags": [
+          "cart"
+        ],
+        "summary": "取消优惠码",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/cart/address": {
+      "put": {
+        "operationId": "setCartAddress",
+        "tags": [
+          "cart"
+        ],
+        "summary": "指定本单收货地址（用于本单）",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetCartAddressRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "not_found",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/cart/quote": {
+      "post": {
+        "operationId": "quoteCart",
+        "tags": [
+          "cart"
+        ],
+        "summary": "访客购物车报价：为客户端持有的购物车计价",
+        "description": "Prices the lines as the member cart would, in the given order; lines of the same SKU are summed (capped at 9). Unknown products are `not_found`; sold-out weights and quantities above stock are priced and flagged in `problem`. An invalid non-empty coupon is `coupon_invalid` (re-quote without it). `address` is always `null`. Nothing is stored.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CartQuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`cart_full` 购物车最多放 50 种规格",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`quantity_invalid` 数量应为 1–9；`coupon_invalid` 优惠码无效或已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "none",
+        "x-error-codes": [
+          "not_found",
+          "quantity_invalid",
+          "cart_full",
+          "coupon_invalid",
+          "unauthorized",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/cart/merge": {
+      "post": {
+        "operationId": "mergeCart",
+        "tags": [
+          "cart"
+        ],
+        "summary": "登录后把访客购物车合并进会员购物车",
+        "description": "In guest order, each line is added like `addCartLine` but never fails: quantities are capped at min(9, stock); unknown products, sold-out weights, products without stock and lines beyond 50 are skipped (`skippedCount`). A new line keeps the guest `selected` flag; a line merged into an existing one is selected if either was. A valid `couponCode` replaces the member coupon; an invalid one is ignored.",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CartMergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CartMergeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/addresses": {
+      "get": {
+        "operationId": "listAddresses",
+        "tags": [
+          "addresses"
+        ],
+        "summary": "地址本",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "internal_error"
+        ]
+      },
+      "post": {
+        "operationId": "createAddress",
+        "tags": [
+          "addresses"
+        ],
+        "summary": "新增地址",
+        "description": "The first address becomes the default (and so the order address). `isDefault: true` moves the default to it.",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddressInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressSaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`address_limit` 地址最多保存 20 条",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`recipient_required` 请填写收货人；`region_required` 请填写所在地区；`detail_required` 请填写详细地址；`phone_invalid` 手机号应为 11 位数字；`text_too_long` 内容太长了",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "recipient_required",
+          "region_required",
+          "detail_required",
+          "phone_invalid",
+          "text_too_long",
+          "address_limit",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/addresses/{id}": {
+      "put": {
+        "operationId": "updateAddress",
+        "tags": [
+          "addresses"
+        ],
+        "summary": "编辑地址（整体替换）",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddressInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressSaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`recipient_required` 请填写收货人；`region_required` 请填写所在地区；`detail_required` 请填写详细地址；`phone_invalid` 手机号应为 11 位数字；`text_too_long` 内容太长了",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "not_found",
+          "recipient_required",
+          "region_required",
+          "detail_required",
+          "phone_invalid",
+          "text_too_long",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      },
+      "delete": {
+        "operationId": "deleteAddress",
+        "tags": [
+          "addresses"
+        ],
+        "summary": "删除地址（无确认）",
+        "description": "Deleting the default makes the oldest remaining address the default. Deleting the order address falls back to the default (`orderAddressId`).",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "not_found",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/addresses/{id}/default": {
+      "post": {
+        "operationId": "setDefaultAddress",
+        "tags": [
+          "addresses"
+        ],
+        "summary": "设为默认地址（已是默认时不变）",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "not_found",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/orders": {
+      "post": {
+        "operationId": "placeOrder",
+        "tags": [
+          "orders"
+        ],
+        "summary": "结算下单（演示：不扣款，下单即完成）",
+        "description": "One transaction: take the selected lines (none: `empty_selection`) and the order address (none: `address_required`); re-price them (`services/pricing.ts`) with the cart coupon; check each weight (`sold_out`) and that each product has stock for the sum of its lines (`out_of_stock`, details); compare `expectedTotal` (`price_changed`); decrement stock; create the order with a unique number (retry on collision), name/price/address snapshots and ETA = now + 3 days; delete the purchased lines and clear the coupon. On any error nothing changes.",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceOrderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacedOrder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`empty_selection` 还没有勾选商品；`address_required` 请先选择收货地址；`sold_out` 该重量暂时缺货；`out_of_stock` 库存不足；`price_changed` 价格有变化，请确认后再结算",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "empty_selection",
+          "address_required",
+          "sold_out",
+          "out_of_stock",
+          "price_changed",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
+      },
+      "get": {
+        "operationId": "listOrders",
+        "tags": [
+          "orders"
+        ],
+        "summary": "订单列表（最新在前，状态按时间推进）",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/orders/{number}": {
+      "get": {
+        "operationId": "getOrder",
+        "tags": [
+          "orders"
+        ],
+        "summary": "订单详情（回执）",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^RT\\d{10}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` 资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "not_found",
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/profile": {
+      "get": {
+        "operationId": "getProfile",
+        "tags": [
+          "profile"
+        ],
+        "summary": "我的：会员、统计、口味画像与推荐",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-SSH-Fingerprint",
+            "in": "header",
+            "required": false,
+            "description": "本次 SSH 连接的公钥指纹（`SHA256:…`），由 TUI 从会话环境转发；只在带内部密钥的请求里可信。",
+            "schema": {
+              "type": "string",
+              "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "internal_error"
+        ]
+      }
+    },
+    "/v1/settings": {
+      "get": {
+        "operationId": "getSettings",
+        "tags": [
+          "profile"
+        ],
+        "summary": "界面设置（随账号保存）",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "internal_error"
+        ]
+      },
+      "patch": {
+        "operationId": "updateSettings",
+        "tags": [
+          "profile"
+        ],
+        "summary": "修改界面设置",
+        "security": [
+          {
+            "internalKey": [],
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` 请求参数不合法；`bad_request` 请求格式错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized` 缺少或错误的内部密钥；`session_expired` 登录已失效；`login_required` 请先登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error` 服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth": "user",
+        "x-error-codes": [
+          "unauthorized",
+          "session_expired",
+          "login_required",
+          "validation_failed",
+          "bad_request",
+          "internal_error"
+        ]
       }
     }
   },
@@ -96,27 +2748,95 @@
         "type": "apiKey",
         "in": "header",
         "name": "X-Internal-Key",
-        "description": "仅当后端设置了 COFFEE_INTERNAL_KEY 时校验。"
+        "description": "网关与后端之间的共享密钥；仅当后端设置了 COFFEE_INTERNAL_KEY 时校验。"
+      },
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "会员会话令牌（43 个 base64url 字符，7 天有效）。"
       }
     },
     "schemas": {
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "bad_request",
+          "validation_failed",
+          "unauthorized",
+          "not_found",
+          "method_not_allowed",
+          "rate_limited",
+          "internal_error",
+          "not_implemented",
+          "login_required",
+          "session_expired",
+          "username_required",
+          "username_invalid",
+          "password_too_short",
+          "password_too_long",
+          "username_taken",
+          "invalid_credentials",
+          "fingerprint_required",
+          "not_remembered",
+          "quantity_invalid",
+          "sold_out",
+          "out_of_stock",
+          "cart_full",
+          "coupon_invalid",
+          "empty_selection",
+          "address_required",
+          "price_changed",
+          "recipient_required",
+          "region_required",
+          "detail_required",
+          "phone_invalid",
+          "text_too_long",
+          "address_limit"
+        ]
+      },
+      "ApiErrorDetails": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "minLength": 1
+          },
+          "productId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "productName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "available": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "retryAfter": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
       "ApiErrorBody": {
         "type": "object",
         "properties": {
           "code": {
-            "type": "string",
-            "enum": [
-              "bad_request",
-              "validation_failed",
-              "unauthorized",
-              "not_found",
-              "method_not_allowed",
-              "internal_error"
-            ]
+            "$ref": "#/components/schemas/ErrorCode"
           },
           "message": {
             "type": "string",
             "minLength": 1
+          },
+          "details": {
+            "$ref": "#/components/schemas/ApiErrorDetails"
           }
         },
         "required": [
@@ -136,6 +2856,54 @@
           "error"
         ],
         "additionalProperties": false
+      },
+      "Ok": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
+      },
+      "Weight": {
+        "type": "string",
+        "enum": [
+          "100g",
+          "250g",
+          "500g",
+          "1kg"
+        ]
+      },
+      "Grind": {
+        "type": "string",
+        "enum": [
+          "WB",
+          "PO",
+          "ES",
+          "FP",
+          "CB"
+        ]
+      },
+      "Pack": {
+        "type": "string",
+        "enum": [
+          "STD",
+          "GIFT"
+        ]
+      },
+      "Sku": {
+        "type": "string",
+        "pattern": "^RT-[A-Z]{3}-(?:100G|250G|500G|1KG)-(?:WB|PO|ES|FP|CB)-(?:STD|GIFT)$"
+      },
+      "RoastLevel": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5
       },
       "Health": {
         "type": "object",
@@ -165,6 +2933,218 @@
         ],
         "additionalProperties": false
       },
+      "RegisterRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[\\p{Script=Han}\\w]{2,16}$"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128
+          },
+          "remember": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "additionalProperties": false
+      },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "password": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128
+          },
+          "remember": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "additionalProperties": false
+      },
+      "Tier": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "level": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "points": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "nextLevel": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "nextLevelPoints": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "pointsToNext": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "name",
+          "level",
+          "points",
+          "nextLevel",
+          "nextLevelPoints",
+          "pointsToNext",
+          "progress"
+        ],
+        "additionalProperties": false
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "username": {
+            "type": "string",
+            "minLength": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/Tier"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "createdAt",
+          "tier"
+        ],
+        "additionalProperties": false
+      },
+      "RememberStatus": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "remembered",
+              "not_remembered",
+              "no_key"
+            ]
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiresOn": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "expiresAt",
+          "expiresOn"
+        ],
+        "additionalProperties": false
+      },
+      "Me": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "remembered": {
+            "$ref": "#/components/schemas/RememberStatus"
+          }
+        },
+        "required": [
+          "user",
+          "remembered"
+        ],
+        "additionalProperties": false
+      },
+      "AuthSession": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^[\\w-]{43}$"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "remembered": {
+            "$ref": "#/components/schemas/RememberStatus"
+          }
+        },
+        "required": [
+          "token",
+          "expiresAt",
+          "user",
+          "remembered"
+        ],
+        "additionalProperties": false
+      },
       "Flavor": {
         "minItems": 6,
         "maxItems": 6,
@@ -175,10 +3155,22 @@
           "maximum": 10
         }
       },
-      "RoastLevel": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 5
+      "RoastBand": {
+        "type": "string",
+        "enum": [
+          "light",
+          "medium",
+          "dark"
+        ]
+      },
+      "ProductSort": {
+        "type": "string",
+        "enum": [
+          "recommended",
+          "price_asc",
+          "price_desc",
+          "score"
+        ]
       },
       "ProductSummary": {
         "type": "object",
@@ -195,6 +3187,10 @@
             "type": "string"
           },
           "origin": {
+            "type": "string",
+            "minLength": 1
+          },
+          "region": {
             "type": "string",
             "minLength": 1
           },
@@ -231,6 +3227,10 @@
             "minimum": 0,
             "maximum": 100
           },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
           "price250": {
             "type": "integer",
             "minimum": 0,
@@ -240,6 +3240,9 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "defaultWeight": {
+            "$ref": "#/components/schemas/Weight"
           }
         },
         "required": [
@@ -247,14 +3250,57 @@
           "name",
           "subtitle",
           "origin",
+          "region",
           "process",
           "roast",
           "tag",
           "notes",
           "flavor",
           "score",
+          "description",
           "price250",
-          "stock"
+          "stock",
+          "defaultWeight"
+        ],
+        "additionalProperties": false
+      },
+      "OriginFacet": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string",
+            "minLength": 1
+          },
+          "count": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "origin",
+          "count"
+        ],
+        "additionalProperties": false
+      },
+      "ProductFacets": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OriginFacet"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "origins"
         ],
         "additionalProperties": false
       },
@@ -266,11 +3312,1277 @@
             "items": {
               "$ref": "#/components/schemas/ProductSummary"
             }
+          },
+          "facets": {
+            "$ref": "#/components/schemas/ProductFacets"
           }
         },
         "required": [
-          "items"
+          "items",
+          "facets"
         ],
+        "additionalProperties": false
+      },
+      "WeightOption": {
+        "type": "object",
+        "properties": {
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "available": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "weight",
+          "available"
+        ],
+        "additionalProperties": false
+      },
+      "PriceCell": {
+        "type": "object",
+        "properties": {
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "pack": {
+            "$ref": "#/components/schemas/Pack"
+          },
+          "unitPrice": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "required": [
+          "weight",
+          "pack",
+          "unitPrice",
+          "totals"
+        ],
+        "additionalProperties": false
+      },
+      "ProductDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "minLength": 1
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1
+          },
+          "process": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roast": {
+            "$ref": "#/components/schemas/RoastLevel"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "flavor": {
+            "$ref": "#/components/schemas/Flavor"
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "price250": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "stock": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "defaultWeight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "farm": {
+            "type": "string",
+            "minLength": 1
+          },
+          "altitude": {
+            "type": "string",
+            "minLength": 1
+          },
+          "variety": {
+            "type": "string",
+            "minLength": 1
+          },
+          "harvest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "brew": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxQuantity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "weights": {
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeightOption"
+            }
+          },
+          "prices": {
+            "minItems": 8,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceCell"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "subtitle",
+          "origin",
+          "region",
+          "process",
+          "roast",
+          "tag",
+          "notes",
+          "flavor",
+          "score",
+          "description",
+          "price250",
+          "stock",
+          "defaultWeight",
+          "code",
+          "farm",
+          "altitude",
+          "variety",
+          "harvest",
+          "brew",
+          "maxQuantity",
+          "weights",
+          "prices"
+        ],
+        "additionalProperties": false
+      },
+      "CartLineProblem": {
+        "type": "string",
+        "enum": [
+          "sold_out",
+          "out_of_stock"
+        ]
+      },
+      "CartLine": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "$ref": "#/components/schemas/Sku"
+          },
+          "productId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "origin": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roast": {
+            "$ref": "#/components/schemas/RoastLevel"
+          },
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "grind": {
+            "$ref": "#/components/schemas/Grind"
+          },
+          "pack": {
+            "$ref": "#/components/schemas/Pack"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "unitPrice": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "lineTotal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "maxQuantity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CartLineProblem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sku",
+          "productId",
+          "name",
+          "origin",
+          "roast",
+          "weight",
+          "grind",
+          "pack",
+          "quantity",
+          "selected",
+          "unitPrice",
+          "lineTotal",
+          "maxQuantity",
+          "problem"
+        ],
+        "additionalProperties": false
+      },
+      "AppliedCoupon": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "code",
+          "description"
+        ],
+        "additionalProperties": false
+      },
+      "FreeShipping": {
+        "type": "object",
+        "properties": {
+          "threshold": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "reached": {
+            "type": "boolean"
+          },
+          "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "gap": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "threshold",
+          "reached",
+          "progress",
+          "gap"
+        ],
+        "additionalProperties": false
+      },
+      "CartTotals": {
+        "type": "object",
+        "properties": {
+          "itemCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "selectedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "subtotal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "discount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "shipping": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "freeShipping": {
+            "$ref": "#/components/schemas/FreeShipping"
+          }
+        },
+        "required": [
+          "itemCount",
+          "selectedCount",
+          "subtotal",
+          "discount",
+          "shipping",
+          "total",
+          "freeShipping"
+        ],
+        "additionalProperties": false
+      },
+      "Cart": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CartLine"
+            }
+          },
+          "coupon": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppliedCoupon"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Address"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totals": {
+            "$ref": "#/components/schemas/CartTotals"
+          }
+        },
+        "required": [
+          "lines",
+          "coupon",
+          "address",
+          "totals"
+        ],
+        "additionalProperties": false
+      },
+      "GuestCartLine": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "grind": {
+            "$ref": "#/components/schemas/Grind"
+          },
+          "pack": {
+            "$ref": "#/components/schemas/Pack"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9
+          },
+          "selected": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "productId",
+          "weight",
+          "grind",
+          "pack",
+          "quantity"
+        ],
+        "additionalProperties": false
+      },
+      "CartQuoteRequest": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuestCartLine"
+            }
+          },
+          "couponCode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "CartMergeRequest": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuestCartLine"
+            }
+          },
+          "couponCode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "CartMergeResult": {
+        "type": "object",
+        "properties": {
+          "cart": {
+            "$ref": "#/components/schemas/Cart"
+          },
+          "mergedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "skippedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "cart",
+          "mergedCount",
+          "skippedCount"
+        ],
+        "additionalProperties": false
+      },
+      "AddCartLineRequest": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "grind": {
+            "$ref": "#/components/schemas/Grind"
+          },
+          "pack": {
+            "$ref": "#/components/schemas/Pack"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "productId",
+          "weight",
+          "grind",
+          "pack",
+          "quantity"
+        ],
+        "additionalProperties": false
+      },
+      "UpdateCartLineRequest": {
+        "type": "object",
+        "properties": {
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9
+          },
+          "selected": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CartSelectionRequest": {
+        "type": "object",
+        "properties": {
+          "selected": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "selected"
+        ],
+        "additionalProperties": false
+      },
+      "ApplyCouponRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 32
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "SetCartAddressRequest": {
+        "type": "object",
+        "properties": {
+          "addressId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "addressId"
+        ],
+        "additionalProperties": false
+      },
+      "AddressTag": {
+        "type": "string",
+        "enum": [
+          "home",
+          "work",
+          "school"
+        ]
+      },
+      "Address": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "recipient": {
+            "type": "string",
+            "minLength": 1
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{11}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phoneMasked": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{3} \\*{4} \\d{4}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tag": {
+            "$ref": "#/components/schemas/AddressTag"
+          },
+          "isDefault": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "recipient",
+          "phone",
+          "phoneMasked",
+          "region",
+          "detail",
+          "tag",
+          "isDefault"
+        ],
+        "additionalProperties": false
+      },
+      "AddressList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Address"
+            }
+          },
+          "defaultAddressId": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "orderAddressId": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "defaultAddressId",
+          "orderAddressId"
+        ],
+        "additionalProperties": false
+      },
+      "AddressInput": {
+        "type": "object",
+        "properties": {
+          "recipient": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:\\d{11})?$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tag": {
+            "default": "home",
+            "$ref": "#/components/schemas/AddressTag"
+          },
+          "isDefault": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recipient",
+          "region",
+          "detail"
+        ],
+        "additionalProperties": false
+      },
+      "AddressSaved": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "book": {
+            "$ref": "#/components/schemas/AddressList"
+          }
+        },
+        "required": [
+          "address",
+          "book"
+        ],
+        "additionalProperties": false
+      },
+      "OrderStatus": {
+        "type": "string",
+        "enum": [
+          "roasting",
+          "shipping",
+          "delivered"
+        ]
+      },
+      "OrderNumber": {
+        "type": "string",
+        "pattern": "^RT\\d{10}$"
+      },
+      "OrderItem": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "$ref": "#/components/schemas/Sku"
+          },
+          "productId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "grind": {
+            "$ref": "#/components/schemas/Grind"
+          },
+          "pack": {
+            "$ref": "#/components/schemas/Pack"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9
+          },
+          "unitPrice": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "lineTotal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "sku",
+          "productId",
+          "name",
+          "weight",
+          "grind",
+          "pack",
+          "quantity",
+          "unitPrice",
+          "lineTotal"
+        ],
+        "additionalProperties": false
+      },
+      "OrderAddress": {
+        "type": "object",
+        "properties": {
+          "recipient": {
+            "type": "string",
+            "minLength": 1
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{11}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phoneMasked": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{3} \\*{4} \\d{4}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "recipient",
+          "phone",
+          "phoneMasked",
+          "region",
+          "detail"
+        ],
+        "additionalProperties": false
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "$ref": "#/components/schemas/OrderNumber"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "orderDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "etaAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "etaDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "items": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderItem"
+            }
+          },
+          "subtotal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "discount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "shipping": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "couponCode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "address": {
+            "$ref": "#/components/schemas/OrderAddress"
+          }
+        },
+        "required": [
+          "number",
+          "createdAt",
+          "orderDate",
+          "etaAt",
+          "etaDate",
+          "status",
+          "items",
+          "subtotal",
+          "discount",
+          "shipping",
+          "total",
+          "couponCode",
+          "address"
+        ],
+        "additionalProperties": false
+      },
+      "OrderSummaryLine": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "weight": {
+            "$ref": "#/components/schemas/Weight"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9
+          }
+        },
+        "required": [
+          "productId",
+          "name",
+          "weight",
+          "quantity"
+        ],
+        "additionalProperties": false
+      },
+      "OrderSummary": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "$ref": "#/components/schemas/OrderNumber"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "orderDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "itemCount": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "lines": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderSummaryLine"
+            }
+          }
+        },
+        "required": [
+          "number",
+          "createdAt",
+          "orderDate",
+          "status",
+          "total",
+          "itemCount",
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "OrderList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderSummary"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "additionalProperties": false
+      },
+      "PlaceOrderRequest": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "pattern": "^[\\w-]{8,64}$"
+          },
+          "expectedTotal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "idempotencyKey"
+        ],
+        "additionalProperties": false
+      },
+      "PlacedOrder": {
+        "type": "object",
+        "properties": {
+          "order": {
+            "$ref": "#/components/schemas/Order"
+          },
+          "cart": {
+            "$ref": "#/components/schemas/Cart"
+          }
+        },
+        "required": [
+          "order",
+          "cart"
+        ],
+        "additionalProperties": false
+      },
+      "ProfileStats": {
+        "type": "object",
+        "properties": {
+          "orders": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "addresses": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "coupons": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "orders",
+          "addresses",
+          "coupons"
+        ],
+        "additionalProperties": false
+      },
+      "Taste": {
+        "type": "object",
+        "properties": {
+          "flavor": {
+            "$ref": "#/components/schemas/Flavor"
+          },
+          "prefer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "often": {
+            "type": "string",
+            "minLength": 1
+          },
+          "avoid": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "flavor",
+          "prefer",
+          "often",
+          "avoid"
+        ],
+        "additionalProperties": false
+      },
+      "ProductRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "Profile": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "remembered": {
+            "$ref": "#/components/schemas/RememberStatus"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/ProfileStats"
+          },
+          "taste": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Taste"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recommendations": {
+            "maxItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductRef"
+            }
+          }
+        },
+        "required": [
+          "user",
+          "remembered",
+          "stats",
+          "taste",
+          "recommendations"
+        ],
+        "additionalProperties": false
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "animations": {
+            "type": "boolean"
+          },
+          "mouseTracking": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "animations",
+          "mouseTracking"
+        ],
+        "additionalProperties": false
+      },
+      "SettingsPatch": {
+        "type": "object",
+        "properties": {
+          "animations": {
+            "type": "boolean"
+          },
+          "mouseTracking": {
+            "type": "boolean"
+          }
+        },
         "additionalProperties": false
       }
     }

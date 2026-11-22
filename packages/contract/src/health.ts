@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { API_PREFIX } from './common.ts'
-import { defineEndpoints } from './endpoint.ts'
+import { defineEndpoint, defineEndpoints } from './endpoint.ts'
 
 /** `GET /v1/health`. */
 export const HealthSchema = z.strictObject({
@@ -17,15 +17,17 @@ export type Health = z.infer<typeof HealthSchema>
 
 export const healthComponents = { Health: HealthSchema }
 
-export const healthEndpoints = defineEndpoints([
-  {
-    method: 'get',
-    path: `${API_PREFIX}/health`,
-    operationId: 'getHealth',
-    tag: 'health',
-    summary: '健康检查（无需内部密钥）',
-    access: 'public',
-    success: { status: 200, schema: HealthSchema },
-    errors: [],
-  },
-])
+export const getHealth = defineEndpoint({
+  method: 'get',
+  path: `${API_PREFIX}/health`,
+  operationId: 'getHealth',
+  tag: 'health',
+  summary: '健康检查（无需内部密钥）',
+  access: 'public',
+  auth: 'none',
+  fingerprint: 'none',
+  success: { status: 200, schema: HealthSchema },
+  errors: [],
+})
+
+export const healthEndpoints = defineEndpoints([getHealth])

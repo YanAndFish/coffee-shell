@@ -1,0 +1,40 @@
+{
+  "items": [],
+  "facets": {
+    "total": 8,
+    "origins": [
+      {
+        "origin": "埃塞俄比亚",
+        "count": 1
+      },
+      {
+        "origin": "哥伦比亚",
+        "count": 1
+      },
+      {
+        "origin": "肯尼亚",
+        "count": 1
+      },
+      {
+        "origin": "巴拿马",
+        "count": 1
+      },
+      {
+        "origin": "中国云南",
+        "count": 1
+      },
+      {
+        "origin": "危地马拉",
+        "count": 1
+      },
+      {
+        "origin": "印尼",
+        "count": 1
+      },
+      {
+        "origin": "拼配",
+        "count": 1
+      }
+    ]
+  }
+}

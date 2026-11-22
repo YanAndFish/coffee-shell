@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "缺少或错误的内部密钥"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "recipient": "林晓",
+      "phone": "13800005521",
+      "phoneMasked": "138 **** 5521",
+      "region": "上海市 徐汇区",
+      "detail": "天平路 88 弄 3 号 602 室",
+      "tag": "home",
+      "isDefault": false
+    },
+    {
+      "id": 2,
+      "recipient": "林晓",
+      "phone": "13800005521",
+      "phoneMasked": "138 **** 5521",
+      "region": "上海市 静安区",
+      "detail": "江宁路 300 号 12F（前台代收）",
+      "tag": "work",
+      "isDefault": false
+    },
+    {
+      "id": 3,
+      "recipient": "陈默",
+      "phone": "13900000817",
+      "phoneMasked": "139 **** 0817",
+      "region": "浙江省 杭州市 西湖区",
+      "detail": "文三路 128 号 5 幢 1 单元 301",
+      "tag": "home",
+      "isDefault": true
+    }
+  ],
+  "defaultAddressId": 3,
+  "orderAddressId": 3
+}

@@ -1,0 +1,49 @@
+{
+  "user": {
+    "id": 1,
+    "username": "林晓",
+    "createdAt": "2026-11-01T02:00:00.000Z",
+    "tier": {
+      "name": "熟豆会员",
+      "level": 3,
+      "points": 1280,
+      "nextLevel": 4,
+      "nextLevelPoints": 2000,
+      "pointsToNext": 720,
+      "progress": 64
+    }
+  },
+  "remembered": {
+    "state": "remembered",
+    "expiresAt": "2026-12-22T13:04:00.000Z",
+    "expiresOn": "2026-12-22"
+  },
+  "stats": {
+    "orders": 4,
+    "addresses": 3,
+    "coupons": 1
+  },
+  "taste": {
+    "flavor": [
+      7,
+      8,
+      5,
+      2,
+      8,
+      8
+    ],
+    "prefer": "干净甜感 · 悠长余韵 · 花香",
+    "often": "浅烘 / 中浅烘 · 手冲研磨 · 250g",
+    "avoid": "深烘 · 烟熏与草本调"
+  },
+  "recommendations": [
+    {
+      "id": "nyeri",
+      "name": "涅里 AA 双洗"
+    },
+    {
+      "id": "yunnan",
+      "name": "保山 小粒 日晒"
+    }
+  ]
+}

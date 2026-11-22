@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "phone_invalid",
+    "message": "手机号应为 11 位数字"
+  }
+}

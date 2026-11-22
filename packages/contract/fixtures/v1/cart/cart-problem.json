@@ -1,0 +1,45 @@
+{
+  "lines": [
+    {
+      "sku": "RT-GSH-100G-PO-GIFT",
+      "productId": "geisha",
+      "name": "波奎特 瑰夏",
+      "origin": "巴拿马",
+      "roast": 1,
+      "weight": "100g",
+      "grind": "PO",
+      "pack": "GIFT",
+      "quantity": 3,
+      "selected": true,
+      "unitPrice": 141,
+      "lineTotal": 423,
+      "maxQuantity": 2,
+      "problem": "out_of_stock"
+    }
+  ],
+  "coupon": null,
+  "address": {
+    "id": 1,
+    "recipient": "林晓",
+    "phone": "13800005521",
+    "phoneMasked": "138 **** 5521",
+    "region": "上海市 徐汇区",
+    "detail": "天平路 88 弄 3 号 602 室",
+    "tag": "home",
+    "isDefault": true
+  },
+  "totals": {
+    "itemCount": 3,
+    "selectedCount": 3,
+    "subtotal": 423,
+    "discount": 0,
+    "shipping": 0,
+    "total": 423,
+    "freeShipping": {
+      "threshold": 199,
+      "reached": true,
+      "progress": 100,
+      "gap": 0
+    }
+  }
+}

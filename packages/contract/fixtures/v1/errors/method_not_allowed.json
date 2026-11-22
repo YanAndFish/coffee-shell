@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "method_not_allowed",
+    "message": "不支持该请求方法"
+  }
+}

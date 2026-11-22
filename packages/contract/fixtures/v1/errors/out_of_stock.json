@@ -1,0 +1,11 @@
+{
+  "error": {
+    "code": "out_of_stock",
+    "message": "库存不足",
+    "details": {
+      "productId": "geisha",
+      "productName": "波奎特 瑰夏",
+      "available": 6
+    }
+  }
+}

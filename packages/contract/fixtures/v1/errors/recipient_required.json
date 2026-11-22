@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "recipient_required",
+    "message": "请填写收货人"
+  }
+}

@@ -1,0 +1,157 @@
+{
+  "items": [
+    {
+      "id": "yirga",
+      "name": "耶加雪菲 孔加",
+      "subtitle": "Ethiopia · Yirgacheffe Konga G1",
+      "origin": "埃塞俄比亚",
+      "region": "耶加雪菲 · 孔加",
+      "process": "水洗",
+      "roast": 1,
+      "tag": "新产季",
+      "notes": [
+        "茉莉",
+        "柠檬",
+        "佛手柑",
+        "红茶"
+      ],
+      "flavor": [
+        8,
+        7,
+        4,
+        2,
+        7,
+        9
+      ],
+      "score": 87.5,
+      "description": "高海拔小农水洗批次，干香是一把新鲜茉莉。入口柠檬与佛手柑的酸质明亮干净，冷却后浮出红茶般的回甘，适合手冲慢慢喝。",
+      "price250": 98,
+      "stock": 42,
+      "defaultWeight": "250g"
+    },
+    {
+      "id": "nyeri",
+      "name": "涅里 AA 双洗",
+      "subtitle": "Kenya · Nyeri AA Double Washed",
+      "origin": "肯尼亚",
+      "region": "涅里 · 卡拉蒂纳",
+      "process": "双重水洗",
+      "roast": 2,
+      "tag": null,
+      "notes": [
+        "黑醋栗",
+        "西柚",
+        "番茄",
+        "红糖"
+      ],
+      "flavor": [
+        9,
+        6,
+        6,
+        3,
+        7,
+        7
+      ],
+      "score": 87,
+      "description": "典型的肯尼亚明亮酸质：黑醋栗与西柚汁的多汁感，带一点番茄般的鲜咸。中段红糖甜感撑起结构，做冰手冲也很出彩。",
+      "price250": 108,
+      "stock": 18,
+      "defaultWeight": "250g"
+    },
+    {
+      "id": "pinkb",
+      "name": "慧兰 粉红波旁",
+      "subtitle": "Colombia · Huila Pink Bourbon",
+      "origin": "哥伦比亚",
+      "region": "慧兰 · 皮塔利托",
+      "process": "水洗",
+      "roast": 2,
+      "tag": "店长推荐",
+      "notes": [
+        "荔枝",
+        "蔓越莓",
+        "蜂蜜",
+        "可可"
+      ],
+      "flavor": [
+        7,
+        8,
+        5,
+        2,
+        8,
+        8
+      ],
+      "score": 88,
+      "description": "粉红波旁的甜感是它最大的特点。荔枝与蔓越莓的果汁感包裹着蜂蜜甜，收尾带一点干净的可可，冷热都好喝。",
+      "price250": 118,
+      "stock": 26,
+      "defaultWeight": "250g"
+    },
+    {
+      "id": "geisha",
+      "name": "波奎特 瑰夏",
+      "subtitle": "Panama · Boquete Geisha Washed",
+      "origin": "巴拿马",
+      "region": "奇里基 · 波奎特",
+      "process": "水洗",
+      "roast": 1,
+      "tag": "限量",
+      "notes": [
+        "茉莉",
+        "白桃",
+        "柑橘",
+        "蜂蜜"
+      ],
+      "flavor": [
+        7,
+        8,
+        3,
+        1,
+        9,
+        10
+      ],
+      "score": 90,
+      "description": "每批只烘几公斤的限量瑰夏。花香极为饱满，白桃与柑橘层层展开，口感轻盈如茶，余韵是长长的蜂蜜甜。",
+      "price250": 268,
+      "stock": 6,
+      "defaultWeight": "250g"
+    }
+  ],
+  "facets": {
+    "total": 8,
+    "origins": [
+      {
+        "origin": "埃塞俄比亚",
+        "count": 1
+      },
+      {
+        "origin": "哥伦比亚",
+        "count": 1
+      },
+      {
+        "origin": "肯尼亚",
+        "count": 1
+      },
+      {
+        "origin": "巴拿马",
+        "count": 1
+      },
+      {
+        "origin": "中国云南",
+        "count": 1
+      },
+      {
+        "origin": "危地马拉",
+        "count": 1
+      },
+      {
+        "origin": "印尼",
+        "count": 1
+      },
+      {
+        "origin": "拼配",
+        "count": 1
+      }
+    ]
+  }
+}

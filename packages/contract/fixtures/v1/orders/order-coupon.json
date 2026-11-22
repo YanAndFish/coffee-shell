@@ -1,0 +1,33 @@
+{
+  "number": "RT2611150203",
+  "createdAt": "2026-11-15T04:00:00.000Z",
+  "orderDate": "2026-11-15",
+  "etaAt": "2026-11-18T04:00:00.000Z",
+  "etaDate": "2026-11-18",
+  "status": "delivered",
+  "items": [
+    {
+      "sku": "RT-YIR-500G-WB-STD",
+      "productId": "yirga",
+      "name": "耶加雪菲 孔加",
+      "weight": "500g",
+      "grind": "WB",
+      "pack": "STD",
+      "quantity": 1,
+      "unitPrice": 186,
+      "lineTotal": 186
+    }
+  ],
+  "subtotal": 186,
+  "discount": 19,
+  "shipping": 12,
+  "total": 179,
+  "couponCode": "TTY10",
+  "address": {
+    "recipient": "林晓",
+    "phone": "13800005521",
+    "phoneMasked": "138 **** 5521",
+    "region": "上海市 徐汇区",
+    "detail": "天平路 88 弄 3 号 602 室"
+  }
+}

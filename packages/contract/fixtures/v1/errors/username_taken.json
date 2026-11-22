@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "username_taken",
+    "message": "这个用户名已被注册"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "coupon_invalid",
+    "message": "优惠码无效或已过期"
+  }
+}

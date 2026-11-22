@@ -1,0 +1,36 @@
+{
+  "lines": [
+    {
+      "sku": "RT-YIR-250G-PO-STD",
+      "productId": "yirga",
+      "name": "耶加雪菲 孔加",
+      "origin": "埃塞俄比亚",
+      "roast": 1,
+      "weight": "250g",
+      "grind": "PO",
+      "pack": "STD",
+      "quantity": 2,
+      "selected": true,
+      "unitPrice": 98,
+      "lineTotal": 196,
+      "maxQuantity": 9,
+      "problem": null
+    }
+  ],
+  "coupon": null,
+  "address": null,
+  "totals": {
+    "itemCount": 2,
+    "selectedCount": 2,
+    "subtotal": 196,
+    "discount": 0,
+    "shipping": 12,
+    "total": 208,
+    "freeShipping": {
+      "threshold": 199,
+      "reached": false,
+      "progress": 98,
+      "gap": 3
+    }
+  }
+}
