@@ -1,0 +1,1608 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ROAST/TTY · 终端咖啡商店</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&amp;family=Noto+Sans+SC:wght@400;500;700;800&amp;display=swap">
+<style>
+body{margin:0}
+.tui button{cursor:pointer}
+.tui button:hover:not(:disabled){filter:brightness(1.22)}
+.tui button:disabled{cursor:not-allowed}
+.tui input::placeholder{color:#9a8e7e}
+.tui :focus-visible{outline:1px dashed #f0b45a;outline-offset:2px}
+.tui input:focus{border-color:#f0b45a !important;outline:none}
+</style>
+</helmet>
+<div class="tui" ref="{{rootRef}}" tabIndex="0" onKeyDown="{{onKey}}" onMouseUp="{{onMouseUp}}" onFocus="{{onRootFocus}}" onBlur="{{onRootBlur}}" style="width:1280px;height:800px;box-sizing:border-box;position:relative;overflow:hidden;display:flex;flex-direction:column;background:#14110e;color:#ece4d6;font-family:'JetBrains Mono','Noto Sans SC',ui-monospace,monospace;font-size:14px;line-height:1.5;outline:none;border:1px solid #3b332a;border-radius:12px">
+
+<!-- window chrome -->
+<div style="height:34px;flex:none;display:flex;align-items:center;gap:14px;padding:0 14px;background:#1b1713;border-bottom:1px solid #3b332a;font-size:12px;color:#a39684">
+<div aria-hidden="true" style="display:flex;gap:7px;width:120px"><span style="width:11px;height:11px;border-radius:50%;background:#4a4036"></span><span style="width:11px;height:11px;border-radius:50%;background:#4a4036"></span><span style="width:11px;height:11px;border-radius:50%;background:#4a4036"></span></div>
+<div style="flex:1;text-align:center">roast@tty: ~/shop — zsh — 160×48</div>
+<div style="width:220px;text-align:right;white-space:nowrap"><span style="color:{{kb.c}}">{{kb.dot}}</span> {{kb.text}} · {{clock}}</div>
+</div>
+
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;position:relative">
+
+<!-- ============ LOGIN ============ -->
+<sc-if value="{{isLogin}}" hint-placeholder-val="{{true}}">
+<div style="flex:1;min-height:0;display:flex;{{screenAnim}}">
+<div style="flex:1;min-width:0;padding:40px 32px 40px 72px;display:flex;flex-direction:column;justify-content:center;gap:30px">
+<div role="img" aria-label="ROAST/TTY" style="display:flex;flex-direction:column;font-size:16px;line-height:1.08;font-weight:700">
+<sc-for list="{{logo}}" as="ln" hint-placeholder-count="5"><div style="white-space:pre"><span style="color:#f0b45a">{{ln.a}}</span><span style="color:#ece4d6">{{ln.b}}</span></div></sc-for>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px;max-width:540px">
+<p style="margin:0;font-size:21px;font-weight:700;color:#ece4d6">一家开在终端里的精品咖啡烘焙店。</p>
+<p style="margin:0;color:#a39684">每周二、五小批量烘焙，48 小时内发货。键盘飞快，鼠标也一样好用。</p>
+</div>
+<div style="display:flex;gap:44px;align-items:flex-end">
+<div aria-hidden="true" style="font-size:15px;line-height:1.25">
+<sc-for list="{{steam}}" as="st" hint-placeholder-count="3"><div style="white-space:pre;color:{{st.c}}">{{st.t}}</div></sc-for>
+<sc-for list="{{cup}}" as="cl" hint-placeholder-count="7"><div style="white-space:pre;color:#d9cfbf">{{cl}}</div></sc-for>
+</div>
+<ul style="list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:10px;color:#d9cfbf;font-size:13px">
+<li><span style="color:#8cc7a1">✓</span> 8 款当季单品与意式拼配</li>
+<li><span style="color:#8cc7a1">✓</span> 重量 · 研磨 · 包装 自由组合</li>
+<li><span style="color:#8cc7a1">✓</span> 风味雷达，一眼看懂酸甜醇苦</li>
+<li><span style="color:#8cc7a1">✓</span> 购物车与地址本云端同步</li>
+</ul>
+</div>
+</div>
+<div style="width:520px;flex:none;display:flex;align-items:center;justify-content:center;padding-right:48px;box-sizing:border-box">
+<section style="position:relative;width:440px;box-sizing:border-box;border:1px solid #3b332a;border-radius:10px;background:#1b1713;padding:34px 32px 24px;display:flex;flex-direction:column;gap:18px">
+<span style="position:absolute;top:-10px;left:18px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">登录 · SIGN IN</span>
+<div>
+<h1 style="margin:0;font-size:24px;line-height:1.3">欢迎回来</h1>
+<p style="margin:4px 0 0;color:#a39684;font-size:13px">登录以同步购物车、地址本与订单。</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+<label for="tty-acc" style="font-size:12px;color:#a39684">账号 / 邮箱</label>
+<div style="display:flex;align-items:center;gap:10px;height:44px;padding:0 12px;box-sizing:border-box;border:1px solid {{lg.accBd}};border-radius:6px;background:#14110e;transition:{{tr.fast}}">
+<span aria-hidden="true" style="color:{{lg.accMk}};font-weight:800">›</span>
+<input id="tty-acc" name="acc" value="{{lg.acc}}" onChange="{{lg.setAcc}}" onFocus="{{lg.focAcc}}" onBlur="{{lg.blur}}" style="flex:1;min-width:0;height:40px;background:transparent;border:none;outline:none;color:#ece4d6;font-family:inherit;font-size:14px">
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+<label for="tty-pw" style="font-size:12px;color:#a39684">密码</label>
+<div style="display:flex;align-items:center;gap:10px;height:44px;padding:0 12px;box-sizing:border-box;border:1px solid {{lg.pwBd}};border-radius:6px;background:#14110e;transition:{{tr.fast}}">
+<span aria-hidden="true" style="color:{{lg.pwMk}};font-weight:800">›</span>
+<input id="tty-pw" name="pw" type="password" value="{{lg.pw}}" onChange="{{lg.setPw}}" onFocus="{{lg.focPw}}" onBlur="{{lg.blur}}" style="flex:1;min-width:0;height:40px;background:transparent;border:none;outline:none;color:#ece4d6;font-family:inherit;font-size:14px;letter-spacing:.2em">
+</div>
+</div>
+<button onClick="{{lg.toggleRemember}}" aria-pressed="{{lg.rememberOn}}" style="align-self:flex-start;display:flex;align-items:center;gap:8px;background:none;border:none;padding:0;color:#d9cfbf;font-family:inherit;font-size:13px"><span style="color:{{lg.rememberC}}">{{lg.rememberBox}}</span>在此终端保持登录 7 天</button>
+<sc-if value="{{lg.hasErr}}" hint-placeholder-val="{{false}}"><div role="alert" style="font-size:13px;color:#f08a6c">✗ {{lg.err}}</div></sc-if>
+<sc-if value="{{lg.idle}}" hint-placeholder-val="{{true}}">
+<button onClick="{{lg.submit}}" style="height:48px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:15px;display:flex;align-items:center;justify-content:center;gap:10px">登录 <kbd style="display:inline-block;min-width:18px;padding:0 5px;border:1px solid rgba(26,20,13,0.4);border-bottom-width:2px;border-radius:4px;background:rgba(26,20,13,0.1);color:#1a140d;font-family:inherit;font-size:11px;line-height:16px">⏎</kbd></button>
+</sc-if>
+<sc-if value="{{lg.loading}}" hint-placeholder-val="{{false}}">
+<div role="status" style="display:flex;flex-direction:column;gap:8px;height:48px;justify-content:center">
+<div style="display:flex;justify-content:space-between;font-size:13px"><span><span style="color:#f0b45a">{{spin}}</span> {{lg.step}}</span><span style="color:#a39684">{{lg.pct}}%</span></div>
+<div style="height:12px;box-sizing:border-box;border:1px solid #3b332a;border-radius:3px;padding:2px"><div style="height:100%;width:{{lg.pct}}%;background:repeating-linear-gradient(90deg,#f0b45a 0 7px,transparent 7px 9px);transition:width 120ms linear"></div></div>
+</div>
+</sc-if>
+<div style="display:flex;gap:10px">
+<button onClick="{{lg.guest}}" style="flex:1;height:44px;border:1px solid #3b332a;border-radius:6px;background:transparent;color:#ece4d6;font-family:inherit;font-size:13px;display:flex;align-items:center;justify-content:center;gap:8px"><kbd style="display:inline-block;min-width:18px;padding:0 5px;border:1px solid #4a4036;border-bottom-width:2px;border-radius:4px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;line-height:16px">g</kbd>访客浏览</button>
+<button onClick="{{lg.register}}" style="flex:1;height:44px;border:1px solid #3b332a;border-radius:6px;background:transparent;color:#ece4d6;font-family:inherit;font-size:13px">注册新账号 →</button>
+</div>
+<p style="margin:0;font-size:12px;color:#a39684;text-align:center">Tab 切换输入 · ⏎ 提交 · ? 查看全部快捷键</p>
+</section>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ APP ============ -->
+<sc-if value="{{isApp}}" hint-placeholder-val="{{false}}">
+<div style="flex:1;min-height:0;display:flex;flex-direction:column">
+
+<header style="height:56px;flex:none;display:flex;align-items:center;gap:18px;padding:0 20px;border-bottom:1px solid #3b332a">
+<button onClick="{{nav.list}}" aria-label="ROAST/TTY 首页" style="display:flex;align-items:center;gap:8px;width:150px;background:none;border:none;padding:0;color:#ece4d6;font-family:inherit;font-weight:800;font-size:15px;letter-spacing:.04em"><span style="color:#f0b45a">◆</span>ROAST<span style="color:#a39684">/</span>TTY</button>
+<nav aria-label="主导航" style="position:relative;display:flex;height:56px">
+<sc-for list="{{tabs}}" as="t" hint-placeholder-count="4">
+<button onClick="{{t.go}}" aria-current="{{t.cur}}" style="width:116px;height:56px;display:flex;align-items:center;justify-content:center;gap:8px;background:none;border:none;padding:0;font-family:inherit;font-size:14px;color:{{t.fg}};font-weight:{{t.fw}};transition:{{tr.fast}}">
+<kbd style="display:inline-block;min-width:18px;padding:0 5px;box-sizing:border-box;border:1px solid #4a4036;border-bottom-width:2px;border-radius:4px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;font-weight:500;line-height:16px;text-align:center">{{t.k}}</kbd><span>{{t.label}}</span>
+<sc-if value="{{t.hasBadge}}" hint-placeholder-val="{{false}}"><span style="min-width:20px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:9px;background:#f0b45a;color:#1a140d;font-size:11px;font-weight:800;line-height:18px;text-align:center;transform:scale({{t.scale}});transition:transform 240ms cubic-bezier(.3,1.7,.5,1)">{{t.badge}}</span></sc-if>
+</button>
+</sc-for>
+<div aria-hidden="true" style="position:absolute;bottom:-1px;left:0;width:116px;height:2px;background:#f0b45a;transform:translateX({{tabX}}px);transition:{{tr.slide}}"></div>
+</nav>
+<div style="flex:1"></div>
+<div style="width:300px;height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;box-sizing:border-box;border:1px solid {{srch.bd}};border-radius:6px;background:#1b1713;transition:{{tr.fast}}">
+<kbd style="display:inline-block;min-width:18px;padding:0 5px;box-sizing:border-box;border:1px solid #4a4036;border-bottom-width:2px;border-radius:4px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;line-height:16px;text-align:center">/</kbd>
+<input name="search" aria-label="搜索商品" ref="{{searchRef}}" value="{{search}}" onChange="{{srch.change}}" onFocus="{{srch.focus}}" onBlur="{{srch.blur}}" placeholder="搜索豆子、产区或风味…" style="flex:1;min-width:0;height:32px;background:transparent;border:none;outline:none;color:#ece4d6;font-family:inherit;font-size:13px">
+<sc-if value="{{srch.has}}" hint-placeholder-val="{{false}}"><button onClick="{{srch.clear}}" aria-label="清除搜索" style="background:none;border:none;color:#a39684;font-family:inherit;padding:0 2px">✕</button></sc-if>
+</div>
+<button onClick="{{me.go}}" style="display:flex;align-items:center;gap:10px;height:40px;padding:0 6px;background:none;border:none;color:#ece4d6;font-family:inherit;font-size:13px">
+<span aria-hidden="true" style="width:28px;height:28px;border-radius:5px;background:{{me.bg}};color:#1a140d;display:flex;align-items:center;justify-content:center;font-weight:800">{{me.initial}}</span>
+<span>{{me.name}}</span><span style="color:#a39684">{{me.tag}}</span>
+</button>
+</header>
+
+<main style="flex:1;min-height:0;padding:20px 20px 16px;position:relative">
+
+<!-- ---------- LIST ---------- -->
+<sc-if value="{{is.list}}" hint-placeholder-val="{{false}}">
+<div style="height:100%;display:grid;grid-template-columns:220px minmax(0,1fr) 340px;gap:14px;{{screenAnim}}">
+
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;padding:22px 10px 12px;display:flex;flex-direction:column;gap:16px;min-height:0">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">筛选 FILTER</span>
+<div style="display:flex;flex-direction:column;gap:4px">
+<div style="display:flex;justify-content:space-between;align-items:center;padding:0 6px 4px;font-size:12px;color:#a39684"><span>产区</span><kbd style="display:inline-block;min-width:18px;padding:0 5px;border:1px solid #4a4036;border-bottom-width:2px;border-radius:4px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;line-height:16px;text-align:center">f</kbd></div>
+<sc-for list="{{origins}}" as="o" hint-placeholder-count="9">
+<button onClick="{{o.pick}}" aria-pressed="{{o.on}}" style="display:flex;justify-content:space-between;align-items:center;width:100%;height:28px;padding:0 8px;box-sizing:border-box;border:none;border-radius:4px;background:{{o.bg}};color:{{o.fg}};font-family:inherit;font-size:13px;text-align:left;transition:{{tr.fast}}"><span>{{o.mark}} {{o.name}}</span><span style="color:#a39684;font-size:12px">{{o.count}}</span></button>
+</sc-for>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px;padding:0 6px">
+<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#a39684"><span>烘焙度</span><kbd style="display:inline-block;min-width:18px;padding:0 5px;border:1px solid #4a4036;border-bottom-width:2px;border-radius:4px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;line-height:16px;text-align:center">r</kbd></div>
+<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px">
+<sc-for list="{{roasts}}" as="c" hint-placeholder-count="4"><button onClick="{{c.pick}}" aria-pressed="{{c.on}}" style="height:30px;border:1px solid {{c.bd}};border-radius:4px;background:{{c.bg}};color:{{c.fg}};font-family:inherit;font-size:12px;padding:0;transition:{{tr.fast}}">{{c.label}}</button></sc-for>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px;padding:0 6px">
+<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#a39684"><span>排序</span><kbd style="display:inline-block;min-width:18px;padding:0 5px;border:1px solid #4a4036;border-bottom-width:2px;border-radius:4px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;line-height:16px;text-align:center">s</kbd></div>
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px">
+<sc-for list="{{sorts}}" as="c" hint-placeholder-count="4"><button onClick="{{c.pick}}" aria-pressed="{{c.on}}" style="height:30px;border:1px solid {{c.bd}};border-radius:4px;background:{{c.bg}};color:{{c.fg}};font-family:inherit;font-size:12px;padding:0;transition:{{tr.fast}}">{{c.label}}</button></sc-for>
+</div>
+</div>
+</section>
+
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;display:flex;flex-direction:column;min-height:0;min-width:0">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">商品列表 · {{listCount}} 款 · {{sortName}}</span>
+<div style="display:grid;grid-template-columns:28px minmax(0,1fr) 104px 84px 76px 92px;align-items:center;padding:16px 16px 8px;border-bottom:1px solid #3b332a;font-size:12px;color:#a39684">
+<span></span><span>名称</span><span>产区</span><span>处理法</span><span>烘焙</span><span style="text-align:right">价格 /250g</span>
+</div>
+<div onMouseLeave="{{rowsLeave}}" style="position:relative;flex:1;min-height:0;padding:6px">
+<div aria-hidden="true" style="position:absolute;left:6px;right:6px;top:6px;height:52px;border-radius:6px;background:rgba(240,180,90,0.10);box-shadow:inset 0 0 0 1px rgba(240,180,90,0.42);transform:translateY({{hlY}}px);opacity:{{hlOp}};transition:{{tr.slide}}"></div>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="8">
+<button onClick="{{r.pick}}" onDoubleClick="{{r.open}}" onMouseEnter="{{r.hover}}" aria-label="{{r.aria}}" style="position:relative;display:grid;grid-template-columns:28px minmax(0,1fr) 104px 84px 76px 92px;align-items:center;width:100%;height:52px;padding:0 10px;box-sizing:border-box;border:none;border-radius:6px;background:{{r.hbg}};color:#ece4d6;font-family:inherit;font-size:14px;text-align:left;opacity:{{r.op}};transform:{{r.tf}};transition:{{r.tr}}">
+<span aria-hidden="true" style="color:#f0b45a;opacity:{{r.mk}};transition:opacity 160ms">▶</span>
+<span style="display:flex;flex-direction:column;min-width:0;line-height:1.35">
+<span style="display:flex;align-items:center;gap:8px;font-weight:700;color:{{r.nc}};transition:color 160ms"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{r.name}}</span><sc-if value="{{r.hasTag}}" hint-placeholder-val="{{false}}"><span style="flex:none;font-size:11px;font-weight:500;color:#8cc7a1;border:1px solid #3e5a48;border-radius:3px;padding:0 5px;line-height:16px">{{r.tag}}</span></sc-if></span>
+<span style="font-size:12px;color:#a39684;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{r.sub}}</span>
+</span>
+<span style="font-size:13px;color:#d9cfbf">{{r.origin}}</span>
+<span style="font-size:13px;color:#a39684">{{r.process}}</span>
+<span style="color:#f0b45a;letter-spacing:1px;font-size:12px">{{r.pips}}</span>
+<span style="text-align:right;font-weight:700">¥{{r.price}}</span>
+</button>
+</sc-for>
+<sc-if value="{{listEmpty}}" hint-placeholder-val="{{false}}">
+<div style="padding:64px 20px;display:flex;flex-direction:column;gap:12px;align-items:center;color:#a39684">
+<div aria-hidden="true" style="font-size:34px;color:#5a4d3f">∅</div>
+<div style="color:#d9cfbf">没有匹配的豆子</div>
+<button onClick="{{clearFilters}}" style="height:36px;padding:0 14px;border:1px solid #3b332a;border-radius:6px;background:transparent;color:#ece4d6;font-family:inherit;font-size:13px">Esc 清除筛选</button>
+</div>
+</sc-if>
+</div>
+</section>
+
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;padding:24px 20px 18px;display:flex;flex-direction:column;gap:12px;min-height:0;overflow:hidden">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">预览 PREVIEW</span>
+<sc-if value="{{pv.has}}" hint-placeholder-val="{{true}}">
+<div style="display:flex;flex-direction:column;gap:2px">
+<div style="font-size:20px;font-weight:800;line-height:1.3">{{pv.name}}</div>
+<div style="font-size:12px;color:#a39684">{{pv.sub}}</div>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px">
+<sc-for list="{{pv.notes}}" as="n" hint-placeholder-count="4"><span style="font-size:12px;color:#8cc7a1;border:1px solid #3e5a48;border-radius:4px;padding:1px 8px">#{{n}}</span></sc-for>
+</div>
+<div style="display:flex;justify-content:center">
+<svg width="220" height="200" role="img" aria-label="{{pv.rd.label}}" style="display:block;overflow:visible">
+<polygon points="110,32 170.6,67 170.6,137 110,172 49.4,137 49.4,67" fill="#1f1a15" stroke="#4a4036" style="stroke-width:1"></polygon>
+<polygon points="110,46 158.5,74 158.5,130 110,158 61.5,130 61.5,74" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,60 146.4,81 146.4,123 110,144 73.6,123 73.6,81" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,74 134.2,88 134.2,116 110,130 85.8,116 85.8,88" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,88 122.1,95 122.1,109 110,116 97.9,109 97.9,95" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<path d="M110 102L110 32M110 102L170.6 67M110 102L170.6 137M110 102L110 172M110 102L49.4 137M110 102L49.4 67" stroke="#2f2822" style="stroke-width:1"></path>
+<polygon points="{{pv.rd.p}}" fill="rgba(240,180,90,0.22)" stroke="#f0b45a" style="stroke-width:1.5;stroke-linejoin:round"></polygon>
+<circle cx="{{pv.rd.x0}}" cy="{{pv.rd.y0}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{pv.rd.x1}}" cy="{{pv.rd.y1}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{pv.rd.x2}}" cy="{{pv.rd.y2}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{pv.rd.x3}}" cy="{{pv.rd.y3}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{pv.rd.x4}}" cy="{{pv.rd.y4}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{pv.rd.x5}}" cy="{{pv.rd.y5}}" r="3" fill="#f0b45a"></circle>
+<text x="110" y="20" fill="#a39684" style="font-size:11px;text-anchor:middle">酸度</text>
+<text x="194" y="63" fill="#a39684" style="font-size:11px;text-anchor:middle">甜感</text>
+<text x="194" y="149" fill="#a39684" style="font-size:11px;text-anchor:middle">醇厚</text>
+<text x="110" y="192" fill="#a39684" style="font-size:11px;text-anchor:middle">苦度</text>
+<text x="26" y="149" fill="#a39684" style="font-size:11px;text-anchor:middle">余韵</text>
+<text x="26" y="63" fill="#a39684" style="font-size:11px;text-anchor:middle">香气</text>
+</svg>
+</div>
+<div style="font-size:12px;color:#a39684;text-align:center">{{pv.meta}}</div>
+<p style="margin:0;font-size:13px;line-height:1.7;color:#d9cfbf">{{pv.desc}}</p>
+<div style="margin-top:auto;display:flex;align-items:baseline;gap:6px"><span style="font-size:26px;font-weight:800;color:#f0b45a">¥{{pv.price}}</span><span style="font-size:12px;color:#a39684">/ 250g 起</span></div>
+<div style="display:flex;gap:8px">
+<button onClick="{{pv.open}}" style="flex:1;height:44px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:13px">⏎ 查看详情</button>
+<button onClick="{{pv.add}}" style="flex:1;height:44px;border:1px solid #3b332a;border-radius:6px;background:transparent;color:#ece4d6;font-family:inherit;font-size:13px">a 快速加入</button>
+</div>
+</sc-if>
+</section>
+</div>
+</sc-if>
+
+<!-- ---------- DETAIL ---------- -->
+<sc-if value="{{is.detail}}" hint-placeholder-val="{{false}}">
+<div style="height:100%;display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:14px;{{screenAnim}}">
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;padding:20px 26px 20px;display:flex;flex-direction:column;gap:16px;min-height:0;min-width:0;overflow:hidden">
+<div style="display:flex;align-items:center;gap:14px;font-size:12px;color:#a39684">
+<button onClick="{{dt.back}}" style="height:28px;padding:0 10px;border:1px solid #3b332a;border-radius:5px;background:transparent;color:#ece4d6;font-family:inherit;font-size:12px">← Esc 返回</button>
+<span>选购 / {{dt.origin}} / <span style="color:#ece4d6">{{dt.name}}</span></span>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;align-items:center;gap:10px">
+<h1 style="margin:0;font-size:30px;line-height:1.25;font-weight:800">{{dt.name}}</h1>
+<sc-if value="{{dt.hasTag}}" hint-placeholder-val="{{false}}"><span style="font-size:12px;font-weight:800;background:#8cc7a1;color:#1a140d;border-radius:3px;padding:0 7px;line-height:20px">{{dt.tag}}</span></sc-if>
+</div>
+<div style="font-size:13px;color:#a39684">{{dt.sub}}</div>
+</div>
+<p style="margin:0;max-width:700px;font-size:14px;line-height:1.8;color:#d9cfbf">{{dt.desc}}</p>
+<div style="display:grid;grid-template-columns:250px minmax(0,1fr);gap:32px;min-height:0">
+<div>
+<h2 style="margin:0 0 8px;font-size:12px;color:#f0b45a;letter-spacing:.06em">── 豆子档案</h2>
+<sc-for list="{{dt.info}}" as="it" hint-placeholder-count="8">
+<div style="display:flex;align-items:baseline;gap:8px;height:27px;font-size:13px">
+<span style="flex:none;color:#a39684">{{it.k}}</span>
+<span aria-hidden="true" style="flex:1;border-bottom:1px dotted #4a4036;transform:translateY(-4px)"></span>
+<span style="flex:none;color:#ece4d6">{{it.v}}</span>
+</div>
+</sc-for>
+</div>
+<div style="min-width:0">
+<h2 style="margin:0 0 8px;font-size:12px;color:#f0b45a;letter-spacing:.06em">── 风味指标</h2>
+<div style="display:flex;gap:18px;align-items:center">
+<svg width="220" height="200" role="img" aria-label="{{dt.rd.label}}" style="display:block;flex:none;overflow:visible">
+<polygon points="110,32 170.6,67 170.6,137 110,172 49.4,137 49.4,67" fill="#1f1a15" stroke="#4a4036" style="stroke-width:1"></polygon>
+<polygon points="110,46 158.5,74 158.5,130 110,158 61.5,130 61.5,74" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,60 146.4,81 146.4,123 110,144 73.6,123 73.6,81" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,74 134.2,88 134.2,116 110,130 85.8,116 85.8,88" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,88 122.1,95 122.1,109 110,116 97.9,109 97.9,95" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<path d="M110 102L110 32M110 102L170.6 67M110 102L170.6 137M110 102L110 172M110 102L49.4 137M110 102L49.4 67" stroke="#2f2822" style="stroke-width:1"></path>
+<polygon points="{{dt.rd.p}}" fill="rgba(240,180,90,0.22)" stroke="#f0b45a" style="stroke-width:1.5;stroke-linejoin:round"></polygon>
+<circle cx="{{dt.rd.x0}}" cy="{{dt.rd.y0}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{dt.rd.x1}}" cy="{{dt.rd.y1}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{dt.rd.x2}}" cy="{{dt.rd.y2}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{dt.rd.x3}}" cy="{{dt.rd.y3}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{dt.rd.x4}}" cy="{{dt.rd.y4}}" r="3" fill="#f0b45a"></circle>
+<circle cx="{{dt.rd.x5}}" cy="{{dt.rd.y5}}" r="3" fill="#f0b45a"></circle>
+<text x="110" y="20" fill="#a39684" style="font-size:11px;text-anchor:middle">酸度</text>
+<text x="194" y="63" fill="#a39684" style="font-size:11px;text-anchor:middle">甜感</text>
+<text x="194" y="149" fill="#a39684" style="font-size:11px;text-anchor:middle">醇厚</text>
+<text x="110" y="192" fill="#a39684" style="font-size:11px;text-anchor:middle">苦度</text>
+<text x="26" y="149" fill="#a39684" style="font-size:11px;text-anchor:middle">余韵</text>
+<text x="26" y="63" fill="#a39684" style="font-size:11px;text-anchor:middle">香气</text>
+</svg>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+<sc-for list="{{dt.bars}}" as="b" hint-placeholder-count="6">
+<div style="display:grid;grid-template-columns:34px minmax(0,1fr) 40px;align-items:center;gap:10px;font-size:13px">
+<span style="color:#a39684">{{b.l}}</span>
+<div style="height:10px;background:#14110e;border:1px solid #2f2822;border-radius:2px;overflow:hidden"><div style="height:100%;width:{{b.w}}%;background:repeating-linear-gradient(90deg,#f0b45a 0 9px,transparent 9px 11px)"></div></div>
+<span style="text-align:right">{{b.v}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+</div>
+<div style="margin-top:auto;display:flex;gap:12px;align-items:center;padding:10px 14px;border:1px solid #3b332a;border-radius:6px;background:#14110e;font-size:13px">
+<span style="color:#a39684">冲煮建议</span><span>{{dt.brew}}</span>
+<span style="margin-left:auto;color:#a39684">风味</span><span style="color:#8cc7a1">{{dt.notesText}}</span>
+</div>
+</section>
+
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;padding:24px 22px 18px;display:flex;flex-direction:column;gap:16px;min-height:0">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">规格 SKU</span>
+<sc-for list="{{sku.groups}}" as="g" hint-placeholder-count="3">
+<div role="group" aria-label="{{g.label}}" style="display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:center;justify-content:space-between;font-size:13px">
+<span style="color:{{g.lc}};transition:color 160ms"><span aria-hidden="true" style="display:inline-block;width:14px;color:#f0b45a;opacity:{{g.cur}};transition:opacity 160ms">›</span>{{g.label}}</span>
+<span style="font-size:11px;color:#a39684">{{g.hint}}</span>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px;padding-left:14px">
+<sc-for list="{{g.opts}}" as="o" hint-placeholder-count="4">
+<button onClick="{{o.pick}}" disabled="{{o.dis}}" aria-pressed="{{o.on}}" style="min-width:{{o.minW}}px;height:{{o.h}}px;padding:0 10px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;border:1px solid {{o.bd}};border-radius:6px;background:{{o.bg}};color:{{o.fg}};font-family:inherit;font-size:13px;line-height:1.3;transition:{{tr.fast}}">
+<span style="text-decoration:{{o.td}}">{{o.label}}</span>
+<sc-if value="{{o.hasNote}}" hint-placeholder-val="{{false}}"><span style="font-size:11px;color:{{o.nc}}">{{o.note}}</span></sc-if>
+</button>
+</sc-for>
+</div>
+</div>
+</sc-for>
+<div role="group" aria-label="数量" style="display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:center;justify-content:space-between;font-size:13px">
+<span style="color:{{sku.qLc}};transition:color 160ms"><span aria-hidden="true" style="display:inline-block;width:14px;color:#f0b45a;opacity:{{sku.qCur}};transition:opacity 160ms">›</span>数量</span>
+<span style="font-size:11px;color:#a39684">{{sku.qHint}}</span>
+</div>
+<div style="display:flex;align-items:center;gap:14px;padding-left:14px">
+<div style="display:flex;align-items:center;border:1px solid #3b332a;border-radius:6px;height:38px">
+<button onClick="{{sku.dec}}" aria-label="减少数量" style="width:40px;height:36px;border:none;background:transparent;color:#ece4d6;font-family:inherit;font-size:16px">−</button>
+<span style="width:44px;text-align:center;font-weight:800;font-size:15px;border-left:1px solid #3b332a;border-right:1px solid #3b332a;line-height:36px">{{sku.qty}}</span>
+<button onClick="{{sku.inc}}" aria-label="增加数量" style="width:40px;height:36px;border:none;background:transparent;color:#ece4d6;font-family:inherit;font-size:16px">+</button>
+</div>
+<span style="font-size:12px;color:{{sku.stockC}}">{{sku.stock}}</span>
+</div>
+</div>
+<div style="border-top:1px dashed #3b332a"></div>
+<div style="display:flex;flex-direction:column;gap:4px">
+<div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:34px;font-weight:800;color:#f0b45a;line-height:1.1">¥{{sku.total}}</span><span style="font-size:13px;color:#a39684">{{sku.qty}} × ¥{{sku.unit}}</span></div>
+<div style="font-size:13px;color:#d9cfbf">已选 {{sku.summary}}</div>
+<div style="font-size:12px;color:#a39684">SKU {{sku.code}}</div>
+</div>
+<div style="margin-top:auto;display:flex;gap:10px">
+<button onClick="{{sku.add}}" style="flex:1.3;height:48px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:14px">a 加入购物车</button>
+<button onClick="{{sku.buy}}" style="flex:1;height:48px;border:1px solid #f0b45a;border-radius:6px;background:transparent;color:#f0b45a;font-family:inherit;font-weight:700;font-size:14px">b 立即购买</button>
+</div>
+</section>
+</div>
+</sc-if>
+
+<!-- ---------- CART ---------- -->
+<sc-if value="{{is.cart}}" hint-placeholder-val="{{false}}">
+<div style="height:100%;{{screenAnim}}">
+<sc-if value="{{done.none}}" hint-placeholder-val="{{true}}">
+<div style="height:100%;display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px">
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;display:flex;flex-direction:column;min-height:0;min-width:0">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">购物车 · {{cart.count}} 件</span>
+<sc-if value="{{cart.hasRows}}" hint-placeholder-val="{{true}}">
+<div style="display:grid;grid-template-columns:44px minmax(0,1fr) 168px 70px 124px 92px 44px;align-items:center;padding:16px 16px 8px;border-bottom:1px solid #3b332a;font-size:12px;color:#a39684">
+<span></span><span>商品</span><span>规格</span><span>单价</span><span>数量</span><span style="text-align:right">小计</span><span></span>
+</div>
+<div style="position:relative;padding:6px">
+<div aria-hidden="true" style="position:absolute;left:6px;right:6px;top:6px;height:68px;border-radius:6px;background:rgba(240,180,90,0.08);box-shadow:inset 0 0 0 1px rgba(240,180,90,0.38);transform:translateY({{cart.hlY}}px);transition:{{tr.slide}}"></div>
+<sc-for list="{{cart.rows}}" as="c" hint-placeholder-count="3">
+<div onMouseEnter="{{c.hover}}" style="position:relative;display:grid;grid-template-columns:44px minmax(0,1fr) 168px 70px 124px 92px 44px;align-items:center;height:68px;padding:0 10px;box-sizing:border-box;opacity:{{c.op}};transform:{{c.tf}};transition:{{c.tr}}">
+<button onClick="{{c.toggle}}" aria-pressed="{{c.on}}" aria-label="勾选 {{c.name}}" style="width:36px;height:36px;padding:0;border:none;background:transparent;color:{{c.cc}};font-family:inherit;font-size:13px;font-weight:700">{{c.box}}</button>
+<button onClick="{{c.open}}" style="display:flex;flex-direction:column;align-items:flex-start;min-width:0;background:none;border:none;padding:0;color:#ece4d6;font-family:inherit;text-align:left;line-height:1.4">
+<span style="font-weight:700;font-size:14px;color:{{c.nc}}">{{c.name}}</span><span style="font-size:12px;color:#a39684">{{c.sub}}</span>
+</button>
+<span style="font-size:13px;color:#d9cfbf">{{c.spec}}</span>
+<span style="font-size:13px">¥{{c.unit}}</span>
+<div style="display:flex;align-items:center;border:1px solid #3b332a;border-radius:6px;width:108px;height:34px;box-sizing:border-box">
+<button onClick="{{c.dec}}" aria-label="减少 {{c.name}}" style="width:34px;height:32px;border:none;background:transparent;color:#ece4d6;font-family:inherit;font-size:15px">−</button>
+<span style="flex:1;text-align:center;font-weight:800">{{c.qty}}</span>
+<button onClick="{{c.inc}}" aria-label="增加 {{c.name}}" style="width:34px;height:32px;border:none;background:transparent;color:#ece4d6;font-family:inherit;font-size:15px">+</button>
+</div>
+<span style="text-align:right;font-weight:800;color:{{c.stc}}">¥{{c.total}}</span>
+<button onClick="{{c.remove}}" aria-label="删除 {{c.name}}" style="justify-self:end;width:32px;height:32px;border:none;border-radius:5px;background:transparent;color:#a39684;font-family:inherit;font-size:14px">✕</button>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:auto;display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid #3b332a;font-size:13px;color:#a39684">
+<button onClick="{{cart.toggleAll}}" aria-pressed="{{cart.allOn}}" style="display:flex;align-items:center;gap:8px;height:32px;background:none;border:none;padding:0;color:#d9cfbf;font-family:inherit;font-size:13px"><span style="color:{{cart.allC}};font-weight:700">{{cart.allBox}}</span>全选 <kbd style="display:inline-block;min-width:18px;padding:0 5px;border:1px solid #4a4036;border-bottom-width:2px;border-radius:4px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;line-height:16px">a</kbd></button>
+<span>已选 <span style="color:#ece4d6">{{cart.selCnt}}</span> 件</span>
+<span style="flex:1"></span>
+<sc-if value="{{cart.hasUndo}}" hint-placeholder-val="{{false}}"><button onClick="{{cart.undo}}" style="height:32px;padding:0 12px;border:1px dashed #6b4436;border-radius:5px;background:transparent;color:#f08a6c;font-family:inherit;font-size:12px">已删除 {{cart.undoName}} · u 撤销</button></sc-if>
+</div>
+</sc-if>
+<sc-if value="{{cart.empty}}" hint-placeholder-val="{{false}}">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#a39684">
+<div aria-hidden="true" style="font-size:15px;line-height:1.25;color:#5a4d3f">
+<div style="white-space:pre">  ┌────────────┐  </div>
+<div style="white-space:pre">  │            │─╮</div>
+<div style="white-space:pre">  │   空  杯   │ │</div>
+<div style="white-space:pre">  │            │─╯</div>
+<div style="white-space:pre">  └────────────┘  </div>
+</div>
+<div style="color:#d9cfbf">购物车是空的</div>
+<button onClick="{{nav.list}}" style="height:40px;padding:0 16px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:13px">1 去挑豆子</button>
+</div>
+</sc-if>
+</section>
+
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;padding:24px 20px 18px;display:flex;flex-direction:column;gap:14px;min-height:0">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">结算 CHECKOUT</span>
+<div style="display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid #3b332a;border-radius:6px;background:#14110e">
+<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#a39684"><span>收货地址</span><button onClick="{{nav.address}}" style="height:24px;padding:0;background:none;border:none;color:#f0b45a;font-family:inherit;font-size:12px">3 更换 →</button></div>
+<sc-if value="{{cart.hasAddr}}" hint-placeholder-val="{{true}}">
+<div style="font-weight:700">{{cart.addrName}} <span style="font-weight:400;color:#a39684;font-size:12px">{{cart.addrPhone}}</span></div>
+<div style="font-size:13px;color:#d9cfbf;line-height:1.6">{{cart.addrLine}}</div>
+</sc-if>
+<sc-if value="{{cart.noAddr}}" hint-placeholder-val="{{false}}"><div style="font-size:13px;color:#f08a6c">还没有收货地址，去地址本添加一个</div></sc-if>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+<label for="tty-coupon" style="font-size:12px;color:#a39684">优惠码</label>
+<div style="display:flex;gap:8px">
+<input id="tty-coupon" name="coupon" value="{{cart.coupon}}" onChange="{{cart.setCoupon}}" placeholder="试试 TTY10" style="flex:1;min-width:0;height:38px;padding:0 12px;box-sizing:border-box;border:1px solid #3b332a;border-radius:6px;background:#14110e;color:#ece4d6;font-family:inherit;font-size:13px;text-transform:uppercase">
+<button onClick="{{cart.applyCoupon}}" style="height:38px;padding:0 14px;border:1px solid #3b332a;border-radius:6px;background:transparent;color:#ece4d6;font-family:inherit;font-size:13px">应用</button>
+</div>
+<sc-if value="{{cart.hasCouponMsg}}" hint-placeholder-val="{{false}}"><div style="font-size:12px;color:{{cart.couponC}}">{{cart.couponMsg}}</div></sc-if>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+<div style="display:flex;justify-content:space-between"><span style="color:#a39684">商品小计</span><span>¥{{cart.sub}}</span></div>
+<div style="display:flex;justify-content:space-between"><span style="color:#a39684">优惠</span><span style="color:{{cart.discC}}">−¥{{cart.disc}}</span></div>
+<div style="display:flex;justify-content:space-between"><span style="color:#a39684">运费</span><span>{{cart.ship}}</span></div>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+<div style="height:6px;background:#14110e;border:1px solid #2f2822;border-radius:3px;overflow:hidden"><div style="height:100%;width:{{cart.freePct}}%;background:#8cc7a1;transition:{{tr.bar}}"></div></div>
+<div style="font-size:12px;color:#a39684">{{cart.freeText}}</div>
+</div>
+<div style="border-top:1px dashed #3b332a"></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="color:#a39684">合计</span><span style="font-size:30px;font-weight:800;color:#f0b45a">¥{{cart.total}}</span></div>
+<div style="margin-top:auto">
+<sc-if value="{{cart.idle}}" hint-placeholder-val="{{true}}">
+<button onClick="{{cart.checkout}}" style="width:100%;height:50px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:15px">c 结算 {{cart.selCnt}} 件</button>
+</sc-if>
+<sc-if value="{{cart.loading}}" hint-placeholder-val="{{false}}">
+<div role="status" style="display:flex;flex-direction:column;gap:8px;height:50px;justify-content:center">
+<div style="display:flex;justify-content:space-between;font-size:13px"><span><span style="color:#f0b45a">{{spin}}</span> {{cart.step}}</span><span style="color:#a39684">{{cart.pct}}%</span></div>
+<div style="height:12px;box-sizing:border-box;border:1px solid #3b332a;border-radius:3px;padding:2px"><div style="height:100%;width:{{cart.pct}}%;background:repeating-linear-gradient(90deg,#8cc7a1 0 7px,transparent 7px 9px);transition:width 120ms linear"></div></div>
+</div>
+</sc-if>
+</div>
+</section>
+</div>
+</sc-if>
+<sc-if value="{{done.has}}" hint-placeholder-val="{{false}}">
+<div style="height:100%;display:flex;align-items:center;justify-content:center">
+<section style="position:relative;width:620px;box-sizing:border-box;border:1px solid #3b332a;border-radius:10px;background:#1b1713;padding:30px 32px 24px;display:flex;flex-direction:column;gap:14px">
+<span style="position:absolute;top:-10px;left:18px;padding:0 8px;background:#14110e;color:#8cc7a1;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">订单回执 RECEIPT</span>
+<div style="display:flex;align-items:center;gap:14px">
+<span aria-hidden="true" style="width:40px;height:40px;border-radius:50%;background:#8cc7a1;color:#1a140d;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px">✓</span>
+<div><div style="font-size:21px;font-weight:800">订单已提交</div><div style="font-size:13px;color:#a39684">订单号 {{done.no}} · 预计 {{done.eta}} 送达</div></div>
+</div>
+<div style="border-top:1px dashed #4a4036"></div>
+<sc-for list="{{done.items}}" as="it" hint-placeholder-count="3">
+<div style="display:flex;align-items:baseline;gap:8px;font-size:13px">
+<span style="flex:none;font-weight:700">{{it.name}}</span><span style="flex:none;color:#a39684">{{it.spec}} × {{it.qty}}</span>
+<span aria-hidden="true" style="flex:1;border-bottom:1px dotted #4a4036;transform:translateY(-4px)"></span>
+<span style="flex:none">¥{{it.amt}}</span>
+</div>
+</sc-for>
+<div style="border-top:1px dashed #4a4036"></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="color:#a39684">实付</span><span style="font-size:28px;font-weight:800;color:#f0b45a">¥{{done.total}}</span></div>
+<div style="font-size:13px;color:#d9cfbf">寄往 {{done.addr}}</div>
+<div style="display:flex;gap:10px;margin-top:6px">
+<button onClick="{{done.cont}}" style="flex:1;height:46px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:14px">⏎ 继续选购</button>
+<button onClick="{{done.orders}}" style="flex:1;height:46px;border:1px solid #3b332a;border-radius:6px;background:transparent;color:#ece4d6;font-family:inherit;font-size:14px">4 查看订单</button>
+</div>
+</section>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<!-- ---------- ADDRESS ---------- -->
+<sc-if value="{{is.address}}" hint-placeholder-val="{{false}}">
+<div style="height:100%;display:flex;flex-direction:column;gap:16px;{{screenAnim}}">
+<div style="display:flex;align-items:flex-end;gap:16px">
+<div style="flex:1">
+<h1 style="margin:0;font-size:24px;font-weight:800">地址本 <span style="font-size:14px;font-weight:500;color:#a39684">· {{ad.count}} 条</span></h1>
+<p style="margin:4px 0 0;font-size:13px;color:#a39684">设置默认收货地址，或为本单单独指定一个。当前寄往：<span style="color:#ece4d6">{{ad.orderName}}</span></p>
+</div>
+<button onClick="{{ad.add}}" style="height:44px;padding:0 18px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:14px">n 新增地址</button>
+</div>
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px">
+<sc-for list="{{ad.cards}}" as="a" hint-placeholder-count="3">
+<article onMouseEnter="{{a.hover}}" style="position:relative;display:flex;flex-direction:column;gap:8px;padding:18px 20px 16px;box-sizing:border-box;min-height:176px;border:1px solid {{a.bd}};border-radius:8px;background:{{a.bg}};opacity:{{a.op}};transform:{{a.tf}};transition:{{a.tr}}">
+<div style="display:flex;align-items:center;gap:10px">
+<span aria-hidden="true" style="color:#f0b45a;opacity:{{a.mk}};transition:opacity 160ms">▶</span>
+<strong style="font-size:16px">{{a.name}}</strong>
+<span style="color:#a39684;font-size:13px">{{a.phone}}</span>
+<span style="flex:1"></span>
+<sc-if value="{{a.isOrder}}" hint-placeholder-val="{{false}}"><span style="font-size:11px;color:#8cc7a1;border:1px solid #3e5a48;border-radius:3px;padding:0 6px;line-height:16px">本单寄往</span></sc-if>
+<sc-if value="{{a.isDef}}" hint-placeholder-val="{{false}}"><span style="font-size:11px;font-weight:800;background:#f0b45a;color:#1a140d;border-radius:3px;padding:0 6px;line-height:18px">默认</span></sc-if>
+<span style="font-size:11px;border:1px solid #4a4036;color:#d9cfbf;border-radius:3px;padding:0 6px;line-height:16px">{{a.tag}}</span>
+</div>
+<div style="font-size:13px;color:#a39684;padding-left:24px">{{a.region}}</div>
+<div style="font-size:15px;line-height:1.6;padding-left:24px">{{a.line}}</div>
+<div style="margin-top:auto;display:flex;gap:6px;flex-wrap:wrap;padding-left:24px">
+<button onClick="{{a.use}}" style="height:32px;padding:0 10px;border:1px solid #3b332a;border-radius:5px;background:transparent;color:#ece4d6;font-family:inherit;font-size:12px">⏎ 用于本单</button>
+<button onClick="{{a.edit}}" style="height:32px;padding:0 10px;border:1px solid #3b332a;border-radius:5px;background:transparent;color:#ece4d6;font-family:inherit;font-size:12px">e 编辑</button>
+<button onClick="{{a.setDef}}" disabled="{{a.isDef}}" style="height:32px;padding:0 10px;border:1px solid #3b332a;border-radius:5px;background:transparent;color:{{a.defC}};font-family:inherit;font-size:12px">space 设为默认</button>
+<button onClick="{{a.del}}" style="height:32px;padding:0 10px;border:1px solid #3b332a;border-radius:5px;background:transparent;color:#f08a6c;font-family:inherit;font-size:12px">d 删除</button>
+</div>
+</article>
+</sc-for>
+<button onClick="{{ad.add}}" style="min-height:176px;border:1px dashed #4a4036;border-radius:8px;background:transparent;color:#a39684;font-family:inherit;font-size:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">
+<span aria-hidden="true" style="font-size:30px;color:#f0b45a;line-height:1">+</span><span>新增收货地址</span>
+</button>
+</div>
+</div>
+</sc-if>
+
+<!-- ---------- PROFILE ---------- -->
+<sc-if value="{{is.profile}}" hint-placeholder-val="{{false}}">
+<div style="height:100%;{{screenAnim}}">
+<sc-if value="{{pf.guest}}" hint-placeholder-val="{{false}}">
+<div style="height:100%;display:flex;align-items:center;justify-content:center">
+<section style="position:relative;width:460px;box-sizing:border-box;border:1px solid #3b332a;border-radius:10px;background:#1b1713;padding:32px;display:flex;flex-direction:column;gap:14px;align-items:flex-start">
+<span style="position:absolute;top:-10px;left:18px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">我的 PROFILE</span>
+<div style="font-size:20px;font-weight:800">你正在以访客身份浏览</div>
+<p style="margin:0;color:#a39684;font-size:13px;line-height:1.7">登录后可以查看订单、管理地址本，并生成你的口味画像。</p>
+<button onClick="{{pf.login}}" style="height:44px;padding:0 18px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:14px">⏎ 去登录</button>
+</section>
+</div>
+</sc-if>
+<sc-if value="{{pf.member}}" hint-placeholder-val="{{true}}">
+<div style="height:100%;display:grid;grid-template-columns:380px minmax(0,1fr);gap:14px">
+<div style="display:flex;flex-direction:column;gap:14px;min-height:0">
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;padding:26px 22px 20px;display:flex;flex-direction:column;gap:18px">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">个人信息 ACCOUNT</span>
+<div style="display:flex;gap:16px;align-items:center">
+<div aria-hidden="true" style="width:64px;height:64px;border-radius:8px;background:#f0b45a;color:#1a140d;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:800">林</div>
+<div style="display:flex;flex-direction:column;gap:2px"><div style="font-size:22px;font-weight:800">林晓</div><div style="font-size:13px;color:#a39684">linxiao@roast.tty</div></div>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#f0b45a;font-weight:700">熟豆会员 Lv.3</span><span style="color:#a39684">1,280 / 2,000 豆</span></div>
+<div style="height:10px;background:#14110e;border:1px solid #2f2822;border-radius:2px;overflow:hidden"><div style="height:100%;width:{{pf.lv}}%;background:repeating-linear-gradient(90deg,#f0b45a 0 9px,transparent 9px 11px);transition:{{tr.bar}}"></div></div>
+<div style="font-size:12px;color:#a39684">再积 720 豆升级 Lv.4</div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+<div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0;border:1px solid #3b332a;border-radius:6px;background:#14110e"><span style="font-size:22px;font-weight:800">{{pf.orderCnt}}</span><span style="font-size:12px;color:#a39684">订单</span></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0;border:1px solid #3b332a;border-radius:6px;background:#14110e"><span style="font-size:22px;font-weight:800">{{pf.addrCnt}}</span><span style="font-size:12px;color:#a39684">地址</span></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0;border:1px solid #3b332a;border-radius:6px;background:#14110e"><span style="font-size:22px;font-weight:800">1</span><span style="font-size:12px;color:#a39684">优惠券</span></div>
+</div>
+</section>
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;padding:22px 22px 16px;display:flex;flex-direction:column;gap:12px">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">设置 SETTINGS</span>
+<div style="display:flex;align-items:center;gap:12px">
+<div style="flex:1"><div style="font-size:14px">界面动画 <span style="color:#a39684;font-size:12px">m</span></div><div style="font-size:12px;color:#a39684">页面切换、列表、雷达与进度条</div></div>
+<button onClick="{{pf.toggleAnim}}" aria-pressed="{{pf.animOn}}" style="width:76px;height:34px;border:1px solid {{pf.animBd}};border-radius:6px;background:transparent;color:{{pf.animC}};font-family:inherit;font-size:13px;font-weight:700">{{pf.animBox}}</button>
+</div>
+<div style="display:flex;align-items:center;gap:12px">
+<div style="flex:1"><div style="font-size:14px">鼠标追踪 <span style="color:#a39684;font-size:12px">o</span></div><div style="font-size:12px;color:#a39684">悬停即移动选择高亮</div></div>
+<button onClick="{{pf.toggleMouse}}" aria-pressed="{{pf.mouseOn}}" style="width:76px;height:34px;border:1px solid {{pf.mouseBd}};border-radius:6px;background:transparent;color:{{pf.mouseC}};font-family:inherit;font-size:13px;font-weight:700">{{pf.mouseBox}}</button>
+</div>
+</section>
+<button onClick="{{pf.logout}}" style="height:44px;border:1px solid #6b4436;border-radius:6px;background:transparent;color:#f08a6c;font-family:inherit;font-size:14px">q 退出登录</button>
+</div>
+<div style="display:flex;flex-direction:column;gap:14px;min-height:0;min-width:0">
+<section style="position:relative;border:1px solid #3b332a;border-radius:8px;background:#1b1713;padding:22px 24px 18px;display:flex;gap:28px;align-items:center">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">我的口味画像 TASTE</span>
+<svg width="220" height="200" role="img" aria-label="{{pf.rd.label}}" style="display:block;flex:none;overflow:visible">
+<polygon points="110,32 170.6,67 170.6,137 110,172 49.4,137 49.4,67" fill="#1f1a15" stroke="#4a4036" style="stroke-width:1"></polygon>
+<polygon points="110,46 158.5,74 158.5,130 110,158 61.5,130 61.5,74" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,60 146.4,81 146.4,123 110,144 73.6,123 73.6,81" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,74 134.2,88 134.2,116 110,130 85.8,116 85.8,88" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<polygon points="110,88 122.1,95 122.1,109 110,116 97.9,109 97.9,95" fill="none" stroke="#2f2822" style="stroke-width:1"></polygon>
+<path d="M110 102L110 32M110 102L170.6 67M110 102L170.6 137M110 102L110 172M110 102L49.4 137M110 102L49.4 67" stroke="#2f2822" style="stroke-width:1"></path>
+<polygon points="{{pf.rd.p}}" fill="rgba(140,199,161,0.20)" stroke="#8cc7a1" style="stroke-width:1.5;stroke-linejoin:round"></polygon>
+<circle cx="{{pf.rd.x0}}" cy="{{pf.rd.y0}}" r="3" fill="#8cc7a1"></circle>
+<circle cx="{{pf.rd.x1}}" cy="{{pf.rd.y1}}" r="3" fill="#8cc7a1"></circle>
+<circle cx="{{pf.rd.x2}}" cy="{{pf.rd.y2}}" r="3" fill="#8cc7a1"></circle>
+<circle cx="{{pf.rd.x3}}" cy="{{pf.rd.y3}}" r="3" fill="#8cc7a1"></circle>
+<circle cx="{{pf.rd.x4}}" cy="{{pf.rd.y4}}" r="3" fill="#8cc7a1"></circle>
+<circle cx="{{pf.rd.x5}}" cy="{{pf.rd.y5}}" r="3" fill="#8cc7a1"></circle>
+<text x="110" y="20" fill="#a39684" style="font-size:11px;text-anchor:middle">酸度</text>
+<text x="194" y="63" fill="#a39684" style="font-size:11px;text-anchor:middle">甜感</text>
+<text x="194" y="149" fill="#a39684" style="font-size:11px;text-anchor:middle">醇厚</text>
+<text x="110" y="192" fill="#a39684" style="font-size:11px;text-anchor:middle">苦度</text>
+<text x="26" y="149" fill="#a39684" style="font-size:11px;text-anchor:middle">余韵</text>
+<text x="26" y="63" fill="#a39684" style="font-size:11px;text-anchor:middle">香气</text>
+</svg>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;font-size:13px">
+<div style="display:flex;gap:10px"><span style="flex:none;color:#a39684;width:56px">偏好</span><span>明亮果酸 · 花香 · 干净甜感</span></div>
+<div style="display:flex;gap:10px"><span style="flex:none;color:#a39684;width:56px">常买</span><span>浅烘 / 中浅烘 · 手冲研磨 · 250g</span></div>
+<div style="display:flex;gap:10px"><span style="flex:none;color:#a39684;width:56px">少碰</span><span>深烘 · 烟熏与草本调</span></div>
+<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+<span style="color:#a39684">按画像推荐</span>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<sc-for list="{{pf.recs}}" as="rc" hint-placeholder-count="2"><button onClick="{{rc.open}}" style="height:36px;padding:0 12px;border:1px solid #3e5a48;border-radius:6px;background:transparent;color:#8cc7a1;font-family:inherit;font-size:13px">{{rc.name}} → </button></sc-for>
+</div>
+</div>
+</div>
+</section>
+<section style="position:relative;flex:1;min-height:0;border:1px solid #3b332a;border-radius:8px;background:#1b1713;display:flex;flex-direction:column">
+<span style="position:absolute;top:-10px;left:14px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">最近订单 ORDERS</span>
+<div style="display:grid;grid-template-columns:150px 64px minmax(0,1fr) 96px 92px;align-items:center;padding:16px 20px 8px;border-bottom:1px solid #3b332a;font-size:12px;color:#a39684">
+<span>订单号</span><span>日期</span><span>商品</span><span style="text-align:right">金额</span><span style="text-align:right">状态</span>
+</div>
+<div style="padding:4px 8px;overflow:hidden">
+<sc-for list="{{pf.orders}}" as="od" hint-placeholder-count="3">
+<div style="display:grid;grid-template-columns:150px 64px minmax(0,1fr) 96px 92px;align-items:center;height:46px;padding:0 12px;border-bottom:1px solid #241f1a;font-size:13px;opacity:{{od.op}};transform:{{od.tf}};transition:{{od.tr}}">
+<span style="color:#d9cfbf">{{od.no}}</span><span style="color:#a39684">{{od.date}}</span>
+<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:12px">{{od.items}}</span>
+<span style="text-align:right">{{od.amt}}</span>
+<span style="text-align:right;color:{{od.c}}">● {{od.st}}</span>
+</div>
+</sc-for>
+</div>
+</section>
+</div>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+</main>
+</div>
+</sc-if>
+
+</div>
+
+<!-- status bar -->
+<footer style="height:30px;flex:none;display:flex;align-items:stretch;background:#1b1713;border-top:1px solid #3b332a;font-size:12px">
+<div style="display:flex;align-items:center;gap:6px;padding:0 14px;background:#f0b45a;color:#1a140d;font-weight:800;letter-spacing:.04em;white-space:nowrap">{{mode.zh}} <span style="font-weight:500">{{mode.en}}</span></div>
+<div style="flex:1;min-width:0;display:flex;align-items:center;gap:2px;padding:0 8px;overflow:hidden">
+<sc-for list="{{hints}}" as="h" hint-placeholder-count="6">
+<button onClick="{{h.run}}" style="display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;border:none;border-radius:4px;background:transparent;color:#a39684;font-family:inherit;font-size:12px;white-space:nowrap"><kbd style="display:inline-block;min-width:16px;padding:0 4px;border:1px solid #4a4036;border-radius:3px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;line-height:16px;text-align:center">{{h.k}}</kbd>{{h.t}}</button>
+</sc-for>
+</div>
+<div style="display:flex;align-items:center;gap:14px;padding:0 14px;color:#a39684;white-space:nowrap">
+<span><span style="color:{{mouseDotC}}">●</span> 鼠标</span>
+<span>购物车 <span style="color:#ece4d6">¥{{statusTotal}}</span></span>
+<button onClick="{{openHelp}}" style="display:flex;align-items:center;gap:6px;height:26px;padding:0 6px;border:none;background:transparent;color:#a39684;font-family:inherit;font-size:12px"><kbd style="display:inline-block;min-width:16px;padding:0 4px;border:1px solid #4a4036;border-radius:3px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:11px;line-height:16px;text-align:center">?</kbd>帮助</button>
+</div>
+</footer>
+
+<!-- toast -->
+<sc-if value="{{hasToast}}" hint-placeholder-val="{{false}}">
+<div role="status" style="position:absolute;right:20px;bottom:46px;width:360px;box-sizing:border-box;display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border:1px solid {{toast.bd}};border-radius:8px;background:#1b1713;box-shadow:0 14px 34px rgba(0,0,0,0.5);opacity:{{toast.op}};transform:{{toast.tf}};transition:{{tr.pop}};z-index:15">
+<span aria-hidden="true" style="width:22px;height:22px;flex:none;border-radius:50%;background:{{toast.ic}};color:#1a140d;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px">{{toast.icon}}</span>
+<div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-weight:700">{{toast.text}}</span><span style="font-size:12px;color:#a39684;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{toast.sub}}</span></div>
+</div>
+</sc-if>
+
+<!-- address modal -->
+<sc-if value="{{md.open}}" hint-placeholder-val="{{false}}">
+<div style="position:absolute;left:0;right:0;top:34px;bottom:0;display:flex;align-items:center;justify-content:center;background:rgba(8,6,4,0.72);opacity:{{md.op}};transition:{{tr.fade}};z-index:20">
+<section role="dialog" aria-modal="true" aria-label="{{md.title}}" style="position:relative;width:560px;box-sizing:border-box;border:1px solid #5a4d3f;border-radius:10px;background:#1b1713;padding:32px 28px 22px;display:flex;flex-direction:column;gap:14px;transform:{{md.tf}};transition:{{tr.pop}};box-shadow:0 24px 60px rgba(0,0,0,0.55)">
+<span style="position:absolute;top:-10px;left:18px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">{{md.title}}</span>
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+<div style="display:flex;flex-direction:column;gap:6px"><label for="md-name" style="font-size:12px;color:#a39684">收货人</label><input id="md-name" ref="{{md.firstRef}}" value="{{md.name}}" onChange="{{md.setName}}" style="height:40px;padding:0 12px;box-sizing:border-box;border:1px solid #3b332a;border-radius:6px;background:#14110e;color:#ece4d6;font-family:inherit;font-size:14px"></div>
+<div style="display:flex;flex-direction:column;gap:6px"><label for="md-phone" style="font-size:12px;color:#a39684">手机号</label><input id="md-phone" value="{{md.phone}}" onChange="{{md.setPhone}}" placeholder="11 位手机号" style="height:40px;padding:0 12px;box-sizing:border-box;border:1px solid #3b332a;border-radius:6px;background:#14110e;color:#ece4d6;font-family:inherit;font-size:14px"></div>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px"><label for="md-region" style="font-size:12px;color:#a39684">所在地区</label><input id="md-region" value="{{md.region}}" onChange="{{md.setRegion}}" placeholder="省 / 市 / 区" style="height:40px;padding:0 12px;box-sizing:border-box;border:1px solid #3b332a;border-radius:6px;background:#14110e;color:#ece4d6;font-family:inherit;font-size:14px"></div>
+<div style="display:flex;flex-direction:column;gap:6px"><label for="md-line" style="font-size:12px;color:#a39684">详细地址</label><input id="md-line" value="{{md.line}}" onChange="{{md.setLine}}" placeholder="街道、门牌号、楼层" style="height:40px;padding:0 12px;box-sizing:border-box;border:1px solid #3b332a;border-radius:6px;background:#14110e;color:#ece4d6;font-family:inherit;font-size:14px"></div>
+<div style="display:flex;align-items:center;gap:8px">
+<span style="font-size:12px;color:#a39684;width:40px">标签</span>
+<sc-for list="{{md.tags}}" as="tg" hint-placeholder-count="3"><button onClick="{{tg.pick}}" aria-pressed="{{tg.on}}" style="height:32px;padding:0 14px;border:1px solid {{tg.bd}};border-radius:5px;background:{{tg.bg}};color:{{tg.fg}};font-family:inherit;font-size:13px;transition:{{tr.fast}}">{{tg.label}}</button></sc-for>
+<span style="flex:1"></span>
+<button onClick="{{md.toggleDef}}" aria-pressed="{{md.defOn}}" style="display:flex;align-items:center;gap:8px;height:32px;background:none;border:none;padding:0;color:#d9cfbf;font-family:inherit;font-size:13px"><span style="color:{{md.defC}};font-weight:700">{{md.defBox}}</span>设为默认</button>
+</div>
+<sc-if value="{{md.hasErr}}" hint-placeholder-val="{{false}}"><div role="alert" style="font-size:13px;color:#f08a6c">✗ {{md.err}}</div></sc-if>
+<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px">
+<button onClick="{{md.cancel}}" style="height:44px;padding:0 18px;border:1px solid #3b332a;border-radius:6px;background:transparent;color:#ece4d6;font-family:inherit;font-size:14px">Esc 取消</button>
+<button onClick="{{md.save}}" style="height:44px;padding:0 22px;border:none;border-radius:6px;background:#f0b45a;color:#1a140d;font-family:inherit;font-weight:800;font-size:14px">⏎ 保存</button>
+</div>
+</section>
+</div>
+</sc-if>
+
+<!-- help overlay -->
+<sc-if value="{{hp.open}}" hint-placeholder-val="{{false}}">
+<div style="position:absolute;left:0;right:0;top:34px;bottom:0;display:flex;align-items:center;justify-content:center;background:rgba(8,6,4,0.72);opacity:{{hp.op}};transition:{{tr.fade}};z-index:25">
+<section role="dialog" aria-modal="true" aria-label="快捷键帮助" style="position:relative;width:900px;box-sizing:border-box;border:1px solid #5a4d3f;border-radius:10px;background:#1b1713;padding:32px 30px 22px;display:flex;flex-direction:column;gap:20px;transform:{{hp.tf}};transition:{{tr.pop}};box-shadow:0 24px 60px rgba(0,0,0,0.55)">
+<span style="position:absolute;top:-10px;left:18px;padding:0 8px;background:#14110e;color:#f0b45a;font-size:12px;font-weight:700;letter-spacing:.06em;line-height:20px">快捷键 KEYMAP</span>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px">
+<sc-for list="{{hp.groups}}" as="hg" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:9px">
+<div style="font-size:12px;color:#f0b45a;font-weight:700;letter-spacing:.06em">── {{hg.title}}</div>
+<sc-for list="{{hg.items}}" as="hi" hint-placeholder-count="6">
+<div style="display:flex;align-items:center;gap:10px;font-size:13px"><kbd style="flex:none;min-width:64px;padding:0 6px;box-sizing:border-box;border:1px solid #4a4036;border-bottom-width:2px;border-radius:4px;background:#221d18;color:#ece4d6;font-family:inherit;font-size:12px;line-height:20px;text-align:center">{{hi.k}}</kbd><span style="color:#d9cfbf">{{hi.t}}</span></div>
+</sc-for>
+</div>
+</sc-for>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding-top:14px;border-top:1px solid #3b332a;font-size:13px;color:#a39684">
+<span>鼠标：悬停高亮 · 单击选中 · 双击打开 · 底栏的快捷键提示可以直接点击</span>
+<span style="flex:1"></span>
+<button onClick="{{hp.close}}" style="height:36px;padding:0 14px;border:1px solid #3b332a;border-radius:6px;background:transparent;color:#ece4d6;font-family:inherit;font-size:13px">Esc 关闭</button>
+</div>
+</section>
+</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["login","list","detail","cart","address","profile"],"default":"login"},"$preview":{"width":1280,"height":800}}'>
+const ACC = '#f0b45a', ACC2 = '#8cc7a1', FG = '#ece4d6', MUTE = '#a39684', LINE = '#3b332a', DANGER = '#f08a6c', INK = '#1a140d', SOFT = '#d9cfbf';
+const LABELS = ['酸度', '甜感', '醇厚', '苦度', '余韵', '香气'];
+const ROAST_NAMES = ['', '浅烘', '中浅烘', '中烘', '中深烘', '深烘'];
+const WEIGHTS = [{ k: '100g', mul: 0.45 }, { k: '250g', mul: 1 }, { k: '500g', mul: 1.9 }, { k: '1kg', mul: 3.6 }];
+const GRINDS = ['整豆', '手冲', '意式', '法压', '冷萃'];
+const GCODE = ['WB', 'PO', 'ES', 'FP', 'CB'];
+const PACKS = [{ k: '标准袋', add: 0 }, { k: '礼盒装', add: 20 }];
+const ORIGINS = ['全部', '埃塞俄比亚', '哥伦比亚', '肯尼亚', '巴拿马', '中国云南', '危地马拉', '印尼', '拼配'];
+const ROASTS = ['全部', '浅', '中', '深'];
+const SORTS = ['推荐', '价格 ↑', '价格 ↓', '杯测分'];
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const PREF = [8, 7, 4, 2, 7, 8];
+
+const P = [
+  { id: 'yirga', name: '耶加雪菲 孔加', sub: 'Ethiopia · Yirgacheffe Konga G1', origin: '埃塞俄比亚', region: '耶加雪菲 · 孔加', farm: '孔加合作社', alt: '1,950–2,200 m', variety: '埃塞原生种', process: '水洗', harvest: '2025/26', roast: 1, notes: ['茉莉', '柠檬', '佛手柑', '红茶'], m: [8, 7, 4, 2, 7, 9], base: 98, score: 87.5, stock: 42, out: [], tag: '新产季', code: 'YIR', brew: '1:15 · 92°C · 2′30″', desc: '高海拔小农水洗批次，干香是一把新鲜茉莉。入口柠檬与佛手柑的酸质明亮干净，冷却后浮出红茶般的回甘，适合手冲慢慢喝。' },
+  { id: 'pinkb', name: '慧兰 粉红波旁', sub: 'Colombia · Huila Pink Bourbon', origin: '哥伦比亚', region: '慧兰 · 皮塔利托', farm: '小农合作批次', alt: '1,700–1,850 m', variety: '粉红波旁', process: '水洗', harvest: '2025/26', roast: 2, notes: ['荔枝', '蔓越莓', '蜂蜜', '可可'], m: [7, 8, 5, 2, 8, 8], base: 118, score: 88, stock: 26, out: ['1kg'], tag: '店长推荐', code: 'PNK', brew: '1:15 · 91°C · 2′20″', desc: '粉红波旁的甜感是它最大的特点。荔枝与蔓越莓的果汁感包裹着蜂蜜甜，收尾带一点干净的可可，冷热都好喝。' },
+  { id: 'nyeri', name: '涅里 AA 双洗', sub: 'Kenya · Nyeri AA Double Washed', origin: '肯尼亚', region: '涅里 · 卡拉蒂纳', farm: '处理站批次', alt: '1,700–1,900 m', variety: 'SL28 / SL34', process: '双重水洗', harvest: '2025', roast: 2, notes: ['黑醋栗', '西柚', '番茄', '红糖'], m: [9, 6, 6, 3, 7, 7], base: 108, score: 87, stock: 18, out: [], tag: '', code: 'NYR', brew: '1:16 · 93°C · 2′40″', desc: '典型的肯尼亚明亮酸质：黑醋栗与西柚汁的多汁感，带一点番茄般的鲜咸。中段红糖甜感撑起结构，做冰手冲也很出彩。' },
+  { id: 'geisha', name: '波奎特 瑰夏', sub: 'Panama · Boquete Geisha Washed', origin: '巴拿马', region: '奇里基 · 波奎特', farm: '精品庄园批次', alt: '1,600–1,800 m', variety: '瑰夏 Geisha', process: '水洗', harvest: '2025/26', roast: 1, notes: ['茉莉', '白桃', '柑橘', '蜂蜜'], m: [7, 8, 3, 1, 9, 10], base: 268, score: 90, stock: 6, out: ['500g', '1kg'], tag: '限量', code: 'GSH', brew: '1:16 · 92°C · 2′15″', desc: '每批只烘几公斤的限量瑰夏。花香极为饱满，白桃与柑橘层层展开，口感轻盈如茶，余韵是长长的蜂蜜甜。' },
+  { id: 'yunnan', name: '保山 小粒 日晒', sub: 'China · Yunnan Baoshan Natural', origin: '中国云南', region: '保山 · 潞江坝', farm: '本地庄园', alt: '1,100–1,400 m', variety: '卡蒂姆', process: '日晒', harvest: '2025/26', roast: 3, notes: ['红枣', '黑巧', '莓果', '焦糖'], m: [5, 7, 6, 4, 6, 6], base: 68, score: 85, stock: 64, out: [], tag: '', code: 'YUN', brew: '1:15 · 90°C · 2′30″', desc: '来自干热河谷的日晒批次。红枣和莓果的发酵甜感很讨喜，中烘之后黑巧与焦糖撑起厚度，加奶也不违和。' },
+  { id: 'antigua', name: '安提瓜 火山', sub: 'Guatemala · Antigua', origin: '危地马拉', region: '安提瓜谷地', farm: '庄园批次', alt: '1,500–1,700 m', variety: '波旁 / 卡杜拉', process: '水洗', harvest: '2025', roast: 4, notes: ['黑巧', '坚果', '烟熏', '焦糖'], m: [4, 6, 7, 5, 6, 6], base: 78, score: 84.5, stock: 30, out: [], tag: '', code: 'ATG', brew: '1:14 · 89°C · 2′40″', desc: '火山土壤带来的厚实质感。黑巧与烤坚果为主调，带一丝温和的烟熏，酸度低、口感圆润，适合法压或摩卡壶。' },
+  { id: 'mandh', name: '曼特宁 G1', sub: 'Indonesia · Sumatra Mandheling', origin: '印尼', region: '苏门答腊 · 多巴湖', farm: '小农批次', alt: '1,200–1,500 m', variety: '混合品种', process: '湿刨', harvest: '2025', roast: 5, notes: ['草本', '黑巧', '雪松', '糖浆'], m: [2, 5, 9, 7, 8, 5], base: 72, score: 84, stock: 40, out: [], tag: '', code: 'MDH', brew: '1:14 · 88°C · 3′00″', desc: '湿刨法造就的厚重醇度：草本、雪松与黑巧克力，糖浆般的口感久久不散。深烘下苦而不焦，是重口味爱好者的老朋友。' },
+  { id: 'night', name: '「夜班」意式拼配', sub: 'House Espresso Blend', origin: '拼配', region: '巴西 × 哥伦比亚 × 埃塞', farm: 'ROAST/TTY 烘焙室', alt: '—', variety: '多产区拼配', process: '日晒 + 水洗', harvest: '季节轮换', roast: 4, notes: ['可可', '榛子', '焦糖', '太妃'], m: [4, 8, 7, 4, 7, 6], base: 88, score: 85.5, stock: 120, out: [], tag: '招牌', code: 'NGT', brew: '18g → 36g · 28s', desc: '为深夜写代码的人调的拼配。巴西打底给出榛子与可可，哥伦比亚补甜，一点埃塞带来尾段果香，做拿铁奶感很足。' },
+];
+
+const GLYPH = {
+  R: ['████ ', '█   █', '████ ', '█  █ ', '█   █'],
+  O: [' ███ ', '█   █', '█   █', '█   █', ' ███ '],
+  A: [' ███ ', '█   █', '█████', '█   █', '█   █'],
+  S: [' ████', '█    ', ' ███ ', '    █', '████ '],
+  T: ['█████', '  █  ', '  █  ', '  █  ', '  █  '],
+  '/': ['    █', '   █ ', '  █  ', ' █   ', '█    '],
+  Y: ['█   █', ' █ █ ', '  █  ', '  █  ', '  █  '],
+};
+const LOGO = [0, 1, 2, 3, 4].map(function (r) {
+  return { a: 'ROAST'.split('').map(function (c) { return GLYPH[c][r]; }).join(' ') + ' ', b: '/TTY'.split('').map(function (c) { return GLYPH[c][r]; }).join(' ') };
+});
+const STEAM = [
+  ['    (   )  (  ', '     )  (   ) ', '    (   )  (  '],
+  ['     )  (   ) ', '    (   )  (  ', '     )  (   ) '],
+  ['   (   )   (  ', '    )   (   ) ', '   (   )  (   '],
+];
+const STEAM_C = ['#5a4d3f', '#7d6f5f', '#a39684'];
+const CUP = [
+  '  ┌────────────┐  ',
+  '  │▓▓▓▓▓▓▓▓▓▓▓▓│─╮',
+  '  │            │ │',
+  '  │   ROAST    │─╯',
+  '  │      /TTY  │  ',
+  '  └────────────┘  ',
+  ' ════════════════ ',
+];
+const HELP = [
+  { title: '全局', items: [['1 – 4', '选购 / 购物车 / 地址本 / 我的'], ['/', '搜索豆子、产区、风味'], ['?', '打开 / 关闭帮助'], ['Esc', '返回上一级 · 关闭弹窗'], ['Tab', '在控件之间移动焦点'], ['q', '退出登录']] },
+  { title: '选购 · 详情', items: [['↑↓ j k', '移动选择'], ['⏎ l', '打开商品详情'], ['a', '加入购物车'], ['f r s', '产区 / 烘焙 / 排序'], ['← →', '切换规格选项'], ['+ −', '调整数量'], ['b', '立即购买']] },
+  { title: '购物车 · 地址 · 设置', items: [['space', '勾选商品 / 设为默认'], ['x', '删除'], ['u', '撤销删除'], ['c', '去结算'], ['n e', '新增 / 编辑地址'], ['m o', '动画 / 鼠标追踪 开关']] },
+];
+const HINTS = {
+  login: [['Tab', '切换', 'Tab'], ['⏎', '登录', 'Enter'], ['g', '访客浏览', 'g'], ['?', '快捷键', '?']],
+  list: [['↑↓', '移动', 'ArrowDown'], ['⏎', '详情', 'Enter'], ['a', '加入', 'a'], ['f', '产区', 'f'], ['r', '烘焙', 'r'], ['s', '排序', 's'], ['/', '搜索', '/']],
+  detail: [['↑↓', '规格行', 'ArrowDown'], ['←→', '选择', 'ArrowRight'], ['+', '数量', '+'], ['a', '加入', 'a'], ['b', '购买', 'b'], ['Esc', '返回', 'Escape']],
+  cart: [['↑↓', '移动', 'ArrowDown'], ['space', '勾选', ' '], ['←→', '数量', 'ArrowRight'], ['x', '删除', 'x'], ['u', '撤销', 'u'], ['c', '结算', 'c']],
+  address: [['←↑↓→', '移动', 'ArrowRight'], ['⏎', '用于本单', 'Enter'], ['n', '新增', 'n'], ['e', '编辑', 'e'], ['space', '默认', ' '], ['d', '删除', 'd']],
+  profile: [['m', '动画开关', 'm'], ['o', '鼠标追踪', 'o'], ['q', '退出登录', 'q']],
+};
+const MODES = { login: ['登录', 'LOGIN'], list: ['选购', 'BROWSE'], detail: ['详情', 'DETAIL'], cart: ['购物车', 'CART'], address: ['地址本', 'ADDRESS'], profile: ['我的', 'PROFILE'] };
+
+function byId(id) { for (let i = 0; i < P.length; i++) if (P[i].id === id) return P[i]; return P[0]; }
+function unitPrice(p, w, k) { return Math.round(p.base * WEIGHTS[w].mul) + PACKS[k].add; }
+function money(n) { return n.toFixed(2); }
+function pad(n) { return (n < 10 ? '0' : '') + n; }
+function firstAvail(p, pref) {
+  if (p.out.indexOf(WEIGHTS[pref].k) < 0) return pref;
+  for (let i = 0; i < WEIGHTS.length; i++) if (p.out.indexOf(WEIGHTS[i].k) < 0) return i;
+  return 0;
+}
+function maskPhone(s) {
+  const d = String(s || '').replace(/\D/g, '');
+  if (d.length === 11) return d.slice(0, 3) + ' **** ' + d.slice(7);
+  return s;
+}
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    const pr = props || this.props || {};
+    const start = MODES[pr.start] ? pr.start : 'login';
+    this.state = this.initial(start);
+  }
+
+  initial(start) {
+    return {
+      screen: start, entering: false, tick: 0, focused: false,
+      login: { acc: 'linxiao@roast.tty', pw: 'espresso42', focus: '', loading: false, progress: 0, err: '', remember: true },
+      user: start !== 'login',
+      origin: 0, roastF: 0, sortI: 0, search: '', searchFocus: false,
+      listSel: 0, hoverRow: -1, rowsIn: true,
+      detailId: 'pinkb', sku: { w: 1, g: 1, k: 0 }, qty: 1, skuFocus: 0,
+      cart: [
+        { key: 'pinkb-1-1-0', pid: 'pinkb', w: 1, g: 1, k: 0, qty: 1, on: true },
+        { key: 'night-2-2-0', pid: 'night', w: 2, g: 2, k: 0, qty: 1, on: true },
+        { key: 'geisha-0-0-1', pid: 'geisha', w: 0, g: 0, k: 1, qty: 1, on: true },
+      ],
+      cartSel: 0, removed: null, coupon: '', couponOk: false, couponMsg: '',
+      checkout: { loading: false, progress: 0 }, done: null,
+      addrs: [
+        { id: 'a1', name: '林晓', phone: '138 **** 5521', tag: '家', region: '上海市 徐汇区', line: '天平路 88 弄 3 号 602 室', def: true },
+        { id: 'a2', name: '林晓', phone: '138 **** 5521', tag: '公司', region: '上海市 静安区', line: '江宁路 300 号 12F（前台代收）', def: false },
+        { id: 'a3', name: '陈默', phone: '139 **** 0817', tag: '家', region: '浙江省 杭州市 西湖区', line: '文三路 128 号 5 幢 1 单元 301', def: false },
+      ],
+      orderAddr: 'a1', addrSel: 0,
+      orders: [
+        { no: 'RT2611180031', date: '11-18', items: '慧兰 粉红波旁 250g ×1 · 「夜班」意式拼配 500g ×1', amt: '¥285.00', st: '运输中' },
+        { no: 'RT2611060117', date: '11-06', items: '耶加雪菲 孔加 250g ×2', amt: '¥208.00', st: '已签收' },
+        { no: 'RT2610210088', date: '10-21', items: '波奎特 瑰夏 100g ×1', amt: '¥133.00', st: '已签收' },
+      ],
+      modal: null, modalIn: false, help: false, helpIn: false,
+      toast: null, toastIn: false, bump: false,
+      animOn: true, mouseOn: true,
+      mv: [0, 0, 0, 0, 0, 0],
+    };
+  }
+
+  componentDidMount() {
+    this.iv = setInterval(() => this.onTick(), 100);
+    this.retarget();
+  }
+  componentDidUpdate(prev) {
+    if (prev && prev.start !== this.props.start && MODES[this.props.start]) {
+      this.curPid = null;
+      this.setState(this.initial(this.props.start), () => this.retarget());
+    }
+  }
+  componentWillUnmount() {
+    clearInterval(this.iv);
+    cancelAnimationFrame(this.raf);
+    clearTimeout(this.toastT);
+  }
+
+  raf2(fn) { requestAnimationFrame(() => requestAnimationFrame(fn)); }
+  focusRoot() { if (this.root) { try { this.root.focus({ preventScroll: true }); } catch (e) { this.root.focus(); } } }
+
+  onTick() {
+    const s = this.state;
+    const up = { tick: s.tick + 1 };
+    if (s.login.loading) {
+      const p = Math.min(100, s.login.progress + 3 + Math.random() * 7);
+      if (p >= 100) { this.finishLogin(); return; }
+      up.login = Object.assign({}, s.login, { progress: p });
+    }
+    if (s.checkout.loading) {
+      const p = Math.min(100, s.checkout.progress + 3 + Math.random() * 6);
+      if (p >= 100) { this.finishCheckout(); return; }
+      up.checkout = { loading: true, progress: p };
+    }
+    this.setState(up);
+  }
+
+  // ---------- navigation & animation ----------
+  go(screen, extra) {
+    const s = this.state;
+    if (s.screen === screen && !extra) return;
+    const fromRadar = s.screen === 'list' || s.screen === 'detail';
+    const toRadar = screen === 'list' || screen === 'detail';
+    const up = Object.assign({ screen: screen, entering: true, help: false, helpIn: false, hoverRow: -1 }, extra || {});
+    if (s.done && screen !== 'cart') up.done = null;
+    if (toRadar && !fromRadar) { this.curPid = null; up.mv = [0, 0, 0, 0, 0, 0]; }
+    this.setState(up, () => {
+      this.raf2(() => this.setState({ entering: false }));
+      this.retarget();
+    });
+  }
+  reveal() { this.raf2(() => this.setState({ entering: false })); }
+  flashRows() { this.setState({ rowsIn: false }, () => this.raf2(() => this.setState({ rowsIn: true }))); }
+
+  filtered() {
+    const s = this.state;
+    const q = s.search.trim().toLowerCase();
+    let xs = P.filter((p) => {
+      if (s.origin > 0 && p.origin !== ORIGINS[s.origin]) return false;
+      if (s.roastF === 1 && p.roast > 2) return false;
+      if (s.roastF === 2 && p.roast !== 3) return false;
+      if (s.roastF === 3 && p.roast < 4) return false;
+      if (q) {
+        const hay = (p.name + p.sub + p.origin + p.region + p.process + p.notes.join('')).toLowerCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
+      return true;
+    });
+    if (s.sortI === 1) xs = xs.slice().sort((a, b) => a.base - b.base);
+    else if (s.sortI === 2) xs = xs.slice().sort((a, b) => b.base - a.base);
+    else if (s.sortI === 3) xs = xs.slice().sort((a, b) => b.score - a.score);
+    return xs;
+  }
+
+  retarget() {
+    const s = this.state;
+    let p = null;
+    if (s.screen === 'list') p = this.filtered()[s.listSel] || null;
+    else if (s.screen === 'detail') p = byId(s.detailId);
+    if (p && p.id !== this.curPid) { this.curPid = p.id; this.animateTo(p.m); }
+  }
+  animateTo(to) {
+    cancelAnimationFrame(this.raf);
+    if (!this.state.animOn) { this.setState({ mv: to.slice() }); return; }
+    const from = this.state.mv.slice();
+    const t0 = performance.now();
+    const dur = 520;
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - t, 3);
+      this.setState({ mv: from.map((f, i) => f + (to[i] - f) * e) });
+      if (t < 1) this.raf = requestAnimationFrame(step);
+    };
+    this.raf = requestAnimationFrame(step);
+  }
+
+  showToast(text, sub, kind) {
+    clearTimeout(this.toastT);
+    this.setState({ toast: { text: text, sub: sub || '', kind: kind || 'ok' }, toastIn: false }, () => this.raf2(() => this.setState({ toastIn: true })));
+    this.toastT = setTimeout(() => this.setState({ toastIn: false }), 2600);
+  }
+  bumpBadge() {
+    this.setState({ bump: true });
+    setTimeout(() => this.setState({ bump: false }), 240);
+  }
+  toggleHelp(on) {
+    if (on) { this.setState({ help: true, helpIn: false }, () => this.raf2(() => this.setState({ helpIn: true }))); }
+    else { this.setState({ helpIn: false }); setTimeout(() => this.setState({ help: false }), this.state.animOn ? 200 : 0); this.focusRoot(); }
+  }
+
+  // ---------- login ----------
+  setLogin(ch) { this.setState({ login: Object.assign({}, this.state.login, ch) }); }
+  submitLogin() {
+    const L = this.state.login;
+    if (L.loading) return;
+    if (!L.acc.trim()) { this.setLogin({ err: '请输入账号或邮箱' }); return; }
+    if (L.pw.length < 6) { this.setLogin({ err: '密码至少 6 位' }); return; }
+    this.setLogin({ err: '', loading: true, progress: 0 });
+  }
+  finishLogin() {
+    this.setState({ login: Object.assign({}, this.state.login, { loading: false, progress: 0 }), user: true });
+    this.go('list');
+    this.showToast('欢迎回来，林晓', '已同步 ' + this.state.cart.length + ' 件购物车商品与 ' + this.state.addrs.length + ' 个地址', 'ok');
+  }
+  guest() {
+    this.setState({ user: false });
+    this.go('list');
+    this.showToast('以访客身份浏览', '结算前需要登录', 'info');
+  }
+  logout() {
+    this.setState({ user: false, login: Object.assign({}, this.state.login, { loading: false, progress: 0, err: '' }) });
+    this.go('login');
+    this.showToast('已退出登录', '按 ⏎ 重新登录', 'info');
+  }
+
+  // ---------- list ----------
+  setFilter(ch) {
+    this.setState(Object.assign({ listSel: 0 }, ch), () => { this.flashRows(); this.retarget(); });
+  }
+  moveList(d) {
+    const n = this.filtered().length;
+    if (!n) return;
+    const i = Math.max(0, Math.min(n - 1, this.state.listSel + d));
+    this.setState({ listSel: i }, () => this.retarget());
+  }
+  openDetail(pid) {
+    const p = byId(pid);
+    this.go('detail', { detailId: pid, sku: { w: firstAvail(p, 1), g: 0, k: 0 }, qty: 1, skuFocus: 0 });
+  }
+  quickAdd(pid) {
+    const p = byId(pid);
+    this.addToCart(pid, firstAvail(p, 1), 0, 0, 1, true);
+  }
+  focusSearch() {
+    if (this.state.screen !== 'list') this.go('list');
+    setTimeout(() => { if (this.searchEl) this.searchEl.focus(); }, 60);
+  }
+
+  // ---------- detail ----------
+  setSku(ch, focus) { this.setState({ sku: Object.assign({}, this.state.sku, ch), skuFocus: focus }); }
+  setQty(n) {
+    const p = byId(this.state.detailId);
+    const max = Math.min(9, p.stock);
+    this.setState({ qty: Math.max(1, Math.min(max, n)) });
+  }
+  stepSku(d) {
+    const s = this.state, p = byId(s.detailId), f = s.skuFocus;
+    if (f === 3) { this.setQty(s.qty + d); return; }
+    if (f === 0) {
+      let i = s.sku.w + d;
+      while (i >= 0 && i < WEIGHTS.length && p.out.indexOf(WEIGHTS[i].k) >= 0) i += d;
+      if (i >= 0 && i < WEIGHTS.length) this.setSku({ w: i }, 0);
+      return;
+    }
+    if (f === 1) { this.setSku({ g: Math.max(0, Math.min(GRINDS.length - 1, s.sku.g + d)) }, 1); return; }
+    if (f === 2) { this.setSku({ k: Math.max(0, Math.min(PACKS.length - 1, s.sku.k + d)) }, 2); }
+  }
+  addCurrent(buy) {
+    const s = this.state;
+    this.addToCart(s.detailId, s.sku.w, s.sku.g, s.sku.k, s.qty, !buy);
+    if (buy) this.go('cart');
+  }
+  addToCart(pid, w, g, k, qty, toast) {
+    const p = byId(pid);
+    const key = [pid, w, g, k].join('-');
+    const cart = this.state.cart.map((c) => Object.assign({}, c));
+    let ex = null;
+    cart.forEach((c) => { if (c.key === key) ex = c; });
+    if (ex) { ex.qty = Math.min(9, ex.qty + qty); ex.on = true; }
+    else cart.push({ key: key, pid: pid, w: w, g: g, k: k, qty: qty, on: true });
+    this.setState({ cart: cart, done: null });
+    this.bumpBadge();
+    if (toast) this.showToast('已加入购物车', p.name + ' · ' + WEIGHTS[w].k + ' · ' + GRINDS[g] + ' × ' + qty, 'ok');
+  }
+
+  // ---------- cart ----------
+  totals() {
+    const s = this.state;
+    let sub = 0, cnt = 0;
+    s.cart.forEach((c) => {
+      if (!c.on) return;
+      sub += unitPrice(byId(c.pid), c.w, c.k) * c.qty;
+      cnt += c.qty;
+    });
+    const disc = s.couponOk ? Math.round(sub * 0.1) : 0;
+    const ship = (sub === 0 || sub - disc >= 199) ? 0 : 12;
+    return { sub: sub, disc: disc, ship: ship, total: sub - disc + ship, cnt: cnt };
+  }
+  toggleItem(i) {
+    const cart = this.state.cart.map((c, j) => j === i ? Object.assign({}, c, { on: !c.on }) : c);
+    this.setState({ cart: cart, cartSel: i });
+  }
+  toggleAll() {
+    const all = this.state.cart.every((c) => c.on);
+    this.setState({ cart: this.state.cart.map((c) => Object.assign({}, c, { on: !all })) });
+  }
+  cartQty(i, d) {
+    const c0 = this.state.cart[i];
+    if (!c0) return;
+    const max = Math.min(9, byId(c0.pid).stock);
+    const cart = this.state.cart.map((c, j) => j === i ? Object.assign({}, c, { qty: Math.max(1, Math.min(max, c.qty + d)) }) : c);
+    this.setState({ cart: cart, cartSel: i });
+  }
+  removeItem(i) {
+    const s = this.state, c = s.cart[i];
+    if (!c) return;
+    const cart = s.cart.filter((_, j) => j !== i);
+    this.setState({ cart: cart, removed: { item: c, idx: i }, cartSel: Math.max(0, Math.min(cart.length - 1, i)) });
+    this.showToast('已从购物车移除', byId(c.pid).name + ' · 按 u 撤销', 'warn');
+  }
+  undoRemove() {
+    const r = this.state.removed;
+    if (!r) return;
+    const cart = this.state.cart.slice();
+    cart.splice(Math.min(r.idx, cart.length), 0, r.item);
+    this.setState({ cart: cart, removed: null, cartSel: Math.min(r.idx, cart.length - 1) });
+    this.showToast('已恢复', byId(r.item.pid).name, 'ok');
+  }
+  applyCoupon() {
+    const code = this.state.coupon.trim().toUpperCase();
+    if (!code) { this.setState({ couponOk: false, couponMsg: '' }); return; }
+    if (code === 'TTY10') this.setState({ couponOk: true, couponMsg: '✓ 已使用 TTY10 · 全单 9 折' });
+    else this.setState({ couponOk: false, couponMsg: '✗ 优惠码无效或已过期' });
+  }
+  startCheckout() {
+    const s = this.state, t = this.totals();
+    if (s.checkout.loading) return;
+    if (s.user !== true) { this.showToast('结算前请先登录', '访客可以浏览和加购', 'warn'); this.go('login'); return; }
+    if (t.cnt === 0) { this.showToast('还没有勾选商品', '用 space 勾选要结算的豆子', 'warn'); return; }
+    if (!s.addrs.some((a) => a.id === s.orderAddr)) { this.showToast('请先选择收货地址', '在地址本里按 ⏎ 指定', 'warn'); this.go('address'); return; }
+    this.setState({ checkout: { loading: true, progress: 0 } });
+  }
+  finishCheckout() {
+    const s = this.state, t = this.totals();
+    const picked = s.cart.filter((c) => c.on);
+    const items = picked.map((c) => {
+      const p = byId(c.pid);
+      return { name: p.name, spec: WEIGHTS[c.w].k + ' · ' + GRINDS[c.g] + ' · ' + PACKS[c.k].k, qty: c.qty, amt: money(unitPrice(p, c.w, c.k) * c.qty) };
+    });
+    const d = new Date();
+    const no = 'RT' + String(d.getFullYear()).slice(2) + pad(d.getMonth() + 1) + pad(d.getDate()) + String(Math.floor(1000 + Math.random() * 9000));
+    const eta = new Date(d.getTime() + 3 * 864e5);
+    let addr = null;
+    s.addrs.forEach((a) => { if (a.id === s.orderAddr) addr = a; });
+    const summary = picked.map((c) => byId(c.pid).name + ' ' + WEIGHTS[c.w].k + ' ×' + c.qty).join(' · ');
+    this.setState({
+      checkout: { loading: false, progress: 0 },
+      done: { no: no, items: items, total: money(t.total), addr: addr ? addr.name + ' · ' + addr.region + ' ' + addr.line : '', eta: (eta.getMonth() + 1) + ' 月 ' + eta.getDate() + ' 日' },
+      cart: s.cart.filter((c) => !c.on), cartSel: 0, couponOk: false, coupon: '', couponMsg: '', removed: null,
+      orders: [{ no: no, date: pad(d.getMonth() + 1) + '-' + pad(d.getDate()), items: summary, amt: '¥' + money(t.total), st: '烘焙中' }].concat(s.orders),
+      entering: true,
+    }, () => this.reveal());
+    this.showToast('订单已提交', no + ' · 下一个烘焙日出炉', 'ok');
+  }
+
+  // ---------- address ----------
+  useAddr(i) {
+    const a = this.state.addrs[i];
+    if (!a) return;
+    this.setState({ orderAddr: a.id });
+    this.showToast('本单寄往这里', a.name + ' · ' + a.region, 'ok');
+    this.go('cart');
+  }
+  setDef(i) {
+    const a = this.state.addrs[i];
+    if (!a || a.def) return;
+    this.setState({ addrs: this.state.addrs.map((x, j) => Object.assign({}, x, { def: j === i })), addrSel: i });
+    this.showToast('已设为默认地址', a.region, 'ok');
+  }
+  delAddr(i) {
+    const s = this.state, a = s.addrs[i];
+    if (!a) return;
+    let addrs = s.addrs.filter((_, j) => j !== i).map((x) => Object.assign({}, x));
+    if (a.def && addrs.length) addrs[0].def = true;
+    let orderAddr = s.orderAddr;
+    if (orderAddr === a.id) { const d = addrs.filter((x) => x.def)[0]; orderAddr = d ? d.id : null; }
+    this.setState({ addrs: addrs, orderAddr: orderAddr, addrSel: Math.max(0, Math.min(addrs.length - 1, i)) });
+    this.showToast('已删除地址', a.name + ' · ' + a.region, 'warn');
+  }
+  openModal(a) {
+    const m = a
+      ? { mode: 'edit', id: a.id, name: a.name, phone: a.phone, region: a.region, line: a.line, tag: a.tag, def: a.def, err: '' }
+      : { mode: 'new', id: null, name: '', phone: '', region: '', line: '', tag: '家', def: this.state.addrs.length === 0, err: '' };
+    this.setState({ modal: m, modalIn: false }, () => this.raf2(() => {
+      this.setState({ modalIn: true });
+      if (this.mdFirst) this.mdFirst.focus();
+    }));
+  }
+  closeModal() {
+    this.setState({ modalIn: false });
+    setTimeout(() => this.setState({ modal: null }), this.state.animOn ? 200 : 0);
+    this.focusRoot();
+  }
+  setM(field) {
+    return (e) => { const ch = { err: '' }; ch[field] = e.target.value; this.setState({ modal: Object.assign({}, this.state.modal, ch) }); };
+  }
+  saveModal() {
+    const s = this.state, M = s.modal;
+    if (!M) return;
+    if (!M.name.trim()) { this.setState({ modal: Object.assign({}, M, { err: '请填写收货人' }) }); return; }
+    if (!M.region.trim()) { this.setState({ modal: Object.assign({}, M, { err: '请填写所在地区' }) }); return; }
+    if (!M.line.trim()) { this.setState({ modal: Object.assign({}, M, { err: '请填写详细地址' }) }); return; }
+    const rec = { id: M.id || ('a' + Date.now()), name: M.name.trim(), phone: maskPhone(M.phone.trim()) || '—', tag: M.tag, region: M.region.trim(), line: M.line.trim(), def: M.def || s.addrs.length === 0 };
+    let addrs;
+    if (M.mode === 'edit') addrs = s.addrs.map((x) => x.id === rec.id ? rec : Object.assign({}, x));
+    else addrs = s.addrs.map((x) => Object.assign({}, x)).concat([rec]);
+    if (rec.def) addrs = addrs.map((x) => Object.assign({}, x, { def: x.id === rec.id }));
+    if (!addrs.some((x) => x.def) && addrs.length) addrs[0].def = true;
+    const idx = addrs.map((x) => x.id).indexOf(rec.id);
+    this.setState({ addrs: addrs, addrSel: idx, orderAddr: s.orderAddr || rec.id });
+    this.closeModal();
+    this.showToast(M.mode === 'edit' ? '地址已更新' : '已新增地址', rec.region + ' ' + rec.line, 'ok');
+  }
+
+  // ---------- keyboard ----------
+  handleKey(k) {
+    const s = this.state;
+    if (s.help) { if (k === '?' || k === 'Escape' || k === 'q') { this.toggleHelp(false); return true; } return false; }
+    if (s.modal) {
+      if (k === 'Escape') { this.closeModal(); return true; }
+      if (k === 'Enter') { this.saveModal(); return true; }
+      return false;
+    }
+    if (k === '?') { this.toggleHelp(true); return true; }
+    if (s.screen === 'login') {
+      if (k === 'Enter') { this.submitLogin(); return true; }
+      if (k === 'g') { this.guest(); return true; }
+      if (k === 'Tab') { const el = document.getElementById('tty-acc'); if (el) el.focus(); return true; }
+      return false;
+    }
+    if (k === '1') { this.go('list'); return true; }
+    if (k === '2') { this.go('cart'); return true; }
+    if (k === '3') { this.go('address'); return true; }
+    if (k === '4') { this.go('profile'); return true; }
+    if (k === '/') { this.focusSearch(); return true; }
+    if (k === 'q') { this.logout(); return true; }
+    if (s.screen === 'list') return this.keyList(k);
+    if (s.screen === 'detail') return this.keyDetail(k);
+    if (s.screen === 'cart') return this.keyCart(k);
+    if (s.screen === 'address') return this.keyAddr(k);
+    if (s.screen === 'profile') return this.keyProfile(k);
+    return false;
+  }
+  keyList(k) {
+    const s = this.state;
+    const cur = this.filtered()[s.listSel];
+    switch (k) {
+      case 'ArrowDown': case 'j': this.moveList(1); return true;
+      case 'ArrowUp': case 'k': this.moveList(-1); return true;
+      case 'Enter': case 'l': case 'ArrowRight': if (cur) this.openDetail(cur.id); return true;
+      case 'a': if (cur) this.quickAdd(cur.id); return true;
+      case 'f': this.setFilter({ origin: (s.origin + 1) % ORIGINS.length }); return true;
+      case 'r': this.setFilter({ roastF: (s.roastF + 1) % ROASTS.length }); return true;
+      case 's': this.setFilter({ sortI: (s.sortI + 1) % SORTS.length }); return true;
+      case 'Escape': this.setFilter({ origin: 0, roastF: 0, search: '' }); return true;
+    }
+    return false;
+  }
+  keyDetail(k) {
+    const s = this.state;
+    switch (k) {
+      case 'ArrowDown': case 'j': this.setState({ skuFocus: Math.min(3, s.skuFocus + 1) }); return true;
+      case 'ArrowUp': case 'k': this.setState({ skuFocus: Math.max(0, s.skuFocus - 1) }); return true;
+      case 'ArrowLeft': case 'h': this.stepSku(-1); return true;
+      case 'ArrowRight': case 'l': this.stepSku(1); return true;
+      case '+': case '=': this.setQty(s.qty + 1); return true;
+      case '-': case '_': this.setQty(s.qty - 1); return true;
+      case 'a': this.addCurrent(false); return true;
+      case 'b': this.addCurrent(true); return true;
+      case 'Escape': case 'Backspace': this.go('list'); return true;
+    }
+    return false;
+  }
+  keyCart(k) {
+    const s = this.state;
+    if (s.done) {
+      if (k === 'Enter' || k === 'Escape') { this.go('list'); return true; }
+      return false;
+    }
+    if (s.checkout.loading) return false;
+    const n = s.cart.length;
+    switch (k) {
+      case 'ArrowDown': case 'j': this.setState({ cartSel: Math.max(0, Math.min(n - 1, s.cartSel + 1)) }); return true;
+      case 'ArrowUp': case 'k': this.setState({ cartSel: Math.max(0, s.cartSel - 1) }); return true;
+      case ' ': this.toggleItem(s.cartSel); return true;
+      case 'ArrowRight': case '+': case '=': case 'l': this.cartQty(s.cartSel, 1); return true;
+      case 'ArrowLeft': case '-': case 'h': this.cartQty(s.cartSel, -1); return true;
+      case 'x': case 'd': case 'Delete': this.removeItem(s.cartSel); return true;
+      case 'u': this.undoRemove(); return true;
+      case 'a': this.toggleAll(); return true;
+      case 'c': case 'Enter': this.startCheckout(); return true;
+      case 'Escape': this.go('list'); return true;
+    }
+    return false;
+  }
+  keyAddr(k) {
+    const s = this.state, n = s.addrs.length, i = s.addrSel;
+    const sel = (j) => this.setState({ addrSel: Math.max(0, Math.min(n - 1, j)) });
+    switch (k) {
+      case 'ArrowRight': case 'l': sel(i + 1); return true;
+      case 'ArrowLeft': case 'h': sel(i - 1); return true;
+      case 'ArrowDown': case 'j': sel(i + 2); return true;
+      case 'ArrowUp': case 'k': sel(i - 2); return true;
+      case 'n': this.openModal(null); return true;
+      case 'e': if (s.addrs[i]) this.openModal(s.addrs[i]); return true;
+      case 'd': case 'x': this.delAddr(i); return true;
+      case ' ': this.setDef(i); return true;
+      case 'Enter': this.useAddr(i); return true;
+      case 'Escape': this.go('cart'); return true;
+    }
+    return false;
+  }
+  keyProfile(k) {
+    if (k === 'm') { this.toggleAnim(); return true; }
+    if (k === 'o') { this.toggleMouse(); return true; }
+    if (k === 'Enter' && this.state.user !== true) { this.go('login'); return true; }
+    return false;
+  }
+  toggleAnim() {
+    const on = !this.state.animOn;
+    this.setState({ animOn: on });
+    this.showToast(on ? '界面动画已开启' : '界面动画已关闭', on ? '过渡、雷达与进度条恢复缓动' : '所有画面即时切换', 'info');
+  }
+  toggleMouse() {
+    const on = !this.state.mouseOn;
+    this.setState({ mouseOn: on, hoverRow: -1 });
+    this.showToast(on ? '鼠标追踪已开启' : '鼠标追踪已关闭', on ? '悬停即移动高亮' : '点击仍然可用', 'info');
+  }
+
+  onKey(e) {
+    const k = e.key;
+    const t = e.target;
+    const tag = t && t.tagName;
+    const s = this.state;
+    if (tag === 'INPUT') {
+      if (k === 'Escape') {
+        e.preventDefault();
+        t.blur();
+        if (s.modal) this.closeModal(); else this.focusRoot();
+        return;
+      }
+      if (k === 'Enter') {
+        e.preventDefault();
+        if (s.screen === 'login') this.submitLogin();
+        else if (s.modal) this.saveModal();
+        else if (t.name === 'coupon') this.applyCoupon();
+        else if (t.name === 'search') { t.blur(); this.focusRoot(); }
+      }
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (tag === 'BUTTON' && (k === 'Enter' || k === ' ')) return;
+    if (k === 'Tab' && !(s.screen === 'login' && t === this.root)) return;
+    if (this.handleKey(k)) e.preventDefault();
+  }
+
+  renderVals() {
+    const s = this.state;
+    const anim = s.animOn;
+    const hidden = anim && s.entering;
+    const tr = {
+      fast: anim ? 'all 160ms ease' : 'none',
+      slide: anim ? 'transform 280ms cubic-bezier(.2,.8,.2,1), opacity 200ms ease' : 'none',
+      fade: anim ? 'opacity 200ms ease' : 'none',
+      pop: anim ? 'opacity 220ms ease, transform 320ms cubic-bezier(.2,.9,.25,1.15)' : 'none',
+      bar: anim ? 'width 800ms cubic-bezier(.2,.8,.2,1)' : 'none',
+    };
+    const screenAnim = hidden
+      ? 'opacity:0;transform:translateY(10px);transition:none'
+      : 'opacity:1;transform:translateY(0);transition:' + (anim ? 'opacity 240ms ease, transform 360ms cubic-bezier(.2,.8,.2,1)' : 'none');
+    const stag = (i, hide) => ({
+      op: hide ? 0 : 1,
+      tf: hide ? 'translateX(-8px)' : 'translateX(0)',
+      tr: (!anim || hide) ? 'none' : 'opacity 280ms ease ' + (i * 32) + 'ms, transform 360ms cubic-bezier(.2,.8,.2,1) ' + (i * 32) + 'ms, background 160ms ease, border-color 160ms ease',
+    });
+    const now = new Date();
+    const blink = Math.floor(s.tick / 5) % 2 === 0;
+
+    // login
+    const L = s.login;
+    const pct = Math.round(L.progress);
+    const lg = {
+      acc: L.acc, pw: L.pw,
+      accBd: L.focus === 'acc' ? ACC : LINE, pwBd: L.focus === 'pw' ? ACC : LINE,
+      accMk: L.focus === 'acc' ? (blink ? ACC : '#7d6f5f') : MUTE, pwMk: L.focus === 'pw' ? (blink ? ACC : '#7d6f5f') : MUTE,
+      setAcc: (e) => this.setLogin({ acc: e.target.value, err: '' }),
+      setPw: (e) => this.setLogin({ pw: e.target.value, err: '' }),
+      focAcc: () => this.setLogin({ focus: 'acc' }),
+      focPw: () => this.setLogin({ focus: 'pw' }),
+      blur: () => this.setLogin({ focus: '' }),
+      rememberBox: L.remember ? '[✓]' : '[ ]', rememberC: L.remember ? ACC : MUTE, rememberOn: L.remember ? 'true' : 'false',
+      toggleRemember: () => this.setLogin({ remember: !L.remember }),
+      hasErr: !!L.err, err: L.err,
+      idle: !L.loading, loading: L.loading, pct: pct,
+      step: pct < 35 ? '握手 · 建立安全连接' : pct < 70 ? '校验凭据' : '同步购物车与地址本',
+      submit: () => this.submitLogin(),
+      guest: () => this.guest(),
+      register: () => this.showToast('这是演示环境', '直接用预填的账号登录即可', 'info'),
+    };
+
+    // header
+    const tabIdx = { list: 0, detail: 0, cart: 1, address: 2, profile: 3 }[s.screen] || 0;
+    const cartCount = s.cart.reduce((a, c) => a + c.qty, 0);
+    const tabs = [['1', '选购', 'list'], ['2', '购物车', 'cart'], ['3', '地址本', 'address'], ['4', '我的', 'profile']].map((x, i) => ({
+      k: x[0], label: x[1], go: () => this.go(x[2]),
+      cur: i === tabIdx ? 'page' : 'false', fg: i === tabIdx ? FG : MUTE, fw: i === tabIdx ? 700 : 400,
+      hasBadge: x[2] === 'cart' && cartCount > 0, badge: cartCount, scale: s.bump ? 1.35 : 1,
+    }));
+    const srch = {
+      bd: s.searchFocus ? ACC : LINE, has: !!s.search,
+      clear: () => this.setFilter({ search: '' }),
+      change: (e) => { const v = e.target.value; if (this.state.screen !== 'list') this.go('list'); this.setFilter({ search: v }); },
+      focus: () => this.setState({ searchFocus: true }),
+      blur: () => this.setState({ searchFocus: false }),
+    };
+    const member = s.user === true;
+    const me = { name: member ? '林晓' : '访客', tag: member ? 'Lv.3' : '登录 →', initial: member ? '林' : '客', bg: member ? ACC : MUTE, go: () => this.go(member ? 'profile' : 'login') };
+
+    // list
+    const fl = this.filtered();
+    const sel = Math.min(s.listSel, Math.max(0, fl.length - 1));
+    const rowsHidden = anim && (s.entering || !s.rowsIn);
+    const rows = fl.map((p, i) => {
+      const on = i === sel;
+      return Object.assign(stag(i, rowsHidden), {
+        name: p.name, sub: p.sub, origin: p.origin, process: p.process,
+        pips: '●'.repeat(p.roast) + '○'.repeat(5 - p.roast),
+        price: unitPrice(p, 1, 0), hasTag: !!p.tag, tag: p.tag,
+        mk: on ? 1 : 0, nc: on ? ACC : FG,
+        hbg: (!on && s.hoverRow === i) ? 'rgba(255,255,255,0.04)' : 'transparent',
+        aria: p.name + '，' + p.origin + '，' + ROAST_NAMES[p.roast] + '，¥' + unitPrice(p, 1, 0) + ' 每 250 克',
+        pick: () => this.setState({ listSel: i }, () => this.retarget()),
+        open: () => this.openDetail(p.id),
+        hover: () => { if (this.state.mouseOn && this.state.hoverRow !== i) this.setState({ hoverRow: i }); },
+      });
+    });
+    const origins = ORIGINS.map((o, i) => ({
+      name: o, count: i === 0 ? P.length : P.filter((p) => p.origin === o).length,
+      mark: i === s.origin ? '◉' : '○', on: i === s.origin ? 'true' : 'false',
+      bg: i === s.origin ? 'rgba(240,180,90,0.12)' : 'transparent', fg: i === s.origin ? ACC : SOFT,
+      pick: () => this.setFilter({ origin: i }),
+    }));
+    const chips = (arr, cur, key) => arr.map((x, i) => ({
+      label: x, on: i === cur ? 'true' : 'false',
+      bg: i === cur ? ACC : 'transparent', fg: i === cur ? INK : SOFT, bd: i === cur ? ACC : LINE,
+      pick: () => { const ch = {}; ch[key] = i; this.setFilter(ch); },
+    }));
+    const radar = (v, label) => {
+      const o = { label: label };
+      const pts = [];
+      for (let i = 0; i < 6; i++) {
+        const a = (i * 60 - 90) * Math.PI / 180;
+        const r = 7 * Math.max(0, Math.min(10, v[i]));
+        const x = Math.round((110 + r * Math.cos(a)) * 10) / 10;
+        const y = Math.round((102 + r * Math.sin(a)) * 10) / 10;
+        o['x' + i] = x; o['y' + i] = y;
+        pts.push(x + ',' + y);
+      }
+      o.p = pts.join(' ');
+      return o;
+    };
+    const radarLabel = (p) => p.name + ' 风味雷达：' + LABELS.map((l, i) => l + ' ' + p.m[i]).join('，');
+    const cur = fl[sel];
+    const pv = cur ? {
+      has: true, name: cur.name, sub: cur.sub, notes: cur.notes,
+      meta: ROAST_NAMES[cur.roast] + ' · ' + cur.process + ' · 杯测 ' + cur.score,
+      desc: cur.desc, price: unitPrice(cur, 1, 0),
+      rd: radar(s.mv, radarLabel(cur)),
+      open: () => this.openDetail(cur.id), add: () => this.quickAdd(cur.id),
+    } : { has: false, notes: [], rd: radar([0, 0, 0, 0, 0, 0], '') };
+
+    // detail
+    const dp = byId(s.detailId);
+    const W = s.sku;
+    const dt = {
+      name: dp.name, sub: dp.sub, origin: dp.origin, tag: dp.tag, hasTag: !!dp.tag, desc: dp.desc, brew: dp.brew,
+      notesText: dp.notes.join(' · '),
+      info: [['产区', dp.region], ['庄园', dp.farm], ['海拔', dp.alt], ['品种', dp.variety], ['处理法', dp.process], ['产季', dp.harvest], ['烘焙度', ROAST_NAMES[dp.roast]], ['杯测', dp.score + ' 分']].map((x) => ({ k: x[0], v: x[1] })),
+      bars: LABELS.map((l, i) => ({ l: l, w: Math.max(0, Math.min(100, s.mv[i] * 10)), v: dp.m[i] + '/10' })),
+      rd: radar(s.mv, radarLabel(dp)),
+      back: () => this.go('list'),
+    };
+    const unit = unitPrice(dp, W.w, W.k);
+    const focusRow = (i) => ({ cur: s.skuFocus === i ? 1 : 0, lc: s.skuFocus === i ? FG : MUTE, hint: s.skuFocus === i ? '← → 切换' : '' });
+    const opt = (on, dis, extra) => Object.assign({
+      on: on ? 'true' : 'false', dis: dis, td: dis ? 'line-through' : 'none',
+      bg: on ? 'rgba(240,180,90,0.14)' : 'transparent', bd: on ? ACC : LINE,
+      fg: dis ? '#7d7264' : (on ? ACC : FG), nc: on ? ACC : MUTE,
+    }, extra);
+    const groups = [
+      Object.assign({ label: '重量', opts: WEIGHTS.map((w, i) => { const out = dp.out.indexOf(w.k) >= 0; return opt(i === W.w, out, { label: w.k, note: out ? '缺货' : '¥' + unitPrice(dp, i, W.k), hasNote: true, minW: 74, h: 52, pick: () => { if (!out) this.setSku({ w: i }, 0); } }); }) }, focusRow(0)),
+      Object.assign({ label: '研磨', opts: GRINDS.map((g, i) => opt(i === W.g, false, { label: g, note: '', hasNote: false, minW: 58, h: 36, pick: () => this.setSku({ g: i }, 1) })) }, focusRow(1)),
+      Object.assign({ label: '包装', opts: PACKS.map((pk, i) => opt(i === W.k, false, { label: pk.add ? pk.k + ' +¥' + pk.add : pk.k, note: '', hasNote: false, minW: 96, h: 36, pick: () => this.setSku({ k: i }, 2) })) }, focusRow(2)),
+    ];
+    const qMax = Math.min(9, dp.stock);
+    const sku = {
+      groups: groups, qty: s.qty, unit: unit, total: money(unit * s.qty),
+      qCur: s.skuFocus === 3 ? 1 : 0, qLc: s.skuFocus === 3 ? FG : MUTE, qHint: s.skuFocus === 3 ? '← → 增减' : '',
+      inc: () => { this.setState({ skuFocus: 3 }); this.setQty(s.qty + 1); },
+      dec: () => { this.setState({ skuFocus: 3 }); this.setQty(s.qty - 1); },
+      summary: WEIGHTS[W.w].k + ' · ' + GRINDS[W.g] + ' · ' + PACKS[W.k].k,
+      code: 'RT-' + dp.code + '-' + WEIGHTS[W.w].k.toUpperCase() + '-' + GCODE[W.g] + '-' + (W.k ? 'GIFT' : 'STD'),
+      stock: dp.stock <= 10 ? '仅剩 ' + dp.stock + ' 份 · 售完即止' : '现货 ' + dp.stock + ' 份 · 每周二、五烘焙',
+      stockC: dp.stock <= 10 ? ACC : ACC2,
+      add: () => this.addCurrent(false), buy: () => this.addCurrent(true),
+    };
+    if (qMax < 1) sku.stock = '暂时缺货';
+
+    // cart
+    const t = this.totals();
+    const cartHidden = anim && s.entering;
+    let oa = null;
+    s.addrs.forEach((a) => { if (a.id === s.orderAddr) oa = a; });
+    const ck = s.checkout;
+    const cpct = Math.round(ck.progress);
+    const cart = {
+      count: cartCount,
+      hasRows: s.cart.length > 0, empty: s.cart.length === 0,
+      hlY: Math.min(s.cartSel, Math.max(0, s.cart.length - 1)) * 68,
+      rows: s.cart.map((c, i) => {
+        const p = byId(c.pid);
+        const u = unitPrice(p, c.w, c.k);
+        return Object.assign(stag(i, cartHidden), {
+          name: p.name, sub: p.origin + ' · ' + ROAST_NAMES[p.roast],
+          spec: WEIGHTS[c.w].k + ' · ' + GRINDS[c.g] + ' · ' + PACKS[c.k].k,
+          unit: u, qty: c.qty, total: money(u * c.qty),
+          box: c.on ? '[✓]' : '[ ]', cc: c.on ? ACC : MUTE, on: c.on ? 'true' : 'false',
+          nc: c.on ? FG : MUTE, stc: c.on ? FG : MUTE,
+          toggle: () => this.toggleItem(i), inc: () => this.cartQty(i, 1), dec: () => this.cartQty(i, -1),
+          remove: () => this.removeItem(i), open: () => this.openDetail(p.id),
+          hover: () => { if (this.state.mouseOn && this.state.cartSel !== i) this.setState({ cartSel: i }); },
+        });
+      }),
+      allOn: s.cart.length && s.cart.every((c) => c.on) ? 'true' : 'false',
+      allBox: s.cart.length && s.cart.every((c) => c.on) ? '[✓]' : '[ ]',
+      allC: s.cart.length && s.cart.every((c) => c.on) ? ACC : MUTE,
+      toggleAll: () => this.toggleAll(),
+      selCnt: t.cnt,
+      hasUndo: !!s.removed, undoName: s.removed ? byId(s.removed.item.pid).name : '', undo: () => this.undoRemove(),
+      hasAddr: !!oa, noAddr: !oa,
+      addrName: oa ? oa.name : '', addrPhone: oa ? oa.phone : '', addrLine: oa ? oa.region + ' ' + oa.line : '',
+      coupon: s.coupon, setCoupon: (e) => this.setState({ coupon: e.target.value }),
+      applyCoupon: () => this.applyCoupon(),
+      hasCouponMsg: !!s.couponMsg, couponMsg: s.couponMsg, couponC: s.couponOk ? ACC2 : DANGER,
+      sub: money(t.sub), disc: money(t.disc), discC: t.disc ? ACC2 : MUTE,
+      ship: t.ship ? '¥' + money(t.ship) : '包邮',
+      freePct: Math.min(100, Math.round((t.sub - t.disc) / 199 * 100)),
+      freeText: t.sub === 0 ? '满 ¥199 包邮' : t.ship ? '再买 ¥' + (199 - (t.sub - t.disc)) + ' 即可包邮' : '已满 ¥199 · 本单包邮',
+      total: money(t.total),
+      checkout: () => this.startCheckout(),
+      idle: !ck.loading, loading: ck.loading, pct: cpct,
+      step: cpct < 30 ? '校验库存' : cpct < 60 ? '锁定烘焙批次' : cpct < 90 ? '生成订单' : '完成',
+    };
+    const D = s.done;
+    const done = D ? {
+      has: true, none: false, no: D.no, items: D.items, total: D.total, addr: D.addr, eta: D.eta,
+      cont: () => this.go('list'), orders: () => this.go('profile'),
+    } : { has: false, none: true, items: [] };
+
+    // address
+    const adHidden = anim && s.entering;
+    const ad = {
+      count: s.addrs.length,
+      orderName: oa ? oa.name + ' · ' + oa.region : '未指定',
+      add: () => this.openModal(null),
+      cards: s.addrs.map((a, i) => {
+        const on = i === s.addrSel;
+        return Object.assign(stag(i, adHidden), {
+          name: a.name, phone: a.phone, tag: a.tag, region: a.region, line: a.line,
+          isDef: a.def, isOrder: a.id === s.orderAddr,
+          mk: on ? 1 : 0, bd: on ? ACC : LINE, bg: on ? '#211b16' : '#1b1713',
+          defC: a.def ? '#7d7264' : FG,
+          hover: () => { if (this.state.mouseOn && this.state.addrSel !== i) this.setState({ addrSel: i }); },
+          use: () => this.useAddr(i), edit: () => this.openModal(a), setDef: () => this.setDef(i), del: () => this.delAddr(i),
+        });
+      }),
+    };
+
+    // modal
+    const M = s.modal;
+    const md = M ? {
+      open: true, op: s.modalIn ? 1 : 0,
+      tf: s.modalIn ? 'translateY(0) scale(1)' : 'translateY(14px) scale(0.97)',
+      title: M.mode === 'edit' ? '编辑地址 EDIT' : '新增地址 NEW',
+      name: M.name, phone: M.phone, region: M.region, line: M.line,
+      setName: this.setM('name'), setPhone: this.setM('phone'), setRegion: this.setM('region'), setLine: this.setM('line'),
+      tags: ['家', '公司', '学校'].map((x) => ({
+        label: x, on: M.tag === x ? 'true' : 'false',
+        bg: M.tag === x ? ACC : 'transparent', fg: M.tag === x ? INK : SOFT, bd: M.tag === x ? ACC : LINE,
+        pick: () => this.setState({ modal: Object.assign({}, this.state.modal, { tag: x }) }),
+      })),
+      defBox: M.def ? '[✓]' : '[ ]', defC: M.def ? ACC : MUTE, defOn: M.def ? 'true' : 'false',
+      toggleDef: () => this.setState({ modal: Object.assign({}, this.state.modal, { def: !this.state.modal.def }) }),
+      hasErr: !!M.err, err: M.err,
+      save: () => this.saveModal(), cancel: () => this.closeModal(),
+      firstRef: (el) => { this.mdFirst = el; },
+    } : { open: false, tags: [] };
+
+    // help
+    const hp = {
+      open: s.help, op: s.helpIn ? 1 : 0,
+      tf: s.helpIn ? 'translateY(0) scale(1)' : 'translateY(14px) scale(0.97)',
+      groups: HELP.map((g) => ({ title: g.title, items: g.items.map((x) => ({ k: x[0], t: x[1] })) })),
+      close: () => this.toggleHelp(false),
+    };
+
+    // toast
+    const T = s.toast;
+    const kind = T ? T.kind : 'ok';
+    const toast = {
+      text: T ? T.text : '', sub: T ? T.sub : '',
+      icon: kind === 'warn' ? '!' : kind === 'info' ? 'i' : '✓',
+      ic: kind === 'warn' ? DANGER : kind === 'info' ? ACC : ACC2,
+      bd: kind === 'warn' ? '#6b4436' : kind === 'info' ? '#5a4d3f' : '#3e5a48',
+      op: s.toastIn ? 1 : 0, tf: s.toastIn ? 'translateY(0)' : 'translateY(18px)',
+    };
+
+    // profile
+    const pf = {
+      guest: !member, member: member,
+      lv: hidden ? 0 : 64,
+      rd: radar(PREF, '我的口味画像：' + LABELS.map((l, i) => l + ' ' + PREF[i]).join('，')),
+      orderCnt: s.orders.length, addrCnt: s.addrs.length,
+      orders: s.orders.map((o, i) => Object.assign(stag(i, hidden), o, { c: o.st === '已签收' ? ACC2 : ACC })),
+      recs: ['geisha', 'nyeri'].map((id) => ({ name: byId(id).name, open: () => this.openDetail(id) })),
+      animBox: s.animOn ? '■ 开' : '□ 关', animC: s.animOn ? ACC : MUTE, animBd: s.animOn ? ACC : LINE, animOn: s.animOn ? 'true' : 'false',
+      mouseBox: s.mouseOn ? '■ 开' : '□ 关', mouseC: s.mouseOn ? ACC : MUTE, mouseBd: s.mouseOn ? ACC : LINE, mouseOn: s.mouseOn ? 'true' : 'false',
+      toggleAnim: () => this.toggleAnim(), toggleMouse: () => this.toggleMouse(),
+      logout: () => this.logout(), login: () => this.go('login'),
+    };
+
+    // status bar
+    let mode = MODES[s.screen] || MODES.list;
+    if (s.help) mode = ['帮助', 'HELP'];
+    else if (s.modal) mode = ['编辑', 'INSERT'];
+    const hints = (HINTS[s.screen] || []).map((h) => ({ k: h[0], t: h[1], run: () => { this.handleKey(h[2]); } }));
+
+    return {
+      tr: tr, screenAnim: screenAnim,
+      spin: SPIN[s.tick % SPIN.length],
+      clock: pad(now.getHours()) + ':' + pad(now.getMinutes()),
+      kb: s.focused ? { dot: '●', c: ACC2, text: '键盘已连接' } : { dot: '○', c: MUTE, text: '单击窗口以使用键盘' },
+      logo: LOGO,
+      steam: STEAM[Math.floor(s.tick / 4) % STEAM.length].map((x, i) => ({ t: x, c: STEAM_C[i] })),
+      cup: CUP,
+      isLogin: s.screen === 'login', isApp: s.screen !== 'login',
+      lg: lg,
+      is: { list: s.screen === 'list', detail: s.screen === 'detail', cart: s.screen === 'cart', address: s.screen === 'address', profile: s.screen === 'profile' },
+      nav: { list: () => this.go('list'), address: () => this.go('address') },
+      tabs: tabs, tabX: tabIdx * 116,
+      srch: srch, search: s.search,
+      searchRef: (el) => { this.searchEl = el; },
+      me: me,
+      origins: origins, roasts: chips(ROASTS, s.roastF, 'roastF'), sorts: chips(SORTS, s.sortI, 'sortI'),
+      rows: rows, hlY: sel * 52, hlOp: fl.length ? 1 : 0,
+      listEmpty: fl.length === 0, listCount: fl.length, sortName: SORTS[s.sortI],
+      clearFilters: () => this.setFilter({ origin: 0, roastF: 0, search: '' }),
+      rowsLeave: () => { if (this.state.hoverRow !== -1) this.setState({ hoverRow: -1 }); },
+      pv: pv, dt: dt, sku: sku, cart: cart, done: done, ad: ad, md: md, hp: hp, pf: pf,
+      hasToast: !!T, toast: toast,
+      mode: { zh: mode[0], en: mode[1] }, hints: hints,
+      statusTotal: money(t.total),
+      mouseDotC: s.mouseOn ? ACC2 : MUTE,
+      openHelp: () => this.toggleHelp(true),
+      rootRef: (el) => { this.root = el; },
+      onKey: (e) => this.onKey(e),
+      onMouseUp: (e) => { const tg = e.target && e.target.tagName; if (tg !== 'INPUT' && tg !== 'LABEL') this.focusRoot(); },
+      onRootFocus: () => { if (!this.state.focused) this.setState({ focused: true }); },
+      onRootBlur: (e) => { if (this.root && e.relatedTarget && this.root.contains(e.relatedTarget)) return; this.setState({ focused: false }); },
+    };
+  }
+}
+</script>
+</body>
+</html>

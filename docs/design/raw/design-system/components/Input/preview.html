@@ -1,0 +1,20 @@
+<!-- @dsCard group="Forms" height=250 subtitle="提示符输入框 / 普通输入框 / 搜索框" -->
+<div class="tui" style="padding:20px 24px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px">
+  <div class="t-field">
+    <label class="t-field__label" for="p1">账号 / 邮箱</label>
+    <div class="t-prompt is-focus"><span class="t-prompt__mark" aria-hidden="true">›</span><input id="p1" value="linxiao@roast.tty"></div>
+  </div>
+  <div class="t-field">
+    <label class="t-field__label" for="p2">密码</label>
+    <div class="t-prompt"><span class="t-prompt__mark" aria-hidden="true">›</span><input id="p2" type="password" value="espresso42" style="letter-spacing:.2em"></div>
+  </div>
+  <div class="t-field">
+    <label class="t-field__label" for="p3">手机号</label>
+    <input class="t-input" id="p3" placeholder="11 位手机号">
+  </div>
+  <div class="t-field">
+    <label class="t-field__label">搜索</label>
+    <div class="t-search"><kbd class="t-kbd">/</kbd><input aria-label="搜索商品" placeholder="搜索豆子、产区或风味…"></div>
+  </div>
+  <div class="t-error" role="alert">✗ 账号或密码不正确</div>
+</div>

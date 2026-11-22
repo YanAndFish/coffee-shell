@@ -1,0 +1,33 @@
+<!-- @dsCard group="Forms" height=250 subtitle="筛选项 / 分段按钮 / SKU 规格 / 标签选择" -->
+<div class="tui" style="padding:20px 24px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:28px">
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:0 6px 4px;font-size:12px;color:var(--mute)"><span>产区</span><kbd class="t-kbd">f</kbd></div>
+      <button class="t-filter" aria-pressed="false"><span>○ 全部</span><span class="t-filter__count">8</span></button>
+      <button class="t-filter" aria-pressed="true"><span>◉ 肯尼亚</span><span class="t-filter__count">1</span></button>
+      <button class="t-filter" aria-pressed="false"><span>○ 巴拿马</span><span class="t-filter__count">1</span></button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px">
+      <button class="t-seg" aria-pressed="true">全部</button><button class="t-seg" aria-pressed="false">浅</button><button class="t-seg" aria-pressed="false">中</button><button class="t-seg" aria-pressed="false">深</button>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div role="group" aria-label="重量" style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;font-size:13px"><span><span style="display:inline-block;width:14px;color:var(--acc)">›</span>重量</span><span style="font-size:11px;color:var(--mute)">← → 切换</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding-left:14px">
+        <button class="t-opt t-opt--note" aria-pressed="false">100g<span class="t-opt__note">¥44</span></button>
+        <button class="t-opt t-opt--note" aria-pressed="true">250g<span class="t-opt__note">¥98</span></button>
+        <button class="t-opt t-opt--note" aria-pressed="false">500g<span class="t-opt__note">¥186</span></button>
+        <button class="t-opt t-opt--note" aria-pressed="false" disabled>1kg<span class="t-opt__note">缺货</span></button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding-left:14px">
+        <button class="t-opt" aria-pressed="false">整豆</button><button class="t-opt" aria-pressed="true">手冲</button><button class="t-opt" aria-pressed="false">意式</button>
+        <button class="t-opt t-opt--wide" aria-pressed="false">礼盒装 +¥20</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:12px;color:var(--mute);width:40px">标签</span>
+      <button class="t-pick" aria-pressed="true">家</button><button class="t-pick" aria-pressed="false">公司</button><button class="t-pick" aria-pressed="false">学校</button>
+    </div>
+  </div>
+</div>

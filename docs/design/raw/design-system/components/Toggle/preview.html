@@ -1,0 +1,15 @@
+<!-- @dsCard group="Forms" height=150 subtitle="[✓] 勾选 / ■ 开 □ 关 开关 / ◉ ○ 单选" -->
+<div class="tui" style="padding:20px 24px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;align-items:start">
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <button class="t-check" aria-pressed="true"><span class="t-check__box">[✓]</span>在此终端保持登录 7 天</button>
+    <button class="t-check" aria-pressed="false"><span class="t-check__box">[ ]</span>设为默认</button>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:12px"><div style="flex:1"><div style="font-size:14px">界面动画 <span style="color:var(--mute);font-size:12px">m</span></div><div style="font-size:12px;color:var(--mute)">页面切换、列表、雷达与进度条</div></div><button class="t-switch" aria-pressed="true">■ 开</button></div>
+    <div style="display:flex;align-items:center;gap:12px"><div style="flex:1"><div style="font-size:14px">鼠标追踪 <span style="color:var(--mute);font-size:12px">o</span></div></div><button class="t-switch" aria-pressed="false">□ 关</button></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:4px">
+    <button class="t-filter" aria-pressed="true"><span>◉ 埃塞俄比亚</span><span class="t-filter__count">2</span></button>
+    <button class="t-filter" aria-pressed="false"><span>○ 哥伦比亚</span><span class="t-filter__count">1</span></button>
+  </div>
+</div>

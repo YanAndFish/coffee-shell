@@ -1,0 +1,28 @@
+<!-- @dsCard group="Display" height=240 subtitle="六维风味雷达：商品（琥珀）与个人口味（薄荷）" -->
+<div class="tui" style="padding:16px 24px;display:flex;gap:48px;justify-content:center">
+  <svg id="r1" width="220" height="200" role="img" aria-label="耶加雪菲 孔加 风味：酸度 8 甜感 7 醇厚 4 苦度 2 余韵 7 香气 9" style="display:block;overflow:visible"></svg>
+  <svg id="r2" width="220" height="200" role="img" aria-label="我的口味：酸度 8 甜感 7 醇厚 4 苦度 2 余韵 7 香气 8" style="display:block;overflow:visible"></svg>
+</div>
+<script>
+(function () {
+  var NS = 'http://www.w3.org/2000/svg', CX = 110, CY = 102, R = 70;
+  var LABELS = ['酸度', '甜感', '醇厚', '苦度', '余韵', '香气'];
+  var LPOS = [[110, 20], [194, 63], [194, 149], [110, 192], [26, 149], [26, 63]];
+  function pt(i, r) { var a = -Math.PI / 2 + i * Math.PI / 3; return [CX + r * Math.cos(a), CY + r * Math.sin(a)]; }
+  function poly(r) { var s = []; for (var i = 0; i < 6; i++) { var p = pt(i, r); s.push(p[0].toFixed(1) + ',' + p[1].toFixed(1)); } return s.join(' '); }
+  function el(svg, tag, attrs) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; }
+  function draw(id, vals, stroke, fill) {
+    var svg = document.getElementById(id);
+    el(svg, 'polygon', { points: poly(R), style: 'fill:var(--surface-plate);stroke:var(--line-strong);stroke-width:1' });
+    [56, 42, 28, 14].forEach(function (r) { el(svg, 'polygon', { points: poly(r), style: 'fill:none;stroke:var(--line-soft);stroke-width:1' }); });
+    var d = ''; for (var i = 0; i < 6; i++) { var p = pt(i, R); d += 'M110 102L' + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }
+    el(svg, 'path', { d: d, style: 'stroke:var(--line-soft);stroke-width:1' });
+    var pts = vals.map(function (v, i) { return pt(i, R * v / 10); });
+    el(svg, 'polygon', { points: pts.map(function (p) { return p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' '), style: 'fill:var(' + fill + ');stroke:var(' + stroke + ');stroke-width:1.5;stroke-linejoin:round' });
+    pts.forEach(function (p) { el(svg, 'circle', { cx: p[0].toFixed(1), cy: p[1].toFixed(1), r: 3, style: 'fill:var(' + stroke + ')' }); });
+    LABELS.forEach(function (l, i) { var t = el(svg, 'text', { x: LPOS[i][0], y: LPOS[i][1], style: 'fill:var(--mute);font-size:11px;text-anchor:middle;font-family:var(--font-mono)' }); t.textContent = l; });
+  }
+  draw('r1', [8, 7, 4, 2, 7, 9], '--acc', '--acc-tint-22');
+  draw('r2', [8, 7, 4, 2, 7, 8], '--acc2', '--acc2-tint-20');
+})();
+</script>

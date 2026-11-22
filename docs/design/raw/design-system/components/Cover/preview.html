@@ -1,0 +1,31 @@
+<!-- @dsCard height=288 -->
+<div class="tui" style="position:relative;width:960px;height:288px;overflow:hidden;background:var(--bg)">
+  <style>
+    .cv-acc{fill:var(--acc)} .cv-fg{fill:var(--fg)} .cv-acc2{fill:var(--acc2)} .cv-tint{fill:var(--line-strong)} .cv-cut{fill:var(--bg)}
+    .cv-r8{rx:var(--radius-8)} .cv-r2{rx:var(--radius-2)}
+    .cv-name{position:absolute;left:40px;bottom:58px;margin:0;font-family:var(--font-mono);font-size:76px;line-height:.95;font-weight:800;letter-spacing:.04em;color:var(--fg);white-space:nowrap}
+    .cv-tag{position:absolute;left:44px;bottom:30px;margin:0;max-width:440px;font-family:var(--font-mono);font-size:13px;line-height:1.5;color:var(--mute)}
+  </style>
+  <svg width="960" height="288" viewBox="0 0 960 288" style="position:absolute;inset:0" aria-hidden="true">
+    <!--
+      blocks: acc 200×232 slab (bleeds top) · fg 120×120 · acc2 240×64 (bleeds right) · line-strong 112×170 relief (bleeds top/right); corners radius-8
+      arrangement: one tall amber slab with satellites stacked to its right, two bleeding off the top/right edge like windows in a terminal
+      pattern: the flavour meter (repeating 9px segment + 2px gap, radius-2) cut into the amber slab in the ground colour — the brand's own "█ █ █" bars, most specifically ROAST/TTY
+      scales: segment 9px, gap 2px (meter), rows 10px tall at space-8 apart, block gaps space-16, radii radius-8 / radius-2
+    -->
+    <defs>
+      <pattern id="cvSeg" x="536" y="112" width="11" height="18" patternUnits="userSpaceOnUse"><rect class="cv-cut" width="9" height="10"></rect></pattern>
+    </defs>
+    <rect class="cv-acc cv-r8" x="520" y="-12" width="200" height="232"></rect>
+    <rect x="536" y="112" width="132" height="10" fill="url(#cvSeg)"></rect>
+    <rect x="536" y="130" width="110" height="10" fill="url(#cvSeg)"></rect>
+    <rect x="536" y="148" width="66" height="10" fill="url(#cvSeg)"></rect>
+    <rect x="536" y="166" width="22" height="10" fill="url(#cvSeg)"></rect>
+    <rect x="536" y="184" width="154" height="10" fill="url(#cvSeg)"></rect>
+    <rect class="cv-fg cv-r8" x="736" y="40" width="120" height="120"></rect>
+    <rect class="cv-tint cv-r8" x="872" y="-12" width="112" height="172"></rect>
+    <rect class="cv-acc2 cv-r8" x="736" y="176" width="248" height="64"></rect>
+  </svg>
+  <p class="cv-name">ROAST/TTY</p>
+  <p class="cv-tag">一家开在终端里的精品咖啡烘焙店。</p>
+</div>

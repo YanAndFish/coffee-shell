@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>商品详情 · ROAST/TTY</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&amp;family=Noto+Sans+SC:wght@400;500;700;800&amp;display=swap">
+<style>
+body{margin:0}
+.tui button{cursor:pointer}
+.tui button:hover:not(:disabled){filter:brightness(1.22)}
+.tui button:disabled{cursor:not-allowed}
+.tui input::placeholder{color:#9a8e7e}
+.tui :focus-visible{outline:1px dashed #f0b45a;outline-offset:2px}
+.tui input:focus{border-color:#f0b45a !important;outline:none}
+</style>
+</helmet>
+<div style="width:1280px;height:800px;font-family:'JetBrains Mono','Noto Sans SC',ui-monospace,monospace;color:#ece4d6">
+<dc-import name="Main" start="detail" hint-size="1280px,800px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

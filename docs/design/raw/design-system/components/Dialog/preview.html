@@ -1,0 +1,21 @@
+<!-- @dsCard group="Feedback" height=420 subtitle="遮罩 + 标题压边框的对话框（新增地址）" -->
+<div class="tui t-scrim" style="height:420px">
+  <section class="t-dialog" role="dialog" aria-modal="true" aria-label="新增地址">
+    <span class="t-panel__legend">新增地址</span>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+      <div class="t-field"><label class="t-field__label" for="d1">收货人</label><input class="t-input" id="d1" value="林晓"></div>
+      <div class="t-field"><label class="t-field__label" for="d2">手机号</label><input class="t-input" id="d2" placeholder="11 位手机号"></div>
+    </div>
+    <div class="t-field"><label class="t-field__label" for="d3">所在地区</label><input class="t-input" id="d3" placeholder="省 / 市 / 区"></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:12px;color:var(--mute);width:40px">标签</span>
+      <button class="t-pick" aria-pressed="true">家</button><button class="t-pick" aria-pressed="false">公司</button>
+      <span style="flex:1"></span>
+      <button class="t-check" aria-pressed="false" style="height:32px"><span class="t-check__box">[ ]</span>设为默认</button>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px">
+      <button class="t-btn" style="font-size:14px">Esc 取消</button>
+      <button class="t-btn t-btn--primary" style="font-size:14px;padding:0 22px">⏎ 保存</button>
+    </div>
+  </section>
+</div>
