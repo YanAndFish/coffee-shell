@@ -42,6 +42,7 @@ fn urls_pick_the_transport() {
     ("fixture:problem", FixtureSet::Problem),
     ("fixture:expired", FixtureSet::Expired),
     ("fixture:member-error", FixtureSet::MemberError),
+    ("fixture:slow", FixtureSet::Slow),
   ] {
     assert_eq!(Transport::from_url(url), Transport::Fixture(set), "{url}");
   }

@@ -188,11 +188,18 @@ pub enum FixtureSet {
   Down,
   /// `fixture:error`: a backend that answers every request `500 internal_error`.
   Error,
+  /// `fixture:slow`: `fixture:guest`'s answers, each after [`SLOW_LATENCY`] (in the app; tests
+  /// polling with `now_or_never` get them at once), so the loading and submitting states
+  /// (login, checkout, an address save) stay on screen long enough to see and test.
+  Slow,
 }
+
+/// How long `fixture:slow` takes to answer.
+pub const SLOW_LATENCY: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl FixtureSet {
   /// Every scenario.
-  pub const ALL: [FixtureSet; 9] = [
+  pub const ALL: [FixtureSet; 10] = [
     FixtureSet::Contract,
     FixtureSet::Member,
     FixtureSet::Empty,
@@ -202,10 +209,11 @@ impl FixtureSet {
     FixtureSet::MemberError,
     FixtureSet::Down,
     FixtureSet::Error,
+    FixtureSet::Slow,
   ];
 
   /// The set `name` names (`guest`/`contract`, `member`, `empty`, `new`, `problem`,
-  /// `expired`, `member-error`, `down`, `error`); anything else is the contract set.
+  /// `expired`, `member-error`, `down`, `error`, `slow`); anything else is the contract set.
   pub fn parse(name: &str) -> Self {
     let name = name.trim();
     Self::ALL
@@ -226,6 +234,15 @@ impl FixtureSet {
       FixtureSet::MemberError => "member-error",
       FixtureSet::Down => "down",
       FixtureSet::Error => "error",
+      FixtureSet::Slow => "slow",
+    }
+  }
+
+  /// How long its answers take in the app.
+  pub fn latency(self) -> std::time::Duration {
+    match self {
+      FixtureSet::Slow => SLOW_LATENCY,
+      _ => super::FIXTURE_LATENCY,
     }
   }
 
@@ -532,6 +549,16 @@ impl FixtureSet {
   /// The answer to `call` from a client with `client`'s session headers; an unknown route
   /// is the `404` envelope.
   pub(crate) fn answer(self, call: &Call, client: &ApiClient) -> Result<Answer, ApiFailure> {
+    // Slow answers as a new visitor does, later.
+    let this = if self == FixtureSet::Slow {
+      FixtureSet::Contract
+    } else {
+      self
+    };
+    this.answer_now(call, client)
+  }
+
+  fn answer_now(self, call: &Call, client: &ApiClient) -> Result<Answer, ApiFailure> {
     match self {
       FixtureSet::Down => {
         return Err(ApiFailure::Network(

@@ -402,7 +402,7 @@ impl ApiClient {
       }
       Transport::Fixture(set) => {
         if self.fixture_latency {
-          timer(FIXTURE_LATENCY).await;
+          timer(set.latency()).await;
         }
         let answer = set.answer(&call, self)?;
         decode(answer.status, answer.body.as_bytes())
