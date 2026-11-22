@@ -4,13 +4,17 @@
 use crate::{
   commands::{Command, Key, Scope, Typing, search_hint, tabs_hint},
   router::Page,
-  stores::{Stores, actions},
+  stores::{Phase, Stores, actions},
 };
 
 const PAGE: Scope = Scope::Page(Page::Cart);
 
 fn has_lines(stores: &Stores) -> bool {
   !stores.cart.has_receipt() && !stores.cart.lines().is_empty()
+}
+
+fn failed(stores: &Stores) -> bool {
+  !stores.cart.has_receipt() && stores.cart.phase() == Phase::Failed && stores.cart.cart().is_none()
 }
 
 fn shopping(stores: &Stores) -> bool {
@@ -98,7 +102,15 @@ pub const COMMANDS: &[Command] = &[
     Key::new("c", &["c", "enter"]),
     "c 结算",
     PAGE,
-    |stores, _| actions::checkout(stores),
+    // A cart that never loaded: ⏎ retries (the error state's `⏎ 重试`; a command of its own
+    // would need the core's command tests to know it, see the report).
+    |stores, _| {
+      if failed(stores) {
+        stores.cart.load();
+      } else {
+        actions::checkout(stores);
+      }
+    },
   )
   .when(shopping)
   .footer(60),

@@ -2,30 +2,34 @@
 //! checkout, then the receipt.
 //!
 //! Store: [`crate::stores::CartStore`] — `phase`, `failure`, `cart` (every amount, as the
-//! server priced it), `lines`, `item_count`, `selected_count`, `total`, `cursor` /
-//! `cursor_line` / `is_cursor` / `move_cursor` / `select_line`, `undo`, `coupon_input` /
-//! `set_coupon_input` / `coupon_feedback`, `checkout_step` / `submitting`, `receipt`.
-//! Actions: `actions::toggle_line`, `toggle_all`, `step_line`, `remove_line`,
-//! `undo_remove`, `apply_coupon`, `checkout`, `continue_shopping`. The coupon field reports
-//! its focus as [`COUPON_FIELD`]. A guest's cart is quoted, never computed.
+//! server priced it), `lines`, `item_count`, `selected_count`, `cursor` / `is_cursor` /
+//! `select_line`, `undo`, `coupon_input` / `set_coupon_input` / `coupon_feedback`,
+//! `checkout_step` / `submitting`, `receipt`. Actions (through the command table):
+//! `actions::toggle_line`, `toggle_all`, `step_line`, `remove_line`, `undo_remove`,
+//! `apply_coupon`, `checkout`, `continue_shopping`. The coupon field reports its focus as
+//! [`COUPON_FIELD`]. A guest's cart is quoted, never computed.
 //!
-//! The body is a placeholder (plain lines and a bare coupon field); the cart screen
-//! replaces it.
+//! Layouts (responsive.md, 04): XL cart 1fr + checkout 45 columns, L + 40, M + 36 (no unit
+//! price column; the spec on the subtitle's row); S stacked, the cart's rows two lines tall
+//! and the compact checkout block under it. The receipt replaces the whole content area.
 
+mod checkout;
 pub mod commands;
+mod copy;
+mod lines;
+mod receipt;
 
-use coffee_api::{CartLineProblem, Order};
 use nsh_core::{element::Screen, prelude::*};
 
-use super::{
-  PageModule, format,
-  placeholder::{self, Line, phase_lines},
-};
+use super::PageModule;
 use crate::{
   commands::Mode,
   router::{Page, Route},
-  stores::{CouponFeedback, Stores},
-  ui::{self, Tone},
+  stores::Stores,
+  ui::{
+    self, Bp, CartForm, Layout,
+    layout::{MAX_CONTENT_COLS, cols},
+  },
 };
 
 /// `购物车 CART` (the receipt too).
@@ -43,153 +47,188 @@ pub const MODULE: PageModule = PageModule {
   dialogs: &[],
 };
 
-fn receipt_lines(order: &Order) -> Vec<Line> {
-  let mut lines = vec![
-    Line::new("订单回执 RECEIPT", Tone::Acc2),
-    Line::text("✓ 订单已提交"),
-    Line::soft(format!(
-      "订单号 {} · 预计 {} 送达",
-      order.number,
-      format::month_day_zh(&order.eta_date)
-    )),
-  ];
-  for item in &order.items {
-    lines.push(Line::text(format!(
-      "{} {} · {} · {} {} ┈ {}",
-      item.name,
-      item.weight.label(),
-      item.grind.label(),
-      item.pack.label(),
-      format::times(item.quantity),
-      format::yuan_cents(item.line_total)
-    )));
-  }
-  lines.push(Line::new(
-    format!("实付 {}", format::yuan_cents(order.total)),
-    Tone::Acc,
-  ));
-  lines.push(Line::soft(format!(
-    "寄往 {} · {} {}",
-    order.address.recipient, order.address.region, order.address.detail
-  )));
-  lines.push(Line::new(
-    "! 演示订单 · 没有真实扣款，也不会发货",
-    Tone::Acc,
-  ));
-  lines.push(Line::text("⏎ 继续选购").press("cart.continue"));
-  lines.push(Line::text("4 查看订单").press("cart.orders"));
-  lines
+/// What the layout depends on: the width class, short or not, and the content's columns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shape {
+  /// The width class.
+  pub bp: Bp,
+  /// Fewer than 32 rows.
+  pub short: bool,
+  /// The terminal's columns.
+  pub cols: u16,
 }
 
-fn lines(stores: Stores) -> Vec<Line> {
-  let cart = stores.cart;
-  if let Some(order) = cart.receipt() {
-    return receipt_lines(&order);
-  }
-  let mut lines = phase_lines(
-    cart.phase(),
-    cart.failure(),
-    "购物车",
-    "购物车是空的 · 1 去挑豆子",
-    None,
-  );
-  let Some(data) = cart.cart() else {
-    return lines;
-  };
-  for line in &data.lines {
-    let cursor = if cart.is_cursor(&line.sku) {
-      "▶"
-    } else {
-      " "
-    };
-    let check = if line.selected { "[✓]" } else { "[ ]" };
-    let problem = match line.problem {
-      Some(CartLineProblem::SoldOut) => " · ! 该重量暂时缺货",
-      Some(CartLineProblem::OutOfStock) => " · ! 库存不足",
-      None => "",
-    };
-    lines.push(Line::new(
-      format!(
-        "{cursor} {check} {} · {} · {} · {} · {} {} · {}{problem}",
-        line.name,
-        line.weight.label(),
-        line.grind.label(),
-        line.pack.label(),
-        format::yuan(line.unit_price),
-        format::times(line.quantity),
-        format::yuan_cents(line.line_total)
-      ),
-      if line.selected { Tone::Fg } else { Tone::Mute },
-    ));
-  }
-  if let Some(removed) = cart.undo() {
-    lines.push(Line::error(format!("已删除 {} · u 撤销", removed.name)).press("cart.undo"));
-  }
-  lines.push(if !stores.session.is_member() {
-    Line::soft("收货地址：登录后选择收货地址")
-  } else {
-    match &data.address {
-      Some(address) => Line::soft(format!(
-        "收货地址：{} · {} {} · 3 更换 →",
-        address.recipient, address.region, address.detail
-      )),
-      None => Line::error("还没有收货地址，去地址本添加一个"),
+impl Shape {
+  /// The shape of a `cols` × `rows` terminal.
+  pub fn of(cols: u16, rows: u16) -> Self {
+    let viewport = ui::Viewport::new(cols, rows);
+    Self {
+      bp: viewport.bp(),
+      short: viewport.short(),
+      cols,
     }
-  });
-  match cart.coupon_feedback() {
-    Some(CouponFeedback::Applied(coupon)) => lines.push(Line::new(
-      format!("✓ 已使用 {} · {}", coupon.code, coupon.description),
-      Tone::Acc2,
-    )),
-    Some(CouponFeedback::Invalid(message)) => lines.push(Line::error(format!("✗ {message}"))),
-    None => {}
   }
-  let totals = &data.totals;
-  lines.push(Line::text(format!(
-    "商品小计 {} · 优惠 {} · 运费 {} · 合计 {}",
-    format::yuan_cents(totals.subtotal),
-    format::discount(totals.discount),
-    format::shipping(totals.shipping),
-    format::yuan_cents(totals.total)
-  )));
-  lines.push(Line::soft(if totals.free_shipping.reached {
-    format!("已满 ¥{} · 本单包邮", totals.free_shipping.threshold)
-  } else {
-    format!("再买 {} 即可包邮", format::yuan(totals.free_shipping.gap))
-  }));
-  lines.push(match cart.checkout_step() {
-    Some(step) => Line::new(format!("⠋ {}", step.label()), Tone::Acc2),
-    None => Line::text(format!("c 结算 {} 件", totals.selected_count)).press("cart.checkout"),
-  });
-  lines
+
+  /// The columns the pages get (the shell keeps a column each side, 200 at most).
+  pub fn content_cols(self) -> u16 {
+    self.cols.min(MAX_CONTENT_COLS).saturating_sub(2)
+  }
+
+  /// The checkout column's width: XL 45, L 40, M 36.
+  pub fn checkout_cols(self) -> u16 {
+    match self.bp {
+      Bp::Xl => 45,
+      Bp::L => 40,
+      _ => 36,
+    }
+  }
+
+  /// The checkout column's content width: inside its line and two blank cells each side
+  /// (XL 39).
+  pub fn checkout_inner(self) -> u16 {
+    self.checkout_cols().saturating_sub(6)
+  }
+
+  /// The cells of the cart rows' name column in the wide form (two columns only): what is
+  /// left of the cart panel after its frame and padding (4), the row's padding (2) and the
+  /// fixed columns (cursor 2, box 5, spec 21, unit 9, stepper 13, total 12, delete 3).
+  pub fn wide_name_cells(self) -> u16 {
+    self
+      .content_cols()
+      .saturating_sub(self.checkout_cols() + 2 + 4 + 2 + 65)
+  }
+
+  /// How much of a cart row shows: S two-line rows; the wide form while its name column
+  /// keeps at least 24 cells (XL, and L from 139 columns); else the medium form (no unit
+  /// price column, the SKU under the name).
+  pub fn form(self) -> CartForm {
+    if self.bp <= Bp::S {
+      CartForm::Small
+    } else if self.wide_name_cells() >= 24 {
+      CartForm::Wide
+    } else {
+      CartForm::Medium
+    }
+  }
+
+  /// The cells of the name column in [`Self::form`].
+  pub fn name_cells(self) -> u16 {
+    match self.form() {
+      CartForm::Wide => self.wide_name_cells(),
+      // No spec (21) and unit (9) columns.
+      CartForm::Medium => self
+        .content_cols()
+        .saturating_sub(self.checkout_cols() + 2 + 4 + 2 + 35),
+      // One column: the panel, its padding, the row's, cursor, box, stepper, total, delete.
+      CartForm::Small => self
+        .content_cols()
+        .saturating_sub(4 + 2 + 2 + 5 + 13 + 12 + 3),
+    }
+  }
+
+  /// The free-shipping bar of the compact block (S): 40 cells, less when the row is narrow.
+  pub fn compact_bar(self) -> u16 {
+    40.min(self.content_cols().saturating_sub(36))
+  }
+
+  /// The receipt card's width: min(77, columns − 2).
+  pub fn receipt_cols(self) -> u16 {
+    77.min(self.cols.saturating_sub(2))
+  }
+
+  /// The parts that change the build: the width class and shortness always, the columns
+  /// only where a length follows them (S, the receipt below 79 columns).
+  fn key(self) -> (Bp, bool, CartForm, u16) {
+    let cols = if self.bp <= Bp::S || self.form() == CartForm::Medium {
+      self.cols
+    } else {
+      0
+    };
+    (self.bp, self.short, self.form(), cols)
+  }
 }
 
-/// The cart page (placeholder body).
+fn shop(stores: Stores, shape: Shape) -> View {
+  if shape.bp <= Bp::S {
+    view()
+      .flex_1()
+      .min_h(px(0.0))
+      .child(lines::panel(stores, shape))
+      .child(
+        view()
+          .flex_none()
+          .h(ui::layout::rows(checkout::COMPACT_ROWS))
+          .child(checkout::compact(stores, shape)),
+      )
+  } else {
+    view()
+      .flex_1()
+      .min_h(px(0.0))
+      .flex_row()
+      .child(lines::panel(stores, shape))
+      .child(ui::layout::hspace(2))
+      .child(
+        view()
+          .flex_none()
+          .w(cols(shape.checkout_cols()))
+          .child(checkout::panel(stores, shape)),
+      )
+  }
+}
+
+/// The cart page.
 pub fn render(_: &Route) -> Screen {
   let stores = Stores::get();
+  let layout = Layout::get();
   let cart = stores.cart;
   // The page's work: the cart (member) or its quote (guest), once.
   effect(move || untracked(|| cart.ensure_loaded()));
+  let shape = computed(move || {
+    let viewport = layout.viewport();
+    Shape::of(viewport.cols, viewport.rows)
+  });
+  let key = computed(move || shape.get().key());
+  let receipt = computed(move || cart.receipt());
   ui::page(
     "购物车 CART",
-    ui::panel(
-      move || {
-        SharedString::from(if cart.has_receipt() {
-          "订单回执 RECEIPT".to_owned()
-        } else {
-          format!("购物车 · {} 件", cart.item_count())
-        })
-      },
-      view()
-        .flex_1()
-        .child(placeholder::lines(move || lines(stores)))
-        .child(placeholder::field(
-          COUPON_FIELD,
-          "优惠码",
-          move || cart.coupon_input(),
-          move |text| cart.set_coupon_input(text),
-          false,
-        )),
-    ),
+    dynamic(move || {
+      key.get();
+      let order = receipt.get();
+      untracked(|| {
+        let shape = shape.get();
+        match order {
+          Some(order) => receipt::view_of(stores, shape, order),
+          None => shop(stores, shape),
+        }
+      })
+    }),
   )
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn the_columns_follow_responsive_md() {
+    let xl = Shape::of(160, 50);
+    assert_eq!((xl.checkout_cols(), xl.checkout_inner()), (45, 39));
+    assert_eq!(xl.receipt_cols(), 77);
+    assert_eq!(Shape::of(130, 40).checkout_cols(), 40);
+    assert_eq!(Shape::of(100, 30).checkout_cols(), 36);
+    let s = Shape::of(80, 24);
+    assert!(s.short && s.bp == Bp::S);
+    assert_eq!(s.compact_bar(), 40);
+    assert_eq!(s.receipt_cols(), 77);
+    assert_eq!(Shape::of(78, 24).receipt_cols(), 76);
+    assert_eq!(Shape::of(160, 50).key(), Shape::of(170, 50).key());
+    assert_eq!(xl.form(), CartForm::Wide);
+    assert_eq!(xl.name_cells(), 40);
+    assert_eq!(Shape::of(130, 40).form(), CartForm::Medium);
+    assert_eq!(Shape::of(139, 40).form(), CartForm::Wide);
+    assert_eq!(Shape::of(100, 30).form(), CartForm::Medium);
+    assert_eq!(Shape::of(100, 30).name_cells(), 19);
+    assert_eq!(Shape::of(80, 24).form(), CartForm::Small);
+    assert_ne!(Shape::of(80, 24).key(), Shape::of(90, 24).key());
+  }
 }
