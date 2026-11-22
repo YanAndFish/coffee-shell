@@ -116,6 +116,31 @@ impl AuthStep {
   }
 }
 
+/// A control of the login card that holds the keyboard focus (01-login.md, "焦点顺序"):
+/// Tab goes 用户名 → 密码 → 记住我 → 主按钮 → 访客浏览 → 注册 / 去登录, round.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FormControl {
+  /// The `用户名` field.
+  Username,
+  /// The `密码` field.
+  Password,
+  /// `记住我 30 天`.
+  Remember,
+  /// The primary button: `登录 ⏎` / `注册并登录 ⏎`.
+  Submit,
+  /// `g 访客浏览`.
+  Guest,
+  /// `注册新账号 →` / `← 已有账号，去登录`.
+  SwitchMode,
+}
+
+impl FormControl {
+  /// Whether it is a text field (letters type into it).
+  pub fn is_field(self) -> bool {
+    matches!(self, FormControl::Username | FormControl::Password)
+  }
+}
+
 /// The network copy of the login form (copy.md, "校验错误").
 pub const LOGIN_NETWORK_ERROR: &str = "连接服务器失败，按 ⏎ 重试";
 
@@ -152,6 +177,7 @@ pub struct SessionStore {
   member: Signal<Option<Member>>,
   resuming: Signal<bool>,
   draft: Signal<LoginDraft>,
+  form_focus: Signal<Option<FormControl>>,
   step: Signal<Option<AuthStep>>,
   auth_revision: Signal<u64>,
   logging_out: Signal<bool>,
@@ -197,6 +223,7 @@ impl SessionStore {
         remember: has_key,
         ..LoginDraft::default()
       }),
+      form_focus: signal(None),
       step: signal(None),
       auth_revision: signal(0),
       logging_out: signal(false),
@@ -343,6 +370,30 @@ impl SessionStore {
   pub fn set_error(&self, message: impl Into<String>) {
     let message = message.into();
     self.draft.update(|draft| draft.error = Some(message));
+  }
+
+  /// The card's control with the keyboard focus; `None`: no focus (tracked). The page
+  /// follows it (a field takes nsh's text focus, a button shows `›`) and reports the moves
+  /// Tab and the mouse make; ⏎ and space press what it names.
+  pub fn form_focus(&self) -> Option<FormControl> {
+    self.form_focus.get()
+  }
+
+  /// [`Self::form_focus`], untracked: for handlers.
+  pub fn form_focus_untracked(&self) -> Option<FormControl> {
+    self.form_focus.get_untracked()
+  }
+
+  /// Puts the card's keyboard focus on `control` (`None`: nowhere).
+  pub fn set_form_focus(&self, control: Option<FormControl>) {
+    self.form_focus.set(control);
+  }
+
+  /// `control` lost the keyboard focus: no focus, unless another control took it since.
+  pub fn form_focus_left(&self, control: FormControl) {
+    if self.form_focus.get_untracked() == Some(control) {
+      self.form_focus.set(None);
+    }
   }
 
   /// The register request the form makes.
@@ -736,6 +787,23 @@ mod tests {
       assert!(session.expired());
       session.signed_out();
       assert!(!session.expired());
+    });
+  }
+
+  #[test]
+  fn the_form_focus_moves_and_is_left_once() {
+    with_session(fixture(None), |session| {
+      assert_eq!(session.form_focus(), None);
+      session.set_form_focus(Some(FormControl::Username));
+      assert!(FormControl::Username.is_field() && !FormControl::Guest.is_field());
+      // Tab: the field's blur, then the next control's focus.
+      session.form_focus_left(FormControl::Username);
+      session.set_form_focus(Some(FormControl::Password));
+      // A late blur of a control that no longer has the focus changes nothing.
+      session.form_focus_left(FormControl::Username);
+      assert_eq!(session.form_focus(), Some(FormControl::Password));
+      session.form_focus_left(FormControl::Password);
+      assert_eq!(session.form_focus_untracked(), None);
     });
   }
 
