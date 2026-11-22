@@ -1,5 +1,6 @@
 // Conformance cases of area `catalog` (owner: server-shop). The seeded catalog answers
 // exactly the committed fixtures.
+import type { ProductList } from '@coffee/contract'
 import type { ConformanceCase } from './types.ts'
 import { expect } from 'vitest'
 import { readFixture } from '../helpers.ts'
@@ -58,6 +59,19 @@ export const catalogCases: ConformanceCase[] = [
     name: 'geisha: the fixture',
     request: async () => ({ path: '/v1/products/geisha' }),
     check: body => expect(body).toEqual(readFixture('v1/catalog/product-geisha.json')),
+  },
+  {
+    operationId: 'listProducts',
+    name: 'dark roasts by price high to low, facets unchanged',
+    request: async () => ({
+      path: '/v1/products',
+      query: { roast: 'dark', sort: 'price_desc' },
+    }),
+    check: (body) => {
+      const list = body as ProductList
+      expect(list.items.map(p => p.id)).toEqual(['night', 'antigua', 'mandh'])
+      expect(list.facets).toEqual((readFixture('v1/products.json') as ProductList).facets)
+    },
   },
   {
     operationId: 'getProduct',
