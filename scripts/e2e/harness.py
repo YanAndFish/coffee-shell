@@ -144,14 +144,19 @@ class Process:
 class Stack:
   """Backend + sshd for one flow, on ports of their own and a copy of the template database."""
 
-  def __init__(self, work: Path, template_db: Path, flow_dir: Path, bins: Path):
-    self.work, self.flow_dir, self.bins = work, flow_dir, bins
+  def __init__(self, work: Path, template_db: Path | None, flow_dir: Path, bins: Path | None,
+               gateway: tuple[str, int] | None = None):
+    """With `gateway` (host, port), flows run against a gateway someone else started (the
+    compose pair): no backend, sshd or database of our own."""
+    self.work, self.flow_dir, self.bins, self.gateway = work, flow_dir, bins, gateway
     self.db = flow_dir / "shop.db"
     flow_dir.mkdir(parents=True, exist_ok=True)
-    for leftover in flow_dir.glob("shop.db*"):
-      leftover.unlink()
-    shutil.copyfile(template_db, self.db)
-    self.api_port, self.ssh_port = free_port(), free_port()
+    if template_db:
+      for leftover in flow_dir.glob("shop.db*"):
+        leftover.unlink()
+      shutil.copyfile(template_db, self.db)
+    self.api_port = free_port()
+    self.ssh_host, self.ssh_port = gateway or ("127.0.0.1", free_port())
     self.internal_key = os.urandom(24).hex()
     self.backend: Process | None = None
     self.sshd: Process | None = None
@@ -161,6 +166,8 @@ class Stack:
   # Lifecycle
 
   def __enter__(self) -> "Stack":
+    if self.gateway:
+      return self
     try:
       self.start_backend()
       self.start_sshd()
@@ -239,7 +246,7 @@ class Stack:
       argv += ["-o", "PubkeyAuthentication=no"]
     else:
       argv += ["-i", str(make_key(self.work, key))]
-    argv += ["-tt", "guest@127.0.0.1"]
+    argv += ["-tt", f"guest@{self.ssh_host}"]
     session = Term(self, name, argv, size, term)
     self.terms.append(session)
     return session
@@ -265,8 +272,11 @@ class Stack:
   def sql(self, query: str) -> list[tuple]:
     """Reads the flow's database directly (the shop's truth, not the UI's)."""
     import sqlite3
-    with sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=10) as db:
+    db = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=10)
+    try:
       return db.execute(query).fetchall()
+    finally:
+      db.close()
 
   def logs(self) -> str:
     return "\n".join(p.log.read_text(errors="replace") for p in (self.backend, self.sshd)

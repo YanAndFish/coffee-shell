@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from flows import FLOWS  # noqa: E402
+from flows import DEFAULT, EXTERNAL, FLOWS  # noqa: E402
 from harness import (ROOT, Failure, Stack, cargo_target_dir, fail_report, log,  # noqa: E402
                      make_template_db, wait_until)
 from shop import PASSWORD  # noqa: E402
@@ -49,12 +49,13 @@ def check_logs(stack: Stack) -> None:
     raise Failure("the backend log contains a full key fingerprint")
 
 
-def run_flow(name: str, out: Path, work: Path, template: Path, bins: Path) -> tuple[bool, float]:
+def run_flow(name: str, out: Path, work: Path, template: Path | None, bins: Path | None,
+             gateway: tuple[str, int] | None) -> tuple[bool, float]:
   flow_dir = out / name
   if flow_dir.exists():
     shutil.rmtree(flow_dir)
   started = time.monotonic()
-  stack = Stack(work, template, flow_dir, bins)
+  stack = Stack(work, template, flow_dir, bins, gateway)
   ok = True
   try:
     with stack:
@@ -63,7 +64,8 @@ def run_flow(name: str, out: Path, work: Path, template: Path, bins: Path) -> tu
         term.close()
       if not wait_until(lambda: not stack.tui_pids(), 5):
         raise Failure(f"coffee-tui left running after every client left: {stack.tui_pids()}")
-    check_logs(stack)
+    if not gateway:
+      check_logs(stack)
   except Failure as failure:
     ok = False
     report = fail_report(failure, stack)
@@ -83,40 +85,58 @@ def run_flow(name: str, out: Path, work: Path, template: Path, bins: Path) -> tu
 
 def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
-                                   epilog="Flows: " + ", ".join(FLOWS),
+                                   epilog="Flows: " + ", ".join(DEFAULT) + " (default); "
+                                   + ", ".join(EXTERNAL) + " (with --gateway)",
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument("flows", nargs="*", help="flows to run (default: all)")
   parser.add_argument("--repeat", type=int, default=1, help="run the set N times")
   parser.add_argument("--out", type=Path, default=ROOT / ".data" / "e2e",
                       help="screenshots and logs (default .data/e2e)")
+  parser.add_argument("--gateway", metavar="HOST:PORT",
+                      help="run against a running gateway (only: " + ", ".join(EXTERNAL) + ")")
   args = parser.parse_args()
   unknown = [name for name in args.flows if name not in FLOWS]
   if unknown:
     parser.error(f"unknown flow(s) {unknown}; known: {', '.join(FLOWS)}")
-  names = args.flows or list(FLOWS)
+  gateway = None
+  if args.gateway:
+    host, _, port = args.gateway.rpartition(":")
+    if not host or not port.isdigit():
+      parser.error("--gateway expects HOST:PORT")
+    gateway = (host, int(port))
+    names = args.flows or EXTERNAL
+    if any(name not in EXTERNAL for name in names):
+      parser.error(f"with --gateway only {', '.join(EXTERNAL)} can run")
+  else:
+    names = args.flows or DEFAULT
 
-  bins = Path(os.environ.get("E2E_BIN_DIR") or cargo_target_dir() / "debug")
-  for binary in ("coffee-tui", "coffee-sshd"):
-    if not (bins / binary).is_file():
-      parser.error(f"{bins / binary} is not built: cargo build -p coffee-host -p coffee-sshd")
-  for tool in ("ssh", "ssh-keygen", "node"):
+  tools = ["ssh", "ssh-keygen"] + ([] if gateway else ["node"])
+  for tool in tools:
     if not shutil.which(tool):
       parser.error(f"{tool} is not on PATH")
+  bins = None
+  if not gateway:
+    bins = Path(os.environ.get("E2E_BIN_DIR") or cargo_target_dir() / "debug")
+    for binary in ("coffee-tui", "coffee-sshd"):
+      if not (bins / binary).is_file():
+        parser.error(f"{bins / binary} is not built: cargo build -p coffee-host -p coffee-sshd")
 
   out = args.out.resolve()
   if out.exists():
     shutil.rmtree(out)
   work = out / "work"
   work.mkdir(parents=True)
-  log(f"e2e: preparing the template database in {work}")
-  template = make_template_db(work)
+  template = None
+  if not gateway:
+    log(f"e2e: preparing the template database in {work}")
+    template = make_template_db(work)
 
   results: list[tuple[int, str, bool, float]] = []
   for run in range(1, args.repeat + 1):
     run_out = out if args.repeat == 1 else out / f"run-{run}"
     for name in names:
       log(f"e2e: [{run}/{args.repeat}] {name} …")
-      ok, seconds = run_flow(name, run_out, work, template, bins)
+      ok, seconds = run_flow(name, run_out, work, template, bins, gateway)
       results.append((run, name, ok, seconds))
       log(f"e2e: [{run}/{args.repeat}] {name} {'ok' if ok else 'FAILED'} in {seconds:.1f} s")
 

@@ -7,6 +7,7 @@ keeps a named text screenshot next to the flow's logs.
 
 from __future__ import annotations
 
+import os
 import time
 
 from harness import Failure, Stack, Term, log, wait_until
@@ -421,9 +422,81 @@ def flow_session(stack: Stack) -> None:
   t.quit()
 
 
+# --- Gateway edges ---------------------------------------------------------------------------
+
+def flow_gateway(stack: Stack) -> None:
+  """The backend down when a client connects: the app's error states, with a retry that works
+  once it is back. A missing session program: a clear message, a clear log line."""
+  stack.stop_backend()
+  t = stack.connect("backend-down", key=None, size=SIZE)
+  login(t, "无人_e2e")
+  t.wait("✗ 连接服务器失败，按 ⏎ 重试")
+  t.snap("login-backend-down")
+  browse_as_guest_failing(t)
+  t.snap("list-backend-down")
+  stack.start_backend()
+  t.key("enter")
+  t.wait("商品列表 · 8 款", "耶加雪菲 孔加")
+  t.snap("list-after-retry")
+  t.quit()
+
+  stack.stop_sshd()
+  stack.start_sshd(COFFEE_TUI_BIN=str(stack.work / "no-such-coffee-tui"))
+  check("COFFEE_TUI_BIN does not exist" in stack.sshd.log.read_text(),
+        "sshd did not warn about the missing session program at start")
+  t = stack.connect("no-program", key=None, size=SIZE)
+  t.wait("ROAST/TTY 暂时无法启动，请稍后再试。")
+  t.exited()
+  check(t.session.describe_exit() == "exited with code 1", f"ssh {t.session.describe_exit()}")
+  t.snap("no-program")
+  t.close()
+  check("could not start the session program" in stack.sshd.log.read_text(),
+        "sshd did not log why the session failed")
+  stack.stop_sshd()
+  stack.start_sshd()
+
+
+def browse_as_guest_failing(t: Term) -> None:
+  """`g` with the backend gone: the list's error state and its retry."""
+  leave_field(t)
+  t.wait_footer("访客")
+  t.type("g")
+  t.wait("商品加载失败", "⏎ 重试")
+  t.wait_footer("重试")
+
+
+# --- Compose smoke ---------------------------------------------------------------------------
+
+def flow_smoke(stack: Stack) -> None:
+  """A short purchase, for a gateway started elsewhere (deploy/smoke-test.sh): register → add →
+  address → checkout → receipt. Reads nothing but the screen."""
+  t = stack.connect("smoke", key="smoke", size=SIZE)
+  user = f"烟测_{os.getpid() % 10000:04d}"
+  register(t, user)
+  t.wait("注册成功，欢迎 " + user)
+  search(t, "耶加")
+  t.wait("商品列表 · 1 款", "耶加雪菲 孔加")
+  add_to_cart(t)
+  add_address(t)
+  to_cart(t)
+  t.wait("耶加雪菲 孔加", "测试员")
+  receipt = checkout(t)
+  check_order_number(t, receipt["number"])
+  t.wait("! 演示订单 · 没有真实扣款，也不会发货")
+  t.snap("receipt")
+  if "样例数据" in t.text():
+    raise t.fail("the session shows the built-in sample data, not the backend's")
+  t.quit()
+
+
+# Every flow but `smoke` runs by default; `smoke` alone runs against a gateway (--gateway).
 FLOWS = {
   "main": flow_main,
   "money": flow_money,
   "stock": flow_stock,
   "session": flow_session,
+  "gateway": flow_gateway,
+  "smoke": flow_smoke,
 }
+DEFAULT = ["main", "money", "stock", "session", "gateway"]
+EXTERNAL = ["smoke"]
