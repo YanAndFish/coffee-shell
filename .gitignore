@@ -9,7 +9,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Data and secrets
+# Data and secrets (.data/: runtime SQLite files and the SSH host key)
+.data/
 *.db
 *.db-journal
 *.sqlite

@@ -9,13 +9,17 @@
     "node": ">=26"
   },
   "scripts": {
-    "dev": "echo '[placeholder] pnpm dev will start the backend and coffee-sshd together; not implemented yet.'",
+    "dev": "node scripts/dev.mjs",
     "build": "cargo build --workspace && pnpm -r --if-present build",
-    "test": "cargo test --workspace && vitest run --passWithNoTests",
+    "test": "cargo build -p coffee-host && cargo test --workspace && vitest run",
+    "test:tui": "cd apps/tui && nsh test && nsh test --target tui",
+    "test:e2e": "cargo build -p coffee-host && cargo test -p coffee-sshd --tests",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "pnpm -r --if-present typecheck",
     "check": "pnpm lint && pnpm typecheck && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "check:tui": "cd apps/tui && nsh check",
+    "verify": "pnpm check && pnpm check:tui && pnpm build && pnpm test && pnpm test:tui",
     "ssh": "ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null localhost"
   },
   "devDependencies": {
