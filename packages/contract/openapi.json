@@ -1,0 +1,278 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ROAST/TTY API",
+    "version": "0.1.0",
+    "description": "ROAST/TTY 终端咖啡馆的后端接口。这是演示站，不是真的商店。金额单位为整数元。"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:3000"
+    }
+  ],
+  "security": [
+    {
+      "internalKey": []
+    }
+  ],
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "health"
+        ],
+        "summary": "健康检查（无需内部密钥）",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/products": {
+      "get": {
+        "operationId": "listProducts",
+        "tags": [
+          "products"
+        ],
+        "summary": "商品列表（按陈列顺序）",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺少或错误的内部密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "错误（统一错误信封）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "internalKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Internal-Key",
+        "description": "仅当后端设置了 COFFEE_INTERNAL_KEY 时校验。"
+      }
+    },
+    "schemas": {
+      "ApiErrorBody": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "bad_request",
+              "validation_failed",
+              "unauthorized",
+              "not_found",
+              "method_not_allowed",
+              "internal_error"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "service": {
+            "type": "string",
+            "const": "roast-tty"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "demo": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "service",
+          "version",
+          "demo"
+        ],
+        "additionalProperties": false
+      },
+      "Flavor": {
+        "minItems": 6,
+        "maxItems": 6,
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        }
+      },
+      "RoastLevel": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5
+      },
+      "ProductSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "minLength": 1
+          },
+          "process": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roast": {
+            "$ref": "#/components/schemas/RoastLevel"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "flavor": {
+            "$ref": "#/components/schemas/Flavor"
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "price250": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "stock": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "subtitle",
+          "origin",
+          "process",
+          "roast",
+          "tag",
+          "notes",
+          "flavor",
+          "score",
+          "price250",
+          "stock"
+        ],
+        "additionalProperties": false
+      },
+      "ProductList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductSummary"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
