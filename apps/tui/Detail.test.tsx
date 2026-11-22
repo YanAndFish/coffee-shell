@@ -331,6 +331,23 @@ test('a low-stock product: 仅剩 6 份, the quantity stops at 6', async () => {
   }
 })
 
+test('stock 0: 暂时缺货, a and b refused, their buttons struck and out of the footer', async () => {
+  // `fixture:problem`: 涅里 AA 双洗 has nothing left (`detail-no-stock.json`).
+  const app = await start(130, 40, 'fixture:problem')
+  await openProduct(app, 2, '肯尼亚')
+  await waitForPart(app, '暂时缺货')
+  expect(app.spanStyle('text:加入购物车').lineThrough).toBe(true)
+  expect(app.spanStyle('text:立即购买').lineThrough).toBe(true)
+  // The footer drops a and b (K9); the keys do nothing.
+  expect(app.shows('label:a 加入')).toBe(false)
+  expect(app.shows('label:b 购买')).toBe(false)
+  await app.keyboard.press('a')
+  await app.keyboard.press('b')
+  expect(shows(app, '已加入购物车')).toBe(false)
+  expect(shows(app, '购物车 CART')).toBe(false)
+  expect(shows(app, '详情 DETAIL')).toBe(true)
+})
+
 test('a adds with a toast; b adds and goes to the cart without one', async () => {
   const app = await start(160, 50)
   await openPinkb(app)

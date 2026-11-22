@@ -369,6 +369,7 @@ test('keys typed while the first list loads land on it: g ↓ ↓ ⏎ opens the 
   await app.keyboard.press('escape')
   await app.keyboard.press('g')
   expect(shows(app, '商品列表 · 载入中')).toBe(true)
+  expect(shows(app, '正在载入商品…')).toBe(true)
   await app.keyboard.press('down')
   await app.keyboard.press('down')
   for (let i = 0; i < 20 && !shows(app, '商品列表 · 8 款'); i++)
