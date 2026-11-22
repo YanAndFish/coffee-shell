@@ -5,7 +5,7 @@
 // terminal, where the cell checks run too.
 import type { App } from './testkit'
 import { expect, open, test } from 'nsh/test'
-import { cells, enterAsGuest, isWide, KEY, logInAsMember, loginReady, screenRows, shows, start, waitForPart } from './testkit'
+import { cells, enterAsGuest, hint, isWide, KEY, logInAsMember, loginReady, screenRows, shows, start, waitForPart } from './testkit'
 
 /** Cells of `line` up to (not including) the first `part` in it; -1 when absent. */
 function cellOf(line: string, part: string) {
@@ -319,6 +319,11 @@ test('a profile that fails to load: the account and the orders say so, ⏎ retri
   await waitForPart(app, '个人信息加载失败')
   await waitForPart(app, '订单加载失败')
   expect(shows(app, 'RT2611220417')).toBe(false)
+  // The footer offers the retry, as every failed page does; the detail is the designed
+  // copy, never a status or a code.
+  expect(hint(app, '⏎ 重试')).toBe(true)
+  expect(shows(app, '服务器内部错误')).toBe(true)
+  expect(shows(app, 'HTTP')).toBe(false)
   await app.keyboard.press('enter')
   await waitForPart(app, '个人信息加载失败')
 })

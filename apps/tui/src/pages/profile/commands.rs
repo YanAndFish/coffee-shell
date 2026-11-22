@@ -75,7 +75,9 @@ pub const COMMANDS: &[Command] = &[
     PAGE,
     retry,
   )
-  .when(failed),
+  .when(failed)
+  // As the catalogue, detail, cart and address book do: a failed page says how to retry.
+  .footer(5),
   Command::new(
     "profile.activate",
     Key::new("⏎", &["enter"]),

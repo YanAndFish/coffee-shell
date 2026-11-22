@@ -1029,9 +1029,19 @@ mod tests {
       labels(set(KeyContext::on(Addresses), Bp::Xl, &guest)),
       ["⏎ 去登录", "1–4 切换页面", "/ 搜索"]
     );
-    // 我的, member and guest.
+    // 我的, member (loaded, then failed) and guest.
+    let member = ["profile.login", "profile.retry"];
     assert_eq!(
-      labels(set(KeyContext::on(Profile), Bp::Xl, &["profile.login"])),
+      labels(set(KeyContext::on(Profile), Bp::Xl, &["profile.login"]))[0],
+      "⏎ 重试",
+      "a failed profile offers the retry first"
+    );
+    assert_eq!(
+      labels(set(KeyContext::on(Profile), Bp::S, &["profile.login"]))[0],
+      "⏎ 重试"
+    );
+    assert_eq!(
+      labels(set(KeyContext::on(Profile), Bp::Xl, &member)),
       [
         "m 动画开关",
         "o 鼠标追踪",
@@ -1041,11 +1051,15 @@ mod tests {
       ]
     );
     assert_eq!(
-      labels(set(KeyContext::on(Profile), Bp::S, &["profile.login"])),
+      labels(set(KeyContext::on(Profile), Bp::S, &member)),
       ["m 动画", "o 鼠标", "q 退出", "1–4 切换"]
     );
     assert_eq!(
-      labels(set(KeyContext::on(Profile), Bp::Xl, &["profile.logout"])),
+      labels(set(
+        KeyContext::on(Profile),
+        Bp::Xl,
+        &["profile.logout", "profile.retry"]
+      )),
       [
         "⏎ 去登录",
         "m 动画开关",
@@ -1055,7 +1069,11 @@ mod tests {
       ]
     );
     assert_eq!(
-      labels(set(KeyContext::on(Profile), Bp::S, &["profile.logout"])),
+      labels(set(
+        KeyContext::on(Profile),
+        Bp::S,
+        &["profile.logout", "profile.retry"]
+      )),
       ["⏎ 去登录", "m 动画", "o 鼠标", "1–4 切换"]
     );
     // Overlays.
