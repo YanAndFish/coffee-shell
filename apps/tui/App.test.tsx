@@ -17,8 +17,26 @@ function start(cols: number, rows: number, transport?: string) {
   return open('.', {
     ...cells(cols, rows),
     platform: 'linux',
-    storage: transport ? { 'coffee.transport': transport } : {},
+    storage: transport
+      ? { 'coffee.transport': transport }
+      : {},
   })
+}
+
+/** Code point ranges that take two cells: CJK, Hangul, compatibility ideographs and full-width forms. */
+const WIDE_RANGES: [number, number][] = [
+  [0x2E80, 0xA4CF],
+  [0xAC00, 0xD7A3],
+  [0xF900, 0xFAFF],
+  [0xFE30, 0xFE4F],
+  [0xFF00, 0xFF60],
+  [0xFFE0, 0xFFE6],
+]
+
+/** Whether `symbol` takes two cells (its second cell is blank in the screenshot). */
+function isWide(symbol: string) {
+  const code = symbol.codePointAt(0)
+  return code !== undefined && WIDE_RANGES.some(([from, to]) => code >= from && code <= to)
 }
 
 /**
@@ -36,13 +54,11 @@ async function screenRows(app: Awaited<ReturnType<typeof start>>): Promise<strin
   if (bytes.length === 0)
     return null
   const screen = JSON.parse(new TextDecoder().decode(bytes)) as { rows: { symbol: string }[][] }
-  // CJK and full-width forms take two cells; the second is blank.
-  const wide = /[⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/
   return screen.rows.map((row) => {
     let line = ''
     for (let i = 0; i < row.length; i++) {
       line += row[i].symbol
-      if (wide.test(row[i].symbol))
+      if (isWide(row[i].symbol))
         i++
     }
     return line
@@ -54,7 +70,16 @@ function cursorRow(texts: string[]) {
   return texts[texts.indexOf('▶') + 1]
 }
 
-const NAMES = ['耶加雪菲 孔加', '慧兰 粉红波旁', '涅里 AA 双洗', '波奎特 瑰夏', '保山 小粒 日晒', '安提瓜 火山', '曼特宁 G1', '「夜班」意式拼配']
+const NAMES = [
+  '耶加雪菲 孔加',
+  '慧兰 粉红波旁',
+  '涅里 AA 双洗',
+  '波奎特 瑰夏',
+  '保山 小粒 日晒',
+  '安提瓜 火山',
+  '曼特宁 G1',
+  '「夜班」意式拼配',
+]
 
 function expectShell(texts: string[]) {
   expect(texts).toContain('◆ROAST/TTY')
@@ -140,7 +165,7 @@ test('shrinking below 80×24 shows only the notice, and enlarging restores the p
   expect(cursorRow(app.texts())).toBe('涅里 AA 双洗')
 
   if (!await resize(app, 60, 20)) {
-    console.log('resizing an open app is not supported on this target: covered by `nsh test`')
+    // Resizing an open app is not supported on this target: `nsh test` covers it.
     return
   }
   const small = app.texts()
