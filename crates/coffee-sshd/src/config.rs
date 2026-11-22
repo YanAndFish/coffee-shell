@@ -27,11 +27,18 @@ pub struct Config {
   /// `COFFEE_SSH_MAX_SESSIONS`: concurrent sessions in all (64).
   pub max_sessions: usize,
   /// `COFFEE_SSH_MAX_SESSIONS_PER_IP`: concurrent sessions from one client address (8).
+  /// Twice as many connections may be open from one address (the extra ones only get
+  /// to hear why they are refused).
   pub max_sessions_per_ip: usize,
-  /// `COFFEE_SSH_IDLE_TIMEOUT`: seconds without input before a session is closed
-  /// (1800; 0 never).
+  /// `COFFEE_SSH_CONNECTIONS_PER_MINUTE`: new connections one client address may open
+  /// per minute, in bursts of as many (30; 0 no limit). Beyond it a connection is
+  /// dropped before the handshake.
+  pub connections_per_minute: Option<u32>,
+  /// `COFFEE_SSH_IDLE_TIMEOUT`: seconds without input before a session is closed,
+  /// counted from the session program's first output (900; 0 never).
   pub idle_timeout: Option<Duration>,
-  /// `COFFEE_SSH_AUTH_TIMEOUT`: seconds a connection may take to log in (30).
+  /// `COFFEE_SSH_AUTH_TIMEOUT`: seconds a connection may take from accept to a running
+  /// session: handshake, login and the shell request (30).
   pub auth_timeout: Duration,
 }
 
@@ -83,7 +90,9 @@ impl Config {
     if max_sessions == 0 || max_sessions_per_ip == 0 {
       return Err(ConfigError("session limits must be at least 1".into()));
     }
-    let idle = number("COFFEE_SSH_IDLE_TIMEOUT", 1800)?;
+    let idle = number("COFFEE_SSH_IDLE_TIMEOUT", 900)?;
+    let per_minute = u32::try_from(number("COFFEE_SSH_CONNECTIONS_PER_MINUTE", 30)?)
+      .map_err(|_| ConfigError("COFFEE_SSH_CONNECTIONS_PER_MINUTE: too large".into()))?;
     Ok(Self {
       addr,
       host_key: var("COFFEE_SSH_HOST_KEY").map_or_else(
@@ -96,6 +105,7 @@ impl Config {
       colors: var("COFFEE_COLORS"),
       max_sessions,
       max_sessions_per_ip,
+      connections_per_minute: (per_minute > 0).then_some(per_minute),
       idle_timeout: (idle > 0).then(|| Duration::from_secs(idle)),
       auth_timeout: Duration::from_secs(number("COFFEE_SSH_AUTH_TIMEOUT", 30)?.max(1)),
     })
@@ -126,7 +136,8 @@ mod tests {
     assert_eq!(config.colors, None);
     assert_eq!(config.max_sessions, 64);
     assert_eq!(config.max_sessions_per_ip, 8);
-    assert_eq!(config.idle_timeout, Some(Duration::from_secs(1800)));
+    assert_eq!(config.connections_per_minute, Some(30));
+    assert_eq!(config.idle_timeout, Some(Duration::from_secs(900)));
     assert_eq!(config.auth_timeout, Duration::from_secs(30));
   }
 
@@ -142,6 +153,7 @@ mod tests {
         ("COFFEE_SSH_MAX_SESSIONS", "3"),
         ("COFFEE_SSH_MAX_SESSIONS_PER_IP", "1"),
         ("COFFEE_SSH_IDLE_TIMEOUT", "0"),
+        ("COFFEE_SSH_CONNECTIONS_PER_MINUTE", "0"),
         ("COFFEE_COLORS", "256"),
       ]),
       None,
@@ -153,6 +165,7 @@ mod tests {
     assert_eq!(config.internal_key.as_deref(), Some("s3cret"));
     assert_eq!((config.max_sessions, config.max_sessions_per_ip), (3, 1));
     assert_eq!(config.idle_timeout, None);
+    assert_eq!(config.connections_per_minute, None);
     assert_eq!(config.colors.as_deref(), Some("256"));
   }
 

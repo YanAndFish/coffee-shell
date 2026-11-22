@@ -90,6 +90,20 @@ while :; do sleep 0.05; done
   path
 }
 
+/// A stand-in session program that prints a line and then dies of SIGSEGV, as a crashed
+/// program would.
+pub fn crash_bin(dir: &Path) -> PathBuf {
+  let path = dir.join("crash.sh");
+  std::fs::write(
+    &path,
+    "#!/bin/sh\necho \"PID=$$\"\nsleep 0.2\nkill -SEGV $$\n",
+  )
+  .unwrap();
+  use std::os::unix::fs::PermissionsExt;
+  std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+  path
+}
+
 /// A server running on 127.0.0.1 with `tui_bin` as the session program.
 pub struct TestServer {
   pub addr: SocketAddr,
@@ -221,21 +235,45 @@ pub struct Terminal {
   pub raw: Vec<u8>,
   pub exit_status: Option<u32>,
   pub closed: bool,
+  /// Answer XTGETTCAP `RGB` as a 24-bit terminal does (by default it goes unanswered,
+  /// as in most terminals).
+  pub answers_rgb: bool,
+  /// Startup queries answered so far (DA1, XTGETTCAP).
+  answered: (usize, usize),
 }
 
+/// DA1, which every terminal answers.
+const DA1: &[u8] = b"\x1b[c";
+/// XTGETTCAP, as the host sends it.
+const XTGETTCAP: &[u8] = b"\x1bP+q";
+
 impl Terminal {
-  /// Opens a session channel with a `cols`×`rows` PTY and starts the shell.
+  /// Opens a session channel with a `cols`×`rows` `xterm-256color` PTY and starts the
+  /// shell.
   pub async fn open(handle: &Handle<Client>, cols: u16, rows: u16) -> Self {
+    Self::open_as(handle, "xterm-256color", cols, rows, false).await
+  }
+
+  /// [`Terminal::open`] with this `TERM`, answering XTGETTCAP `RGB` when `rgb`.
+  pub async fn open_as(
+    handle: &Handle<Client>,
+    term: &str,
+    cols: u16,
+    rows: u16,
+    rgb: bool,
+  ) -> Self {
     let channel = handle
       .channel_open_session()
       .await
       .expect("session channel");
     channel
-      .request_pty(true, "xterm-256color", cols.into(), rows.into(), 0, 0, &[])
+      .request_pty(true, term, cols.into(), rows.into(), 0, 0, &[])
       .await
       .unwrap();
     channel.request_shell(true).await.unwrap();
-    Self::over(channel, cols, rows)
+    let mut terminal = Self::over(channel, cols, rows);
+    terminal.answers_rgb = rgb;
+    terminal
   }
 
   /// A screen over a channel the caller set up.
@@ -246,6 +284,36 @@ impl Terminal {
       raw: Vec::new(),
       exit_status: None,
       closed: false,
+      answers_rgb: false,
+      answered: (0, 0),
+    }
+  }
+
+  /// Answers the startup queries received so far, as a terminal would: XTGETTCAP (when
+  /// asked to) before DA1, so the host's query ends at once. Counted over everything
+  /// received, so a query split across two messages is answered too.
+  async fn answer_queries(&mut self) {
+    let count = |needle: &[u8]| {
+      self
+        .raw
+        .windows(needle.len())
+        .filter(|w| *w == needle)
+        .count()
+    };
+    let (xtgettcap, da1) = (count(XTGETTCAP), count(DA1));
+    let mut reply = Vec::new();
+    for _ in self.answered.1..xtgettcap {
+      if self.answers_rgb {
+        // `RGB` = 8/8/8 (hex-encoded name and value), and `Tc` unknown.
+        reply.extend_from_slice(b"\x1bP1+r524742=382F382F38\x1b\\\x1bP0+r5463\x1b\\");
+      }
+    }
+    for _ in self.answered.0..da1 {
+      reply.extend_from_slice(b"\x1b[?62;22c");
+    }
+    self.answered = (da1, xtgettcap);
+    if !reply.is_empty() {
+      let _ = self.channel.data(&reply[..]).await;
     }
   }
 
@@ -272,10 +340,7 @@ impl Terminal {
           ChannelMsg::Data { data } => {
             self.raw.extend_from_slice(&data);
             self.parser.process(&data);
-            // Answer DA1 as a terminal would, so the host's startup query ends at once.
-            if data.windows(3).any(|w| w == b"\x1b[c") {
-              let _ = self.channel.data(&b"\x1b[?62;22c"[..]).await;
-            }
+            self.answer_queries().await;
           }
           ChannelMsg::ExitStatus { exit_status } => self.exit_status = Some(exit_status),
           ChannelMsg::Close => {
@@ -360,8 +425,19 @@ pub fn field(raw: &str, key: &str) -> Option<String> {
     .map(str::to_owned)
 }
 
-/// Whether process `pid` still exists (a zombie of another parent counts as gone).
+/// Whether process `pid` still exists (a zombie counts as gone). A process that is
+/// gone is seen at once (`kill(pid, 0)`), not after a `ps` that may itself be slow on a
+/// busy machine.
 pub fn alive(pid: u32) -> bool {
+  let Some(target) = i32::try_from(pid)
+    .ok()
+    .and_then(rustix::process::Pid::from_raw)
+  else {
+    return false;
+  };
+  if rustix::process::test_kill_process(target) == Err(rustix::io::Errno::SRCH) {
+    return false;
+  }
   let output = Command::new("ps")
     .args(["-o", "stat=", "-p", &pid.to_string()])
     .output()

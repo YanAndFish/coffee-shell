@@ -28,25 +28,37 @@ use tokio::{
 
 use crate::{
   config::Config,
-  limits::{Limits, Refusal, Slot},
+  limits::{Gate, Limits, Slot},
 };
 
 /// The notice every client sees before logging in (SSH auth banner).
-pub const BANNER: &str =
-  "\n  ◆ROAST/TTY 终端咖啡馆\n  演示环境 · 不是真实商店 · 不收款、不发货 · 请勿使用真实密码\n\n";
+pub const BANNER: &str = "\n  ◆ROAST/TTY 终端咖啡馆\n  演示环境 · 不是真实商店 · 不收款、不发货 · 请勿使用真实密码、地址或电话\n\n";
 
 /// How long a session's child has to leave after SIGHUP before it is killed.
 const KILL_GRACE: Duration = Duration::from_millis(1000);
 /// Keepalives detect a client that vanished without closing its connection.
 const KEEPALIVE: Duration = Duration::from_secs(30);
+/// Undoes what a session program that died may have left on the client's terminal: kitty
+/// keys, mouse, paste and focus reports, alternate scroll, a synchronized update, the
+/// alternate screen, a hidden cursor, colours.
+const TERMINAL_RESET: &str = "\x1b[<u\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1004l\x1b[?1007l\x1b[?2026l\x1b[?1049l\x1b[?25h\x1b[0m";
 
 /// What the server shares between connections.
 struct Shared {
   config: Config,
   limits: Arc<Limits>,
+  gate: Arc<Gate>,
   next_id: AtomicU64,
   connections: AtomicUsize,
   started: Instant,
+}
+
+/// How far a connection got: the login watchdog reads it.
+#[derive(Default)]
+struct Progress {
+  authenticated: AtomicBool,
+  /// A shell was asked for (and started or refused with a message).
+  settled: AtomicBool,
 }
 
 /// Runs the SSH server on `listener` until `shutdown` resolves.
@@ -72,6 +84,11 @@ pub async fn serve(
   });
   let shared = Arc::new(Shared {
     limits: Limits::new(config.max_sessions, config.max_sessions_per_ip),
+    // Twice the sessions: room for the extra ones to hear why they are refused.
+    gate: Gate::new(
+      config.max_sessions_per_ip.saturating_mul(2),
+      config.connections_per_minute,
+    ),
     config,
     next_id: AtomicU64::new(1),
     connections: AtomicUsize::new(0),
@@ -99,33 +116,56 @@ pub async fn serve(
       tracing::warn!(peer = %peer, open, "too many connections; dropped");
       continue;
     }
+    let ticket = match shared.gate.admit(peer.ip(), Instant::now()) {
+      Ok(ticket) => ticket,
+      Err((turned, again)) => {
+        if !again {
+          tracing::warn!(peer = %peer.ip(), reason = turned.reason(), "connections turned away");
+        }
+        continue;
+      }
+    };
     let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
-    let authenticated = Arc::new(AtomicBool::new(false));
-    let handler = Connection::new(shared.clone(), id, peer, authenticated.clone());
+    let progress = Arc::new(Progress::default());
+    let handler = Connection::new(shared.clone(), id, peer, progress.clone());
     let config = russh_config.clone();
-    let auth_timeout = shared.config.auth_timeout;
+    // From accept to a running session: handshake, login and the shell request. A client
+    // that stalls anywhere in between (even before its SSH version line) is cut off.
+    let deadline = tokio::time::Instant::now() + shared.config.auth_timeout;
     tokio::spawn(async move {
       let _counted = counted;
-      let session = match server::run_stream(config, socket, handler).await {
-        Ok(session) => session,
-        Err(error) => {
+      let _ticket = ticket;
+      let session = match tokio::time::timeout_at(
+        deadline,
+        server::run_stream(config, socket, handler),
+      )
+      .await
+      {
+        Ok(Ok(session)) => session,
+        Ok(Err(error)) => {
           tracing::debug!(conn = id, %error, "handshake failed");
+          return;
+        }
+        Err(_) => {
+          tracing::info!(conn = id, "handshake timed out");
           return;
         }
       };
       let handle = session.handle();
       let watchdog = tokio::spawn(async move {
-        tokio::time::sleep(auth_timeout).await;
-        if !authenticated.load(Ordering::Acquire) {
-          tracing::info!(conn = id, "login timed out");
-          let _ = handle
-            .disconnect(
-              russh::Disconnect::ByApplication,
-              "login timed out".into(),
-              String::new(),
-            )
-            .await;
+        tokio::time::sleep_until(deadline).await;
+        if progress.settled.load(Ordering::Acquire) {
+          return;
         }
+        let why = if progress.authenticated.load(Ordering::Acquire) {
+          "no session started in time"
+        } else {
+          "login timed out"
+        };
+        tracing::info!(conn = id, "{why}");
+        let _ = handle
+          .disconnect(russh::Disconnect::ByApplication, why.into(), String::new())
+          .await;
       });
       if let Err(error) = session.await {
         tracing::debug!(conn = id, %error, "connection ended with an error");
@@ -164,8 +204,7 @@ struct Connection {
   id: u64,
   peer: SocketAddr,
   connected: Instant,
-  authenticated: Arc<AtomicBool>,
-  slot: Option<Result<Slot, Refusal>>,
+  progress: Arc<Progress>,
   fingerprint: Option<String>,
   method: &'static str,
   channel: Option<ChannelId>,
@@ -177,22 +216,15 @@ struct Connection {
 }
 
 impl Connection {
-  fn new(shared: Arc<Shared>, id: u64, peer: SocketAddr, authenticated: Arc<AtomicBool>) -> Self {
-    let slot = shared.limits.acquire(peer.ip());
-    match &slot {
-      Ok(_) => tracing::info!(conn = id, peer = %peer, "connected"),
-      Err(refusal) => {
-        tracing::warn!(conn = id, peer = %peer, refused = refusal.reason(), "connected over the limit")
-      }
-    }
+  fn new(shared: Arc<Shared>, id: u64, peer: SocketAddr, progress: Arc<Progress>) -> Self {
+    tracing::info!(conn = id, peer = %peer, "connected");
     let last_input = Arc::new(AtomicU64::new(shared.millis()));
     Self {
       shared,
       id,
       peer,
       connected: Instant::now(),
-      authenticated,
-      slot: Some(slot),
+      progress,
       fingerprint: None,
       method: "none",
       channel: None,
@@ -212,7 +244,7 @@ impl Connection {
 
   fn accept(&mut self, method: &'static str) -> Auth {
     self.method = method;
-    self.authenticated.store(true, Ordering::Release);
+    self.progress.authenticated.store(true, Ordering::Release);
     tracing::info!(
       conn = self.id,
       method,
@@ -275,9 +307,10 @@ impl Connection {
       );
       return;
     };
-    let slot = match self.slot.take() {
-      Some(Ok(slot)) => slot,
-      Some(Err(refusal)) => {
+    // The place is taken only now: a connection that is still logging in holds none.
+    let slot = match self.shared.limits.acquire(self.peer.ip()) {
+      Ok(slot) => slot,
+      Err(refusal) => {
         tracing::warn!(
           conn = self.id,
           refused = refusal.reason(),
@@ -286,7 +319,6 @@ impl Connection {
         Self::refuse(handle, channel, refusal.message(), 1);
         return;
       }
-      None => return,
     };
     let env = self.child_env(&pty);
     let spawned = spawn_child(&self.shared.config, &pty, env);
@@ -407,13 +439,21 @@ async fn run_session(task: SessionTask) {
   let pid = child.id();
   let (mut reader, mut writer) = pty.into_split();
 
+  // The idle clock runs from the program's first output: the time a client takes to
+  // connect, and the program to start, never counts against the session.
+  let shown = Arc::new(AtomicBool::new(false));
   let output = handle.clone();
+  let (first_output, clock, idle_since) = (shown.clone(), shared.clone(), last_input.clone());
   let mut pump: JoinHandle<()> = tokio::spawn(async move {
     let mut buffer = vec![0u8; 32 * 1024];
     loop {
       match reader.read(&mut buffer).await {
         Ok(0) | Err(_) => break,
         Ok(read) => {
+          if !first_output.load(Ordering::Relaxed) {
+            idle_since.store(clock.millis(), Ordering::Relaxed);
+            first_output.store(true, Ordering::Release);
+          }
           if output
             .data(channel, Bytes::copy_from_slice(&buffer[..read]))
             .await
@@ -446,22 +486,28 @@ async fn run_session(task: SessionTask) {
   });
 
   let idle = shared.config.idle_timeout;
-  let end = loop {
-    let check = idle.map_or(Duration::from_secs(3600), |idle| {
+  // How long ago the last input (or the first output) was, once there was output.
+  let quiet = || {
+    shown.load(Ordering::Acquire).then(|| {
       let since = shared
         .millis()
         .saturating_sub(last_input.load(Ordering::Relaxed));
-      idle.saturating_sub(Duration::from_millis(since))
-    });
+      Duration::from_millis(since)
+    })
+  };
+  let end = loop {
+    let check = match (idle, quiet()) {
+      (Some(idle), Some(quiet)) => idle.saturating_sub(quiet),
+      // Nothing shown yet: look again after a full period.
+      (Some(idle), None) => idle,
+      (None, _) => Duration::from_secs(3600),
+    };
     tokio::select! {
       status = child.wait() => break End::Exited(status),
       _ = &mut gone => break End::Disconnected,
       () = tokio::time::sleep(check) => {
-        if let Some(idle) = idle {
-          let since = shared.millis().saturating_sub(last_input.load(Ordering::Relaxed));
-          if Duration::from_millis(since) >= idle {
-            break End::Idle;
-          }
+        if let (Some(idle), Some(quiet)) = (idle, quiet()) && quiet >= idle {
+          break End::Idle;
         }
       }
     }
@@ -481,13 +527,18 @@ async fn run_session(task: SessionTask) {
         Ok(status) => exit_code(*status),
         Err(_) => 255,
       };
-      tracing::info!(
-        conn,
-        ?pid,
-        code,
-        seconds = started.elapsed().as_secs(),
-        "session ended: program exited"
-      );
+      let seconds = started.elapsed().as_secs();
+      if code == 0 {
+        tracing::info!(conn, ?pid, code, seconds, "session ended: program exited");
+      } else {
+        // It crashed or gave up: it may have left the client's terminal in its modes,
+        // and a bare close would leave the user guessing.
+        tracing::warn!(conn, ?pid, code, seconds, "session ended: program failed");
+        let notice = format!(
+          "{TERMINAL_RESET}\r\nROAST/TTY 出错了，会话已结束（代码 {code}）。请重新连接；如果一直这样，请稍后再试。\r\n"
+        );
+        let _ = handle.data(channel, Bytes::from(notice.into_bytes())).await;
+      }
       let _ = handle.exit_status_request(channel, code).await;
       let _ = handle.eof(channel).await;
       let _ = handle.close(channel).await;
@@ -602,7 +653,12 @@ impl server::Handler for Connection {
 
   async fn authentication_banner(&mut self) -> Result<Option<String>, Self::Error> {
     let mut banner = BANNER.to_owned();
-    if let Some(Err(refusal)) = &self.slot {
+    if let Err(refusal) = self.shared.limits.check(self.peer.ip()) {
+      tracing::info!(
+        conn = self.id,
+        refused = refusal.reason(),
+        "over the limit at login"
+      );
       banner.push_str(&format!("  {}\n\n", refusal.message()));
     }
     Ok(Some(banner))
@@ -693,6 +749,7 @@ impl server::Handler for Connection {
       return session.channel_failure(channel);
     }
     self.started = true;
+    self.progress.settled.store(true, Ordering::Release);
     session.channel_success(channel)?;
     self.start(channel, session.handle()).await;
     Ok(())

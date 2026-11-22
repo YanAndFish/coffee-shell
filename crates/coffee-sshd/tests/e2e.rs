@@ -7,7 +7,8 @@ mod support;
 use std::time::{Duration, Instant};
 
 use support::{
-  Login, Terminal, TestServer, alive, connect, field, probe_bin, stub_backend, temp_dir, tui_bin,
+  Login, Terminal, TestServer, alive, connect, crash_bin, field, probe_bin, stub_backend, temp_dir,
+  tui_bin,
 };
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -308,15 +309,25 @@ async fn session_limits_hold_in_all_and_per_address() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_idle_session_is_closed() {
   let dir = temp_dir("idle");
+  let idle = Duration::from_secs(1);
   let server = TestServer::start(probe_bin(&dir), |config| {
-    config.idle_timeout = Some(Duration::from_secs(1));
+    config.idle_timeout = Some(idle);
   })
   .await;
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let mut terminal = Terminal::open(&handle, 80, 24).await;
-  assert!(terminal.wait_raw("SIZE=", WAIT).await);
+  // The idle clock starts at the program's first output (the `PID=` line), so the
+  // session is still there to show it however long connecting and starting took.
+  assert!(
+    terminal.wait_raw("PID=", WAIT).await,
+    "{}",
+    terminal.raw_text()
+  );
+  let shown = Instant::now();
   let pid: u32 = field(&terminal.raw_text(), "PID").unwrap().parse().unwrap();
   assert!(terminal.wait_closed(WAIT).await);
+  // Not before the idle time (less the client's share of the transit), then promptly.
+  assert!(shown.elapsed() >= idle * 4 / 5, "{:?}", shown.elapsed());
   assert!(
     terminal.raw_text().contains("空闲"),
     "{}",
@@ -325,6 +336,183 @@ async fn an_idle_session_is_closed() {
   assert_eq!(terminal.exit_status, Some(124));
   assert!(!alive(pid));
   let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The flake behind this test: the idle clock used to start at the TCP accept, so a
+/// login slower than the idle time (a busy machine, a debug build's crypto) closed the
+/// session as idle before its program had shown anything.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_login_does_not_count_as_idle() {
+  let dir = temp_dir("slow-login");
+  let idle = Duration::from_secs(2);
+  let server = TestServer::start(probe_bin(&dir), |config| {
+    config.idle_timeout = Some(idle);
+  })
+  .await;
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  tokio::time::sleep(idle * 3 / 2).await;
+  let mut terminal = Terminal::open(&handle, 80, 24).await;
+  assert!(
+    terminal.wait_raw("PID=", WAIT).await,
+    "{}",
+    terminal.raw_text()
+  );
+  assert!(
+    !terminal.wait_closed(idle / 2).await,
+    "closed as idle at once: {}",
+    terminal.raw_text()
+  );
+  assert!(terminal.wait_closed(WAIT).await);
+  assert_eq!(terminal.exit_status, Some(124));
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_crashed_program_leaves_a_clear_message() {
+  let dir = temp_dir("crash");
+  let server = TestServer::start(crash_bin(&dir), |_| {}).await;
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let mut terminal = Terminal::open(&handle, 80, 24).await;
+  assert!(terminal.wait_closed(WAIT).await, "{}", terminal.raw_text());
+  let raw = terminal.raw_text();
+  assert!(raw.contains("PID="), "{raw}");
+  assert!(raw.contains("出错了，会话已结束（代码 139）"), "{raw}");
+  // The terminal is put back (main screen, cursor shown) before the message.
+  assert!(raw.contains("\x1b[?1049l\x1b[?25h"), "{raw}");
+  assert!(
+    terminal.text().contains("请重新连接"),
+    "{}",
+    terminal.text()
+  );
+  assert_eq!(terminal.exit_status, Some(139));
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_silent_connection_is_cut_off_at_the_login_deadline() {
+  use tokio::io::AsyncReadExt;
+  let dir = temp_dir("silent");
+  let server = TestServer::start(probe_bin(&dir), |config| {
+    config.auth_timeout = Duration::from_secs(1);
+  })
+  .await;
+  // A client that never sends its SSH version line: before, it was held forever (and
+  // enough of them refused everyone else).
+  let mut socket = tokio::net::TcpStream::connect(server.addr).await.unwrap();
+  let opened = Instant::now();
+  let mut seen = Vec::new();
+  let read = tokio::time::timeout(WAIT, socket.read_to_end(&mut seen)).await;
+  assert!(read.is_ok(), "still open after {:?}", opened.elapsed());
+  assert!(String::from_utf8_lossy(&seen).starts_with("SSH-2.0-ROAST_TTY"));
+  assert!(opened.elapsed() >= Duration::from_millis(900));
+
+  // Logged in, but no shell asked for: cut off at the same deadline.
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let deadline = Instant::now() + WAIT;
+  while !handle.is_closed() && Instant::now() < deadline {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+  }
+  assert!(
+    handle.is_closed(),
+    "a connection without a session stayed open"
+  );
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn logging_in_holds_no_session_place() {
+  let dir = temp_dir("login-place");
+  let server = TestServer::start(probe_bin(&dir), |config| {
+    config.max_sessions = 1;
+    config.max_sessions_per_ip = 1;
+  })
+  .await;
+  // Logged in, no shell yet: the one place is still free for someone else.
+  let (waiting, _) = connect(server.addr, Login::Keyless).await;
+  let (handle, banner) = connect(server.addr, Login::Keyless).await;
+  assert!(banner.is_some_and(|b| !b.contains("上限") && !b.contains("已满")));
+  let mut terminal = Terminal::open(&handle, 80, 24).await;
+  assert!(
+    terminal.wait_raw("SIZE=", WAIT).await,
+    "{}",
+    terminal.raw_text()
+  );
+  // Now it is taken: the first connection's shell is refused with the reason.
+  let mut late = Terminal::open(&waiting, 80, 24).await;
+  assert!(late.wait_closed(WAIT).await);
+  assert!(late.raw_text().contains("已满"), "{}", late.raw_text());
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn connections_beyond_the_rate_are_dropped_before_the_handshake() {
+  use tokio::io::AsyncReadExt;
+  let dir = temp_dir("rate");
+  let server = TestServer::start(probe_bin(&dir), |config| {
+    config.connections_per_minute = Some(2);
+  })
+  .await;
+  for _ in 0..2 {
+    let (handle, _) = connect(server.addr, Login::Keyless).await;
+    let mut terminal = Terminal::open(&handle, 80, 24).await;
+    assert!(terminal.wait_raw("SIZE=", WAIT).await);
+  }
+  let mut socket = tokio::net::TcpStream::connect(server.addr).await.unwrap();
+  let mut seen = Vec::new();
+  let read = tokio::time::timeout(WAIT, socket.read_to_end(&mut seen)).await;
+  assert!(read.is_ok(), "the third connection was kept");
+  assert!(seen.is_empty(), "{:?}", String::from_utf8_lossy(&seen));
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The SGR colour sequences in `raw`: whether any is 24-bit (`38;2;`/`48;2;`) and any is
+/// from the 256-colour table (`38;5;`/`48;5;`).
+fn color_kinds(raw: &str) -> (bool, bool) {
+  let truecolor = raw.contains("38;2;") || raw.contains("48;2;");
+  let indexed = raw.contains("38;5;") || raw.contains("48;5;");
+  (truecolor, indexed)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_truecolor_term_brand_gets_24_bit_colour_without_colorterm() {
+  let server = TestServer::start(tui_bin(), |_| {}).await;
+  // kitty's TERM survives SSH; COLORTERM does not (and is not sent here).
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let mut kitty = Terminal::open_as(&handle, "xterm-kitty", 120, 40, false).await;
+  assert!(
+    kitty.wait_text("◆ROAST/TTY", WAIT).await,
+    "{}",
+    kitty.text()
+  );
+  assert_eq!(color_kinds(&kitty.raw_text()), (true, false));
+  // The background pinned exactly (#14110e).
+  assert!(kitty.raw_text().contains("48;2;20;17;14"));
+
+  // A plain xterm-256color session, whose terminal does not answer XTGETTCAP: 256 colours.
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let mut plain = Terminal::open(&handle, 120, 40).await;
+  assert!(
+    plain.wait_text("◆ROAST/TTY", WAIT).await,
+    "{}",
+    plain.text()
+  );
+  assert_eq!(color_kinds(&plain.raw_text()), (false, true));
+  assert!(plain.raw_text().contains("\x1bP+q524742"), "RGB not asked");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_that_reports_rgb_gets_24_bit_colour() {
+  let server = TestServer::start(tui_bin(), |_| {}).await;
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let mut terminal = Terminal::open_as(&handle, "xterm-256color", 120, 40, true).await;
+  assert!(
+    terminal.wait_text("◆ROAST/TTY", WAIT).await,
+    "{}",
+    terminal.text()
+  );
+  assert_eq!(color_kinds(&terminal.raw_text()), (true, false));
+  // Nothing of the answer leaked into the app as typed keys or onto the screen.
+  assert!(!terminal.text().contains("524742"), "{}", terminal.text());
 }
 
 #[tokio::test(flavor = "multi_thread")]
