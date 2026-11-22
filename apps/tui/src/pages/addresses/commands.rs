@@ -1,32 +1,51 @@
 //! The address book's keys (keymap.md, "地址本"; footers "地址本", "地址本（访客）") and the
 //! address dialog's ("地址对话框"). While saving only `Esc` works in the dialog.
+//!
+//! The grid's keys work once the book shows (not while the first load runs or after it
+//! failed: then `⏎` retries). In the dialog `Tab` / `Shift+Tab` are nsh's (the dialog's
+//! stops are its only focusable views); `←` `→` choose the tag on the tag stop and `space`
+//! toggles `设为默认` on its stop; in a text field they edit the text.
 
 use coffee_api::AddressTag;
 
 use crate::{
   commands::{Command, Key, Scope, Typing, search_hint, tabs_hint},
   router::Page,
-  stores::{AddressCursor, Overlay, Phase, Stores, actions},
+  stores::{AddressCursor, AddressField, Overlay, Phase, Stores, actions, addresses::DialogStop},
   ui::Bp,
 };
 
 const PAGE: Scope = Scope::Page(Page::Addresses);
 const DIALOG: Scope = Scope::Overlay(Overlay::AddressDialog);
 
-fn member(stores: &Stores) -> bool {
-  stores.session.is_member()
-}
-
 fn guest(stores: &Stores) -> bool {
   !stores.session.is_member()
 }
 
+/// A member's book is on screen (loaded, or reloading with its cards kept).
+fn shown(stores: &Stores) -> bool {
+  stores.session.is_member()
+    && match stores.addresses.phase() {
+      Phase::Failed => false,
+      Phase::Idle | Phase::Loading => stores.addresses.count() > 0,
+      Phase::Ready | Phase::Empty => true,
+    }
+}
+
 fn on_card(stores: &Stores) -> bool {
-  member(stores) && matches!(stores.addresses.cursor(), AddressCursor::Card(_))
+  shown(stores) && matches!(stores.addresses.cursor(), AddressCursor::Card(_))
 }
 
 fn failed(stores: &Stores) -> bool {
-  member(stores) && stores.addresses.phase() == Phase::Failed
+  stores.session.is_member() && stores.addresses.phase() == Phase::Failed
+}
+
+fn on_tag(stores: &Stores) -> bool {
+  stores.addresses.dialog_focus() == DialogStop::Field(AddressField::Tag)
+}
+
+fn on_default(stores: &Stores) -> bool {
+  stores.addresses.dialog_focus() == DialogStop::Field(AddressField::Default)
 }
 
 fn cursor_id(stores: &Stores) -> Option<u32> {
@@ -36,9 +55,10 @@ fn cursor_id(stores: &Stores) -> Option<u32> {
   }
 }
 
-/// `←` `→` move by one card, `↑` `↓` by a row of the grid (two columns from M, one at S).
+/// `←` `→` move by one card, `↑` `↓` by a row of the grid (two columns from L, one at S
+/// and M).
 fn step(stores: &Stores, stroke: &str) {
-  let columns = if nsh_core::prelude::untracked(|| stores.bp()) <= Bp::S {
+  let columns = if nsh_core::prelude::untracked(|| stores.bp()) <= Bp::M {
     1
   } else {
     2
@@ -110,7 +130,7 @@ pub const COMMANDS: &[Command] = &[
     step,
   )
   .short("↑↓ 移动")
-  .when(member)
+  .when(shown)
   .footer(10),
   Command::new(
     "addresses.use",
@@ -119,7 +139,7 @@ pub const COMMANDS: &[Command] = &[
     PAGE,
     use_here,
   )
-  .when(member)
+  .when(shown)
   .footer(20),
   Command::new(
     "addresses.new",
@@ -128,7 +148,7 @@ pub const COMMANDS: &[Command] = &[
     PAGE,
     |stores, _| actions::new_address(stores),
   )
-  .when(member)
+  .when(shown)
   .footer(30),
   Command::new(
     "addresses.edit",
@@ -148,9 +168,14 @@ pub const COMMANDS: &[Command] = &[
     Key::new("space", &["space"]),
     "space 默认",
     PAGE,
+    // Already the default: nothing to do (the card's button is struck through; the hint
+    // stays, as in the design's footer).
     |stores, _| {
-      if let Some(id) = cursor_id(stores) {
-        actions::set_default_address(stores, id);
+      let card = nsh_core::prelude::untracked(|| stores.addresses.cursor_address());
+      if let Some(address) = card
+        && !address.is_default
+      {
+        actions::set_default_address(stores, address.id);
       }
     },
   )
@@ -193,6 +218,7 @@ pub const COMMANDS: &[Command] = &[
     DIALOG,
     cycle_tag,
   )
+  .when(on_tag)
   .footer_full(20),
   Command::new(
     "dialog.default",
@@ -205,6 +231,7 @@ pub const COMMANDS: &[Command] = &[
         .edit(|input| input.is_default = !input.is_default)
     },
   )
+  .when(on_default)
   .short("space 默认")
   .footer(30),
   Command::new(
