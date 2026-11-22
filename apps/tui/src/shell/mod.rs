@@ -204,7 +204,7 @@ pub fn shell() -> impl IntoElement {
     )
     .child(footer::footer(stores, layout));
 
-  ui::surface_root()
+  ui::follow_pointer(ui::surface_root())
     .child(frame)
     .child(outlets::toast(stores, layout))
     .child(when(
