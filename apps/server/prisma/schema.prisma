@@ -1,5 +1,7 @@
-// ROAST/TTY backend data model. SQLite has no enums or arrays: list columns hold JSON
-// text that `src/services/` validates with zod. Money is integer yuan.
+// ROAST/TTY backend data model. SQLite has no enums or arrays: enum-like columns are strings
+// and list columns hold JSON text; `src/services/` validates both with the contract's zod
+// schemas. Money is integer yuan. Times are UTC instants; "shop dates" are derived in
+// `src/services/shop-time.ts` (Asia/Shanghai).
 
 generator client {
   provider            = "prisma-client"
@@ -16,11 +18,11 @@ datasource db {
 /// One coffee bean on the shelf (design: `P` in docs/design/raw/canvas/Main.dc.html).
 model Product {
   /// Stable id, e.g. `yirga`.
-  id             String   @id
+  id             String      @id
   /// Display order (0-based); lists are sorted by it.
-  position       Int      @unique
+  position       Int         @unique
   /// SKU code used in order lines, e.g. `YIR`.
-  code           String   @unique
+  code           String      @unique
   name           String
   /// Latin subtitle, e.g. `Ethiopia · Yirgacheffe Konga G1`.
   subtitle       String
@@ -43,14 +45,197 @@ model Product {
   flavor         String
   /// Cupping score, e.g. 87.5.
   score          Float
-  /// Price of 250 g in integer yuan; other weights derive from it.
+  /// Price of 250 g in integer yuan; other weights derive from it (`services/pricing.ts`).
   basePrice      Int
+  /// Units in stock, shared by all weights; checkout decrements it.
   stock          Int
   /// Brew recipe as displayed, e.g. `1:15 · 92°C · 2′30″`.
   brew           String
   description    String
-  /// JSON `string[]` of weight keys (`100g` `250g` `500g` `1kg`) that are sold out.
-  soldOutWeights String   @default("[]")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  /// Per-weight availability: JSON `Weight[]` (`100g` `250g` `500g` `1kg`) that are sold out.
+  soldOutWeights String      @default("[]")
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  cartItems      CartItem[]
+  orderItems     OrderItem[]
+}
+
+/// A member account: username + password only (no email, no phone).
+model User {
+  id             Int             @id @default(autoincrement())
+  /// As registered (case kept), 2–16 characters (contract `USERNAME_PATTERN`).
+  username       String
+  /// `username` with ASCII letters lower-cased: the uniqueness and login key.
+  usernameKey    String          @unique
+  /// `argon2id$…` (node:crypto argon2) or `scrypt$…` (fallback); see `src/auth/password.ts`.
+  passwordHash   String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  sessions       Session[]
+  rememberedKeys RememberedKey[]
+  cart           Cart?
+  addresses      Address[]
+  orders         Order[]
+  setting        Setting?
+}
+
+/// A login session (one per SSH session that logged in). The token itself is never stored.
+model Session {
+  id        Int      @id @default(autoincrement())
+  /// SHA-256 (hex) of the bearer token.
+  tokenHash String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  /// createdAt + 7 days; afterwards the token is `session_expired`.
+  expiresAt DateTime
+
+  @@index([userId])
+}
+
+/// 记住我: an SSH key bound to a member for 30 days. One member per key.
+model RememberedKey {
+  /// `SHA256:…` as OpenSSH prints it.
+  fingerprint String   @id
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  /// createdAt + 30 days (renewed by each password login with 记住我).
+  expiresAt   DateTime
+
+  @@index([userId])
+}
+
+/// A member's cart: its coupon and the address chosen for the next order.
+model Cart {
+  userId     Int        @id
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Canonical coupon code in use, or null.
+  couponCode String?
+  coupon     Coupon?    @relation(fields: [couponCode], references: [code], onDelete: SetNull)
+  /// 本单寄往 chosen with `PUT /v1/cart/address`; null = use the default address.
+  addressId  Int?
+  address    Address?   @relation(fields: [addressId], references: [id], onDelete: SetNull)
+  updatedAt  DateTime   @updatedAt
+  items      CartItem[]
+}
+
+/// One cart line: one per member and SKU (product × weight × grind × pack).
+model CartItem {
+  id        Int      @id @default(autoincrement())
+  /// The member (= its cart's key).
+  userId    Int
+  cart      Cart     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  /// `100g` | `250g` | `500g` | `1kg` (contract `WeightSchema`).
+  weight    String
+  /// `WB` | `PO` | `ES` | `FP` | `CB` (contract `GrindSchema`).
+  grind     String
+  /// `STD` | `GIFT` (contract `PackSchema`).
+  pack      String
+  /// 1–9.
+  quantity  Int
+  selected  Boolean  @default(true)
+  /// Display order within the member's cart (ascending; gaps allowed).
+  position  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, productId, weight, grind, pack])
+  @@index([userId, position])
+}
+
+/// A coupon code. Seeded: `TTY10` (10 % off, 全单 9 折).
+model Coupon {
+  /// Canonical, upper-case.
+  code        String   @id
+  /// Shown after `✓ 已使用 {code} · `.
+  description String
+  /// Discount = round(subtotal × percentOff ÷ 100), half up.
+  percentOff  Int
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  carts       Cart[]
+}
+
+/// An address-book entry. Phones are stored in full; masking is for display only.
+model Address {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipient String
+  /// 11 digits, or null.
+  phone     String?
+  region    String
+  detail    String
+  /// `home` | `work` | `school` (contract `AddressTagSchema`).
+  tag       String   @default("home")
+  /// Exactly one per member with addresses.
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  carts     Cart[]
+
+  @@index([userId])
+}
+
+/// A placed order. Status is derived from `createdAt` / `etaAt` when read, never stored.
+model Order {
+  id             Int         @id @default(autoincrement())
+  /// `RT` + yymmdd (shop date) + 4 digits; unique (checkout retries on collision).
+  number         String      @unique
+  userId         Int
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The client's key for this checkout; a repeat answers the same order.
+  idempotencyKey String
+  createdAt      DateTime    @default(now())
+  /// createdAt + 3 days.
+  etaAt          DateTime
+  subtotal       Int
+  discount       Int
+  shipping       Int
+  total          Int
+  couponCode     String?
+  /// Address snapshot.
+  recipient      String
+  phone          String?
+  region         String
+  detail         String
+  items          OrderItem[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+}
+
+/// One purchased line: a snapshot of name and prices at checkout.
+model OrderItem {
+  id          Int     @id @default(autoincrement())
+  orderId     Int
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// Order of the lines within the order.
+  position    Int
+  productId   String
+  product     Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  /// `RT-PNK-250G-WB-STD`.
+  sku         String
+  productName String
+  weight      String
+  grind       String
+  pack        String
+  quantity    Int
+  unitPrice   Int
+  lineTotal   Int
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+/// Per-account UI settings (界面动画 `m`, 鼠标追踪 `o`).
+model Setting {
+  userId        Int      @id
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  animations    Boolean  @default(true)
+  mouseTracking Boolean  @default(true)
+  updatedAt     DateTime @updatedAt
 }
