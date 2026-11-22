@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Keeps target/ (and the caches) small; CI needs no debugger symbols.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  NSH_VERSION: v0.6.1
+
+jobs:
+  node:
+    name: node (lint, typecheck, vitest, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6 # version from package.json "packageManager"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm exec vitest run
+      - run: pnpm -r --if-present build
+
+  rust:
+    name: rust (fmt, clippy, test incl. SSH end-to-end)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The end-to-end tests (crates/coffee-sshd/tests) start the coffee-tui binary.
+      - run: cargo build --workspace --locked
+      - run: cargo test --workspace --locked
+
+  nsh:
+    name: nsh (check, test, test --target tui)
+    runs-on: ubuntu-24.04 # the nsh Linux build needs glibc 2.39
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # `nsh` builds its runners and hosts into apps/tui/target.
+          workspaces: |
+            . -> target
+            apps/tui -> target
+          cache-directories: ~/.cache/nsh
+      - name: Cache the nsh CLI
+        id: nsh-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.nsh-dist
+          key: nsh-${{ env.NSH_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Install the nsh CLI (release archive, SHA-256 checked) and its tui component
+        if: steps.nsh-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          base="https://github.com/longbridge/nsh/releases/download/$NSH_VERSION"
+          work="$(mktemp -d)"
+          curl -fsSL "$base/nsh-linux-x86_64.tar.gz" -o "$work/nsh-linux-x86_64.tar.gz"
+          curl -fsSL "$base/nsh-linux-x86_64.tar.gz.sha256" -o "$work/nsh-linux-x86_64.tar.gz.sha256"
+          (cd "$work" && sha256sum -c nsh-linux-x86_64.tar.gz.sha256)
+          mkdir -p ~/.nsh-dist
+          tar -xzf "$work/nsh-linux-x86_64.tar.gz" -C ~/.nsh-dist
+          ~/.nsh-dist/nsh/bin/nsh component add tui
+      - name: Put nsh on PATH
+        run: |
+          echo "$HOME/.nsh-dist/nsh/bin" >> "$GITHUB_PATH"
+          "$HOME/.nsh-dist/nsh/bin/nsh" --version
+      - run: nsh check
+        working-directory: apps/tui
+      - run: nsh test --junit nsh-test.xml
+        working-directory: apps/tui
+      - run: nsh test --target tui --junit nsh-test-tui.xml
+        working-directory: apps/tui
+      - name: Keep the nsh test reports and the TUI log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nsh-reports
+          path: |
+            apps/tui/nsh-test*.xml
+            apps/tui/.nsh/tui.log
+          if-no-files-found: ignore
