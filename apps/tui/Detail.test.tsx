@@ -424,6 +424,9 @@ test('loading, then a failure with ⏎ 重试, then the product', async () => {
   expect(pending).not.toContain('加入')
   await app.waitFor('text:✗ 商品加载失败')
   expect(app.texts()).toContain('重试')
+  // The contract's message, without its status and code.
+  expect(app.texts()).toContain('服务器内部错误')
+  expect(app.texts().some(text => text.includes('HTTP 500'))).toBe(false)
   expect(app.texts()).not.toContain('正在载入…')
   await app.keyboard.press('enter')
   await app.waitFor('text:已选 250g · 整豆 · 标准袋')

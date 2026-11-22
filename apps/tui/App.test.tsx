@@ -265,7 +265,9 @@ test('a backend that is down shows the error and ⏎ retries', async () => {
   const app = await start(100, 30, { transport: 'fixture:down' })
   await enterAsGuest(app, '商品列表 · 加载失败')
   expect(app.texts()).toContain('✗ 商品加载失败')
-  expect(app.texts()).toContain('网络错误：fixture:down · connection refused')
+  // The designed copy, never the transport's own message.
+  expect(app.texts()).toContain('连接服务器失败，请稍后重试')
+  expect(app.texts().some(text => text.includes('网络错误') || text.includes('connection refused'))).toBe(false)
   // The footer offers the retry; moving the cursor is not offered.
   expect(app.texts()).not.toContain('移动')
   await app.keyboard.press('enter')
