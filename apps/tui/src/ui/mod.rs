@@ -81,13 +81,8 @@ pub use wordmark::{wordmark, wordmark_block, wordmark_for, wordmark_line};
 use nsh_core::prelude::*;
 
 /// The app's root surface: the whole terminal, on the window colour, in the body text
-/// colour. With `COFFEE_UI_GALLERY=1` in the environment it shows the component gallery over
-/// everything (see [`gallery::requested`]): the way to look at the gallery in the real host.
+/// colour. (The real host mounts the component gallery as its root instead of the app when
+/// `COFFEE_UI_GALLERY=1` is set: see [`gallery::requested`].)
 pub fn surface_root() -> View {
-  let root = view().flex_1().bg(theme::bg).text_color(theme::fg);
-  if gallery::requested() {
-    root.child(gallery::over_app())
-  } else {
-    root
-  }
+  view().flex_1().bg(theme::bg).text_color(theme::fg)
 }

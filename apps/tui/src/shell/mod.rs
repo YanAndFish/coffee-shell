@@ -1,38 +1,62 @@
-//! The app shell: the window frame (header, the page stack or an open dialog, the toast
-//! line, the status bar), the key bindings of the command table, the session's start, and
-//! the too-small guard. No page logic.
+//! The app shell: the window frame around the pages, the key bindings of the command table,
+//! the session's start, and the too-small page. No page logic.
 //!
-//! Outlets (data wiring only; the overlays' look is drawn by the next wave):
+//! ```text
+//! row 0        system row: roast@tty: ~/shop — 160×50 · ! 演示环境 · 不是真实商店 · ● 公钥已识别 · 21:04
+//! rows 1–4     header (app pages; 2 rows at S and under 32 rows; the login page has none)
+//! …            the page stack, inside the content margins (at most 200 columns, centred)
+//! last row     status bar: ▐ 选购 BROWSE ▌ hints …  ● 鼠标   购物车 ¥426.00   ‹?› 帮助
+//! ```
 //!
-//! - the **dialog outlet** ([`outlets::dialog`]): while an overlay is open
-//!   (`UiStore::overlay`), it shows in place of the page stack — the help and the logout
-//!   confirmation from [`overlays`], the address and filter dialogs from their pages
-//!   (`pages::dialog`). The pages stay mounted underneath and keep their state.
-//! - the **toast outlet** ([`outlets::toast`]): `ToastStore::current`, dismissed after
-//!   `ToastStore::duration` (shorter while another waits).
+//! - **System row** (`ui::system_row`): the demo notice on every screen, the SSH key
+//!   indicator (`● 公钥已识别` / `○ 未提供公钥`) and the clock ([`clock`]).
+//! - **Header** ([`header`]): wordmark, tabs with the cart badge and the underline of the
+//!   current tab, the search entry, who is shopping.
+//! - **Content margins**: columns per `ui::content_margins` (XL 2, L/M 1, S 0) and the blank
+//!   row under the content at XL; the row above it is `ui::page`'s own.
+//! - **Status bar** ([`footer`]): `ui::mode_line` with the command table's hints.
+//! - **Outlets** ([`outlets`]): the dialog of the overlay open (over the page, which stays
+//!   drawn and mounted) and the toast (bottom right).
+//! - **Too small** ([`too_small`]): below 80×24 only that page shows; the frame stays
+//!   mounted (hidden), so the pages keep their state and enlarging the terminal brings them
+//!   back as they were. Keys do nothing meanwhile (the host's Ctrl+C still quits).
 //!
-//! Below 80×24 only the guard shows, but the frame stays mounted (hidden), so the pages
-//! keep their state and enlarging the terminal brings them back as they were. Keys do
-//! nothing meanwhile (nsh's own Ctrl+C still quits).
+//! Keys: every keystroke of the command table is bound once ([`bind_keys`]); a key runs the
+//! first command active in the context now and enabled (keymap.md's order: overlay → text
+//! field → submitting → page). `Esc`, `⏎`, `Tab` and `Shift+Tab` are bound
+//! `When::Always`, so they reach the table from a text field too (nsh leaves every
+//! non-character key to a focused field otherwise); letters and digits are bound
+//! `When::Auto` and type into a field. Clicks on a status-bar hint or a tab run the same
+//! command.
 
-mod footer;
-mod header;
+pub mod clock;
+pub mod footer;
+pub mod header;
 pub mod outlets;
 pub mod overlays;
-mod too_small;
+pub mod too_small;
 
 use nsh_core::{keymap::When, prelude::*};
 
 use crate::{
   api::{ApiFailure, ErrorCode},
   commands, pages,
-  router::Route,
+  router::{Page, Route},
   stores::{Stores, actions},
-  ui::{self, Layout, layout},
+  ui::{self, Bp, Layout, layout},
 };
 
-/// The demo notice the status bar always shows.
-pub const DEMO_NOTICE: &str = "演示环境 · 不是真实商店";
+/// The demo notice the system row always shows.
+pub const DEMO_NOTICE: &str = ui::DEMO_NOTICE;
+
+/// Keystrokes bound `When::Always`: they reach the command table from a text field too.
+pub const ALWAYS: &[&str] = &["escape", "enter", "tab", "shift+tab"];
+
+/// The blank rows under the content at `bp` (responsive.md: XL 1, else 0; none under 32
+/// rows). The row above the content is the page's own (`ui::page`).
+pub fn bottom_margin(bp: Bp, short: bool) -> u16 {
+  u16::from(bp == Bp::Xl && !short)
+}
 
 /// Binds every keystroke of the command table once: a key runs the first command active
 /// in the context now and enabled; it does nothing while the terminal is too small.
@@ -40,11 +64,10 @@ fn bind_keys(stores: Stores, layout: Layout) {
   for binding in commands::bindings() {
     // A held key repeats (holding `j` walks the list). Terminals without the kitty
     // protocol report no releases, so without `repeat` a second press of the same key
-    // would read as a repeat of the first. A stroke some command takes while typing (`⏎`,
-    // `Esc`) fires in text fields too; the others are the field's.
+    // would read as a repeat of the first.
     let options = KeyOptions {
       repeat: true,
-      when: if binding.in_text {
+      when: if binding.in_text || ALWAYS.contains(&binding.stroke) {
         When::Always
       } else {
         When::Auto
@@ -80,12 +103,25 @@ fn expire_toasts(stores: Stores) {
   });
 }
 
+/// The focus trap of the dialogs without fields (help, logout, the S filter): Tab goes on
+/// to nsh (it moves the focus), which may land in a text field of the page under the
+/// dialog; that field gives the keys straight back, so the dialog's keys keep working.
+fn trap_focus(stores: Stores) {
+  effect(move || {
+    let open = stores.ui.overlay();
+    if open.is_some_and(|overlay| !overlay.has_fields()) && stores.ui.typing() {
+      untracked(|| stores.ui.leave_field());
+    }
+  });
+}
+
 /// The shell. Call it once, in the root, after the stores and the layout are provided.
 pub fn shell() -> impl IntoElement {
   let stores = Stores::get();
   let layout = Layout::get();
   bind_keys(stores, layout);
   expire_toasts(stores);
+  trap_focus(stores);
   // The connection's start: resume a remembered key's session (once).
   effect(move || untracked(|| actions::start(&stores)));
   // A store saw the member session end: back to the login page (`登录已失效`).
@@ -97,6 +133,16 @@ pub fn shell() -> impl IntoElement {
       });
     }
   });
+  let time = clock::clock();
+  let on_login = computed(move || stores.page() == Page::Login);
+  let margins = computed(move || {
+    let viewport = layout.viewport();
+    let bp = viewport.bp();
+    (
+      ui::content_margins(bp).0,
+      bottom_margin(bp, viewport.short()),
+    )
+  });
 
   let pages = ui::page_stack().child(each(
     move || stores.router.routes(),
@@ -107,30 +153,75 @@ pub fn shell() -> impl IntoElement {
         .on_dismiss(move || stores.router.truncate(depth.get_untracked()))
     },
   ));
+  let side = move || layout::hspace(margins.get().0);
 
   let content = view()
     .flex_1()
+    .min_h(px(0.0))
     .w_full()
     .max_w(layout::cols(layout::MAX_CONTENT_COLS))
-    .px(layout::cols(1))
+    .flex_row()
+    .child(dynamic(side))
     .child(
       view()
         .flex_1()
-        .style_when(move || stores.ui.overlay().is_some(), |s| s.hidden())
-        .child(pages),
+        .min_w(px(0.0))
+        .child(pages)
+        .child(outlets::dialog(stores)),
     )
-    .child(outlets::dialog(stores));
+    .child(dynamic(side));
 
   let frame = view()
     .flex_1()
     .style_when(move || layout.too_small(), |s| s.hidden())
-    .child(header::header(stores, layout))
-    .child(view().flex_1().min_h(px(0.0)).items_center().child(content))
-    .child(outlets::toast(stores))
+    .child(ui::system_row(
+      move || stores.session.has_key(),
+      move || time.get(),
+    ))
+    .child(
+      view()
+        .flex_1()
+        .min_h(px(0.0))
+        .items_center()
+        .child(when(
+          move || !on_login.get(),
+          move || {
+            view()
+              .flex_none()
+              .w_full()
+              .max_w(layout::cols(layout::MAX_CONTENT_COLS))
+              .child(header::header(stores, layout))
+          },
+        ))
+        .child(content)
+        .child(dynamic(move || layout::vspace(margins.get().1))),
+    )
     .child(footer::footer(stores, layout));
 
-  ui::surface_root().child(frame).child(when(
-    move || layout.too_small(),
-    move || too_small::too_small(layout),
-  ))
+  ui::surface_root()
+    .child(frame)
+    .child(outlets::toast(stores, layout))
+    .child(when(
+      move || layout.too_small(),
+      move || too_small::too_small(layout),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn the_keys_of_fields_and_dialogs_are_bound_always() {
+    let bindings = commands::bindings();
+    for stroke in ["escape", "enter", "tab"] {
+      assert!(
+        bindings.iter().any(|b| b.stroke == stroke),
+        "{stroke} is bound"
+      );
+    }
+    assert_eq!(bottom_margin(Bp::Xl, false), 1);
+    assert_eq!(bottom_margin(Bp::Xl, true), 0);
+    assert_eq!(bottom_margin(Bp::M, false), 0);
+  }
 }
