@@ -6,10 +6,12 @@
 // list's second row: 26 in stock, 1kg sold out) and `geisha` (波奎特 瑰夏, the fourth: 6 in
 // stock, 500g and 1kg sold out). The loading and error states use a backend URL whose
 // requests the test answers itself (`network`), so it decides when and how they answer.
-import { expect, open, test } from 'nsh/test'
+import type { App, Cell, Start } from './testkit'
+import { expect, test } from 'nsh/test'
 
 import pinkb from '../../packages/contract/fixtures/v1/catalog/product-pinkb.json' with { type: 'json' }
 import products from '../../packages/contract/fixtures/v1/products.json' with { type: 'json' }
+import { enterAsGuest, isWide, start as open, rowsOf, screenCells, screenRows, shows, waitForPart } from './testkit'
 
 const SIZES: [number, number][] = [
   [160, 50],
@@ -18,71 +20,9 @@ const SIZES: [number, number][] = [
   [80, 24],
 ]
 
-function cells(cols: number, rows: number) {
-  return { width: cols * 8, height: rows * 16 }
-}
-
-type Network = NonNullable<Parameters<typeof open>[1]>['network']
-
-function start(cols: number, rows: number, transport = 'fixture:', network?: Network) {
-  return open('.', {
-    ...cells(cols, rows),
-    platform: 'linux',
-    storage: { 'coffee.transport': transport },
-    ...(network
-      ? { network }
-      : {}),
-  })
-}
-
-type App = Awaited<ReturnType<typeof start>>
-
-const WIDE_RANGES: [number, number][] = [
-  [0x2E80, 0xA4CF],
-  [0xAC00, 0xD7A3],
-  [0xF900, 0xFAFF],
-  [0xFE30, 0xFE4F],
-  [0xFF00, 0xFF60],
-  [0xFFE0, 0xFFE6],
-]
-
-function isWide(symbol: string) {
-  const code = symbol.codePointAt(0)
-  return code !== undefined && WIDE_RANGES.some(([from, to]) => code >= from && code <= to)
-}
-
-interface Cell { symbol: string, fg: string, bg: string, modifiers: string[] }
-
-/** The in-memory terminal's cells, row by row; `null` headless, where nothing is drawn. */
-async function screenCells(app: App): Promise<Cell[][] | null> {
-  let bytes: Uint8Array
-  try {
-    bytes = await app.screenshot()
-  }
-  catch {
-    return null
-  }
-  if (bytes.length === 0)
-    return null
-  return (JSON.parse(new TextDecoder().decode(bytes)) as { rows: Cell[][] }).rows
-}
-
-function rowsOf(rows: Cell[][]) {
-  return rows.map((row) => {
-    let line = ''
-    for (let i = 0; i < row.length; i++) {
-      line += row[i].symbol
-      if (isWide(row[i].symbol))
-        i++
-    }
-    return line
-  })
-}
-
-/** The terminal's rows as text (wide characters' second cells dropped); `null` headless. */
-async function screenRows(app: App): Promise<string[] | null> {
-  const rows = await screenCells(app)
-  return rows && rowsOf(rows)
+/** The app at `cols`×`rows` on `transport` (a fixture scenario, or a stubbed backend). */
+function start(cols: number, rows: number, transport = 'fixture:', network?: Start['network']) {
+  return open(cols, rows, { transport, network })
 }
 
 /** The cells of the first row holding `text`, from where it starts. */
@@ -105,14 +45,6 @@ function cellsAt(rows: Cell[][], text: string): Cell[] | null {
   return null
 }
 
-function showsPart(app: App, part: string) {
-  return app.texts().some(text => text.includes(part))
-}
-
-async function waitForPart(app: App, part: string) {
-  await app.waitUntil(() => showsPart(app, part))
-}
-
 /** Whether `line` has the radar's side label `香气` followed by braille (the radar drawn). */
 function hasRadar(line: string) {
   const at = line.indexOf('香气 ')
@@ -133,11 +65,9 @@ function expectParts(app: App, parts: string[]) {
   }
 }
 
-/** Login page → `g` (guest) → the list → row `row` (0-based) → its detail page. */
+/** Login page → guest (Esc, `g`) → the list → row `row` (0-based) → its detail page. */
 async function openProduct(app: App, row: number, origin: string) {
-  await app.waitFor('text:登录 · SIGN IN')
-  await app.keyboard.press('g')
-  await app.waitFor('text:以访客身份浏览')
+  await enterAsGuest(app, '以访客身份浏览')
   for (let i = 0; i < row; i++)
     await app.keyboard.press('j')
   await app.keyboard.press('enter')
@@ -384,7 +314,7 @@ test('a low-stock product: 仅剩 6 份, the quantity stops at 6', async () => {
   for (let i = 0; i < 9; i++)
     await app.keyboard.press('shift+=')
   expectParts(app, ['6 × ¥'])
-  expect(showsPart(app, '7 × ¥')).toBe(false)
+  expect(shows(app, '7 × ¥')).toBe(false)
   // Moving the focus to the quantity scrolls it into view (one scroll owner).
   await app.keyboard.press('j')
   await app.keyboard.press('j')
@@ -423,7 +353,7 @@ test('Esc and Backspace go back to the list, its cursor kept', async () => {
   await openGeisha(app)
   await app.keyboard.press('escape')
   await app.waitUntil(() => !app.texts().includes('规格 SKU'))
-  expect(app.texts()).toContain('选购 BROWSE')
+  expect(shows(app, '选购 BROWSE')).toBe(true)
   // The cursor is still on 瑰夏: ⏎ opens it again.
   await app.keyboard.press('enter')
   await waitForPart(app, '选购 / 巴拿马 / ')
@@ -435,7 +365,7 @@ test('Esc and Backspace go back to the list, its cursor kept', async () => {
   await app.waitFor('text:规格 SKU')
   await app.press('label:← Esc 返回')
   await app.waitUntil(() => !app.texts().includes('规格 SKU'))
-  expect(app.texts()).toContain('选购 BROWSE')
+  expect(shows(app, '选购 BROWSE')).toBe(true)
 })
 
 const API = 'http://127.0.0.1:3999'
@@ -465,9 +395,7 @@ test('loading, then a failure with ⏎ 重试, then the product', async () => {
       })
     },
   })
-  await app.waitFor('text:登录 · SIGN IN')
-  await app.keyboard.press('g')
-  await app.waitFor('text:以访客身份浏览')
+  await enterAsGuest(app, '以访客身份浏览')
   await app.keyboard.press('j')
   await app.keyboard.press('enter')
   // While it loaded: the spinner line, the SKU panel's legend alone, no actions.
@@ -493,9 +421,7 @@ test('80×24: a failure fills the one column; Esc goes back', async () => {
       ? { error: 'connection refused' }
       : { body: products },
   })
-  await app.waitFor('text:登录 · SIGN IN')
-  await app.keyboard.press('g')
-  await app.waitFor('text:以访客身份浏览')
+  await enterAsGuest(app, '以访客身份浏览')
   await app.keyboard.press('enter')
   await app.waitFor('text:✗ 商品加载失败')
   expect(app.texts()).not.toContain('规格 SKU')

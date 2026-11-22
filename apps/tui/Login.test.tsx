@@ -3,48 +3,11 @@
 // explicit size, on the contract fixtures (storage `coffee.transport`, `coffee.fingerprint`),
 // or on a stubbed backend where a test needs a slow or failing answer. `nsh test` runs it
 // headless (texts and values); `nsh test --target tui` also checks the terminal's cells.
-import type { OpenOptions } from 'nsh/test'
+import type { App, Cell } from './testkit'
 import { expect, open, test } from 'nsh/test'
+import { cells, screenCells, shows, start } from './testkit'
 
-const KEY = 'SHA256:fixtureKeyFixtureKeyFixtureKeyFixtureKey0'
 const LIVE = 'http://login.test'
-
-interface Start { transport?: string, key?: boolean, network?: OpenOptions['network'] }
-
-function start(cols: number, rows: number, { transport, key, network }: Start = {}) {
-  const storage: Record<string, string> = {}
-  if (transport)
-    storage['coffee.transport'] = transport
-  if (key)
-    storage['coffee.fingerprint'] = KEY
-  return open('.', {
-    width: cols * 8,
-    height: rows * 16,
-    platform: 'linux',
-    storage,
-    ...(network
-      ? { network }
-      : {}),
-  })
-}
-
-type App = Awaited<ReturnType<typeof start>>
-
-interface Cell { symbol: string, fg: string, bg: string, modifiers: string[] }
-
-/** The in-memory terminal's cells, row by row; `null` headless, where nothing is drawn. */
-async function screenCells(app: App): Promise<Cell[][] | null> {
-  let bytes: Uint8Array
-  try {
-    bytes = await app.screenshot()
-  }
-  catch {
-    return null
-  }
-  if (bytes.length === 0)
-    return null
-  return (JSON.parse(new TextDecoder().decode(bytes)) as { rows: Cell[][] }).rows
-}
 
 /** Each row as one string of one symbol per cell (a wide character's second cell is its own). */
 function cellRows(rows: Cell[][]) {
@@ -59,10 +22,6 @@ function find(rows: string[][], part: string): [number, number] | null {
       return [y, at]
   }
   return null
-}
-
-function shows(app: App, part: string) {
-  return app.texts().some(text => text.includes(part))
 }
 
 async function ready(app: App, legend = '登录 · SIGN IN') {
@@ -97,9 +56,9 @@ test('160×50: brand column with the block wordmark and cup, the full card at co
     '注册新账号 →',
     'Tab 切换输入 · ⏎ 提交 · ? 查看全部快捷键',
     '! 演示环境 · 请勿使用真实密码',
-    '登录 LOGIN',
   ])
     expect(texts).toContain(part)
+  expect(shows(app, '登录 LOGIN')).toBe(true)
   expect(texts).toContain('[ ]')
   const cells = await screenCells(app)
   if (!cells)
@@ -240,7 +199,7 @@ test('Shift+Tab from 用户名 goes round to 注册新账号 →; ⏎ there swit
   await app.waitUntil(() => !app.texts().includes('离开输入'))
   await app.keyboard.press('enter')
   await ready(app, '注册 · SIGN UP')
-  expect(app.texts()).toContain('注册 SIGN UP')
+  expect(shows(app, '注册 SIGN UP')).toBe(true)
 })
 
 test('without a key 记住我 is disabled with its reason, and Tab passes it', async () => {
@@ -325,9 +284,9 @@ test('register: the card switches in place, keeps the username, and signs up', a
     '至少 6 位',
     '注册并登录',
     '← 已有账号，去登录',
-    '注册 SIGN UP',
   ])
     expect(texts).toContain(part)
+  expect(shows(app, '注册 SIGN UP')).toBe(true)
   expect(app.value('label:用户名')).toBe('bean_lover')
   expect(app.value('label:密码')).toBe('')
   await app.type('label:密码', 'secret1')
@@ -352,29 +311,58 @@ test('register: a taken username says so; Esc (no focus) goes back to login', as
   await app.waitUntil(() => !app.texts().includes('离开输入'))
   await app.keyboard.press('escape')
   await ready(app)
-  expect(app.texts()).toContain('登录 LOGIN')
+  expect(shows(app, '登录 LOGIN')).toBe(true)
   expect(app.value('label:用户名')).toBe('林晓')
 })
 
-test('submitting: the progress block replaces the button, keys wait, a network error keeps the input', async () => {
+test('submitting: the progress block replaces the button, only ? works, then the catalog', async () => {
+  // `fixture:slow` answers after 3 s on a manual clock: the request waits while the test looks.
+  const app = await open('.', {
+    ...cells(160, 50),
+    platform: 'linux',
+    clock: {},
+    storage: { 'coffee.transport': 'fixture:slow' },
+  })
+  const clock = app.clock!
+  for (let i = 0; i < 40 && !app.texts().includes('离开输入'); i++)
+    await clock.runFor(50)
+  await app.type('label:用户名', '林晓')
+  await app.type('label:密码', 'secret1')
+  await app.keyboard.press('enter')
+  // The block shows once the submit takes longer than 150 ms.
+  await clock.runFor(200)
+  expect(app.texts()).toContain('握手 · 建立安全连接')
+  expect(app.texts()).not.toContain('登录')
+  // Everything but ? waits (K2): g neither browses nor types, Esc and Tab move nothing.
+  for (const key of ['g', 'escape', 'tab', '2']) {
+    await app.keyboard.press(key)
+    expect(app.value('label:用户名')).toBe('林晓')
+    expect(shows(app, '以访客身份浏览')).toBe(false)
+    expect(app.texts()).toContain('握手 · 建立安全连接')
+  }
+  await app.keyboard.press('shift+/')
+  expect(app.texts()).toContain('快捷键 KEYMAP')
+  await app.keyboard.press('escape')
+  expect(app.texts()).not.toContain('快捷键 KEYMAP')
+  // The answers land (the login, then the cart and the book, 3 s each): on the catalog.
+  for (let i = 0; i < 120 && !shows(app, '欢迎回来，林晓'); i++)
+    await clock.runFor(250)
+  expect(shows(app, '欢迎回来，林晓')).toBe(true)
+})
+
+test('a network error ends the submit: the input stays, ⏎ retries', async () => {
   const app = await start(160, 50, {
     transport: LIVE,
     network: {
-      [`POST ${LIVE}/*`]: { error: 'connection refused', delay: 1500 },
+      [`POST ${LIVE}/*`]: { error: 'connection refused' },
     },
   })
   await ready(app)
   await app.type('label:用户名', '林晓')
   await app.type('label:密码', 'secret1')
   await app.keyboard.press('enter')
-  await app.waitFor('text:握手 · 建立安全连接')
-  expect(app.texts()).toContain('0%')
-  expect(app.texts()).not.toContain('登录')
-  // Everything but ? waits: g neither browses nor types.
-  await app.keyboard.press('g')
-  expect(app.value('label:用户名')).toBe('林晓')
-  expect(shows(app, '以访客身份浏览')).toBe(false)
   await app.waitFor('text:✗ 连接服务器失败，按 ⏎ 重试')
+  expect(app.value('label:用户名')).toBe('林晓')
   expect(app.value('label:密码')).toBe('secret1')
   expect(app.texts()).toContain('登录')
 })

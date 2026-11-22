@@ -3,71 +3,9 @@
 // `coffee.fingerprint` gives the connection an SSH key. `nsh test` runs these headless
 // (texts and behaviour); `nsh test --target tui` runs them on the terminal host's in-memory
 // terminal, where the cell checks run too.
+import type { App } from './testkit'
 import { expect, open, test } from 'nsh/test'
-
-const KEY = 'SHA256:fixtureKeyFixtureKeyFixtureKeyFixtureKey0'
-
-interface Start { transport?: string, key?: boolean }
-
-function start(cols: number, rows: number, { transport, key }: Start = {}) {
-  const storage: Record<string, string> = {}
-  if (transport)
-    storage['coffee.transport'] = transport
-  if (key)
-    storage['coffee.fingerprint'] = KEY
-  return open('.', {
-    width: cols * 8,
-    height: rows * 16,
-    platform: 'linux',
-    storage,
-  })
-}
-
-type App = Awaited<ReturnType<typeof start>>
-
-interface Cell { symbol: string, fg: string, bg: string, modifiers: string[] }
-
-const WIDE_RANGES: [number, number][] = [
-  [0x2E80, 0xA4CF],
-  [0xAC00, 0xD7A3],
-  [0xF900, 0xFAFF],
-  [0xFE30, 0xFE4F],
-  [0xFF00, 0xFF60],
-  [0xFFE0, 0xFFE6],
-]
-
-function isWide(symbol: string) {
-  const code = symbol.codePointAt(0)
-  return code !== undefined && WIDE_RANGES.some(([from, to]) => code >= from && code <= to)
-}
-
-/** The in-memory terminal's cells, row by row; `null` headless, where nothing is drawn. */
-async function screenCells(app: App): Promise<Cell[][] | null> {
-  let bytes: Uint8Array
-  try {
-    bytes = await app.screenshot()
-  }
-  catch {
-    return null
-  }
-  if (bytes.length === 0)
-    return null
-  return (JSON.parse(new TextDecoder().decode(bytes)) as { rows: Cell[][] }).rows
-}
-
-/** The terminal's rows as text (wide characters' second cells dropped); `null` headless. */
-async function screenRows(app: App): Promise<string[] | null> {
-  const rows = await screenCells(app)
-  return rows && rows.map((row) => {
-    let line = ''
-    for (let i = 0; i < row.length; i++) {
-      line += row[i].symbol
-      if (isWide(row[i].symbol))
-        i++
-    }
-    return line
-  })
-}
+import { cells, enterAsGuest, isWide, KEY, logInAsMember, loginReady, screenRows, shows, start, waitForPart } from './testkit'
 
 /** Cells of `line` up to (not including) the first `part` in it; -1 when absent. */
 function cellOf(line: string, part: string) {
@@ -83,14 +21,6 @@ function cellOf(line: string, part: string) {
   return cells
 }
 
-function showsPart(app: App, part: string) {
-  return app.texts().some(text => text.includes(part))
-}
-
-async function waitForPart(app: App, part: string) {
-  await app.waitUntil(() => showsPart(app, part))
-}
-
 /** A remembered member (`林晓`, four orders), on the profile. */
 async function memberProfile(cols: number, rows: number) {
   const app = await start(cols, rows, { transport: 'fixture:member', key: true })
@@ -103,10 +33,8 @@ async function memberProfile(cols: number, rows: number) {
 
 /** Logs in from the login page with the form, then opens the profile. */
 async function loginProfile(app: App) {
-  await app.waitFor('text:登录 · SIGN IN')
-  await app.type('label:用户名', '林晓')
-  await app.type('label:密码', 'secret1')
-  await app.keyboard.press('enter')
+  await loginReady(app)
+  await logInAsMember(app)
   await waitForPart(app, '商品列表 · ')
   await app.keyboard.press('4')
   await app.waitFor('text:个人信息 ACCOUNT')
@@ -145,14 +73,14 @@ test('160×50: the design layout, every block from the server', async () => {
     '¥426.00',
     '11-22',
   ])
-    expect(showsPart(app, part)).toBe(true)
-  expect(showsPart(app, '干净甜感 · 悠长余韵 · 花香')).toBe(true)
-  expect(showsPart(app, '浅烘 / 中浅烘 · 手冲研磨 · 250g')).toBe(true)
-  expect(showsPart(app, '深烘 · 烟熏与草本调')).toBe(true)
+    expect(shows(app, part)).toBe(true)
+  expect(shows(app, '干净甜感 · 悠长余韵 · 花香')).toBe(true)
+  expect(shows(app, '浅烘 / 中浅烘 · 手冲研磨 · 250g')).toBe(true)
+  expect(shows(app, '深烘 · 烟熏与草本调')).toBe(true)
   // Member footer: m o q 1–4 /.
   for (const hint of ['动画开关', '鼠标追踪', '退出登录', '切换页面', '搜索'])
     expect(texts).toContain(hint)
-  expect(showsPart(app, '我的 PROFILE')).toBe(true)
+  expect(shows(app, '我的 PROFILE')).toBe(true)
 
   const rows = await screenRows(app)
   if (rows) {
@@ -197,8 +125,8 @@ test('160×50: the design layout, every block from the server', async () => {
 
 test('130×40: two narrower columns, the radar kept', async () => {
   const app = await memberProfile(130, 40)
-  expect(showsPart(app, '按画像推荐')).toBe(true)
-  expect(showsPart(app, '● 已记住当前公钥 · 至 12-22')).toBe(true)
+  expect(shows(app, '按画像推荐')).toBe(true)
+  expect(shows(app, '● 已记住当前公钥 · 至 12-22')).toBe(true)
   const rows = await screenRows(app)
   if (rows) {
     const account = rows.findIndex(row => row.includes('个人信息 ACCOUNT'))
@@ -213,9 +141,9 @@ test('130×40: two narrower columns, the radar kept', async () => {
 
 test('100×30: two columns, meters instead of the radar, the avatar a pill', async () => {
   const app = await memberProfile(100, 30)
-  expect(showsPart(app, '甜感 ')).toBe(true)
-  expect(showsPart(app, '8/10')).toBe(true)
-  expect(showsPart(app, '● 运输中')).toBe(true)
+  expect(shows(app, '甜感 ')).toBe(true)
+  expect(shows(app, '8/10')).toBe(true)
+  expect(shows(app, '● 运输中')).toBe(true)
   const rows = await screenRows(app)
   if (rows) {
     expect(rows.length).toBe(30)
@@ -246,8 +174,8 @@ test('80×24: one scrolling column, the S footer', async () => {
     expect(rows.some(row => row.includes('界面动画 m  蒸汽、加载指示与进度条') && row.includes('[ ■ 开 ]'))).toBe(true)
   }
   // The taste meters and the orders further down (one scroll view: everything is laid out).
-  expect(showsPart(app, '8/10')).toBe(true)
-  expect(showsPart(app, '最近订单 ORDERS')).toBe(true)
+  expect(shows(app, '8/10')).toBe(true)
+  expect(shows(app, '最近订单 ORDERS')).toBe(true)
 })
 
 // --- States --------------------------------------------------------------------------
@@ -258,8 +186,9 @@ test('a new member: no orders, no taste yet', async () => {
   await app.waitFor('text:还没有订单')
   expect(app.texts()).toContain('去挑豆子')
   expect(app.texts()).toContain('下单后生成你的口味画像')
-  expect(showsPart(app, '○ 未记住当前公钥')).toBe(true)
-  expect(showsPart(app, '按画像推荐')).toBe(false)
+  // This connection has no key (the fixture answers `profile-no-key.json`).
+  expect(shows(app, '○ 本次连接没有公钥')).toBe(true)
+  expect(shows(app, '按画像推荐')).toBe(false)
   // `1 去挑豆子`: the key goes to the catalog.
   await app.keyboard.press('1')
   await app.waitFor('text:商品列表 · 0 款 · 推荐')
@@ -269,7 +198,7 @@ test('a member without an SSH key', async () => {
   const app = await start(130, 40)
   await loginProfile(app)
   await waitForPart(app, '○ 本次连接没有公钥')
-  expect(showsPart(app, '● 已记住当前公钥')).toBe(false)
+  expect(shows(app, '● 已记住当前公钥')).toBe(false)
 })
 
 test('a key that is remembered shows its expiry', async () => {
@@ -283,13 +212,13 @@ test('m and o toggle the settings with their toasts', async () => {
   expect(app.texts().filter(t => t === '■ 开').length).toBe(2)
   await app.keyboard.press('m')
   await app.waitFor('text:界面动画已关闭')
-  expect(showsPart(app, '所有画面即时切换')).toBe(true)
+  expect(shows(app, '所有画面即时切换')).toBe(true)
   await app.waitUntil(() => app.texts().includes('□ 关'))
   await app.keyboard.press('m')
   await app.waitFor('text:界面动画已开启')
   await app.keyboard.press('o')
   await app.waitFor('text:鼠标追踪已关闭')
-  expect(showsPart(app, '点击仍然可用')).toBe(true)
+  expect(shows(app, '点击仍然可用')).toBe(true)
   await app.waitUntil(() => app.texts().filter(t => t === '□ 关').length === 1)
   await app.keyboard.press('o')
   await app.waitFor('text:鼠标追踪已开启')
@@ -300,7 +229,7 @@ test('q asks the shell for the logout confirmation; Esc keeps the profile', asyn
   const app = await memberProfile(160, 50)
   await app.keyboard.press('q')
   await app.waitFor('text:退出登录 LOGOUT')
-  expect(app.texts()).toContain('确认 CONFIRM')
+  expect(shows(app, '确认 CONFIRM')).toBe(true)
   await app.keyboard.press('escape')
   await app.waitFor('text:个人信息 ACCOUNT')
   // The button asks the same (the first of the two: the page's, then the status bar's).
@@ -335,12 +264,10 @@ test('a click on a recommendation opens its product', async () => {
 
 test('a guest sees the card, ⏎ goes to the login and comes back', async () => {
   const app = await start(160, 50)
-  await app.waitFor('text:登录 · SIGN IN')
-  await app.keyboard.press('g')
-  await app.waitFor('text:商品列表 · 8 款 · 推荐')
+  await enterAsGuest(app)
   await app.keyboard.press('4')
   await app.waitFor('text:你正在以访客身份浏览')
-  expect(app.texts()).toContain('我的 PROFILE')
+  expect(shows(app, '我的 PROFILE')).toBe(true)
   expect(app.texts()).toContain('登录后可以查看订单、管理地址本，并生成你的口味画像。')
   expect(app.texts()).not.toContain('个人信息 ACCOUNT')
   // The guest footer leads with ⏎ 去登录 and has no q.
@@ -356,31 +283,28 @@ test('a guest sees the card, ⏎ goes to the login and comes back', async () => 
   await app.keyboard.press('o')
   await app.waitFor('text:鼠标追踪已关闭')
   await app.keyboard.press('enter')
-  await app.waitFor('text:登录 · SIGN IN')
-  await app.type('label:用户名', '林晓')
-  await app.type('label:密码', 'secret1')
-  await app.keyboard.press('enter')
+  await loginReady(app)
+  await logInAsMember(app)
   await app.waitFor('text:个人信息 ACCOUNT')
 })
 
 test('loading shows the spinner line until the orders arrive', async () => {
   // A manual clock: the fixtures answer after a timer, which runs only as the test says.
   const app = await open('.', {
-    width: 160 * 8,
-    height: 50 * 16,
+    ...cells(160, 50),
     platform: 'linux',
     clock: {},
     storage: { 'coffee.transport': 'fixture:member', 'coffee.fingerprint': KEY },
   })
   const clock = app.clock!
-  for (let i = 0; i < 20 && !showsPart(app, '商品列表 · 8 款'); i++)
+  for (let i = 0; i < 20 && !shows(app, '商品列表 · 8 款'); i++)
     await clock.runFor(50)
   await app.keyboard.press('4')
   expect(app.texts()).toContain('个人信息 ACCOUNT')
-  expect(showsPart(app, '正在载入订单…')).toBe(true)
-  expect(showsPart(app, '正在载入…')).toBe(true)
-  expect(showsPart(app, 'RT2611220417')).toBe(false)
+  expect(shows(app, '正在载入订单…')).toBe(true)
+  expect(shows(app, '正在载入…')).toBe(true)
+  expect(shows(app, 'RT2611220417')).toBe(false)
   await clock.runFor(50)
-  expect(showsPart(app, 'RT2611220417')).toBe(true)
-  expect(showsPart(app, '正在载入')).toBe(false)
+  expect(shows(app, 'RT2611220417')).toBe(true)
+  expect(shows(app, '正在载入')).toBe(false)
 })

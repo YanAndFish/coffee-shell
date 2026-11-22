@@ -6,70 +6,13 @@
 // The fixture member (`fixture:member` with a key) resumes at once and has three addresses;
 // every change answers its static fixture (a new address is always `周一 · 北京市 海淀区`,
 // a delete always leaves cards 2 and 3, a new default is always card 3).
-import { expect, open, test } from 'nsh/test'
-
-const KEY = 'SHA256:fixtureKeyFixtureKeyFixtureKeyFixtureKey0'
-
-interface Start { transport?: string, key?: boolean }
-
-function start(cols: number, rows: number, { transport, key }: Start = {}) {
-  const storage: Record<string, string> = {}
-  if (transport)
-    storage['coffee.transport'] = transport
-  if (key)
-    storage['coffee.fingerprint'] = KEY
-  return open('.', {
-    width: cols * 8,
-    height: rows * 16,
-    platform: 'linux',
-    storage,
-  })
-}
-
-type App = Awaited<ReturnType<typeof start>>
-
-/** Code points that take two cells (their second cell is blank in the screenshot). */
-function isWide(symbol: string) {
-  const code = symbol.codePointAt(0) ?? 0
-  return (code >= 0x2E80 && code <= 0xA4CF) || (code >= 0xAC00 && code <= 0xD7A3)
-    || (code >= 0xF900 && code <= 0xFAFF) || (code >= 0xFE30 && code <= 0xFE4F)
-    || (code >= 0xFF00 && code <= 0xFF60) || (code >= 0xFFE0 && code <= 0xFFE6)
-}
-
-/** The terminal's rows as text; `null` headless, where nothing is drawn. */
-async function screenRows(app: App): Promise<string[] | null> {
-  let bytes: Uint8Array
-  try {
-    bytes = await app.screenshot()
-  }
-  catch {
-    return null
-  }
-  if (bytes.length === 0)
-    return null
-  const { rows } = JSON.parse(new TextDecoder().decode(bytes)) as { rows: { symbol: string }[][] }
-  return rows.map((row) => {
-    let line = ''
-    for (let i = 0; i < row.length; i++) {
-      line += row[i].symbol
-      if (isWide(row[i].symbol))
-        i++
-    }
-    return line
-  })
-}
-
-function shows(app: App, part: string) {
-  return app.texts().some(text => text.includes(part))
-}
+import type { App } from './testkit'
+import { expect, test } from 'nsh/test'
+import { enterAsGuest, logInAsMember, loginReady, screenRows, shows, start, waitForPart } from './testkit'
 
 /** How many texts on screen are exactly `label` (a card button's; the footer says `默认`). */
 function buttons(app: App, label: string) {
   return app.texts().filter(text => text === label).length
-}
-
-async function waitForPart(app: App, part: string) {
-  await app.waitUntil(() => shows(app, part))
 }
 
 /** The member's address book: resumed by the key, then `3`. */
@@ -123,7 +66,7 @@ test('160×50: ←↑↓→ move on the grid; e edits the card with its full pho
   await app.keyboard.press('right')
   await app.keyboard.press('e')
   await app.waitFor('text:编辑地址 EDIT')
-  expect(app.texts()).toContain('编辑 INSERT')
+  expect(shows(app, '编辑 INSERT')).toBe(true)
   expect(app.value('label:收货人')).toBe('林晓')
   expect(app.value('label:手机号')).toBe('13800005521')
   expect(app.value('label:所在地区')).toBe('上海市 静安区')
@@ -304,10 +247,8 @@ test('80×24: one column of compact cards; the stacked dialog fits; it scrolls t
 
 test('an empty book: 0 条, 未指定, only the add card; ⏎ adds with 设为默认 checked', async () => {
   const app = await start(100, 30, { transport: 'fixture:empty' })
-  await app.waitUntil(() => app.count('label:用户名') > 0)
-  await app.type('label:用户名', '林晓')
-  await app.type('label:密码', 'secret1')
-  await app.keyboard.press('enter')
+  await loginReady(app)
+  await logInAsMember(app)
   await waitForPart(app, '欢迎回来，林晓')
   await app.keyboard.press('3')
   await waitForPart(app, '地址本 · 0 条')
@@ -321,9 +262,7 @@ test('an empty book: 0 条, 未指定, only the add card; ⏎ adds with 设为�
 
 test('a guest sees the login card; ⏎ goes to the login page', async () => {
   const app = await start(160, 50)
-  await app.waitUntil(() => app.count('label:用户名') > 0)
-  await app.keyboard.press('g')
-  await app.waitUntil(() => app.count('label:用户名') === 0)
+  await enterAsGuest(app)
   await app.keyboard.press('3')
   await app.waitFor('text:你正在以访客身份浏览')
   expect(app.texts()).toContain('地址本 ADDRESS')

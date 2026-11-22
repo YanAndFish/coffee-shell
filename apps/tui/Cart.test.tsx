@@ -7,66 +7,9 @@
 // Fixture carts are static (an add or a change answers a fixed cart): what a key does is
 // shown by the answer it gets (`cart-partly-selected.json`, `none-selected.json`,
 // `removed.json`, `added.json`, `cart-coupon.json`, `orders/placed.json`).
-import { expect, open, test } from 'nsh/test'
-
-const KEY = 'SHA256:fixtureKeyFixtureKeyFixtureKeyFixtureKey0'
-
-interface Start { transport?: string, key?: boolean }
-
-function start(cols: number, rows: number, { transport, key }: Start = {}) {
-  const storage: Record<string, string> = {}
-  if (transport)
-    storage['coffee.transport'] = transport
-  if (key)
-    storage['coffee.fingerprint'] = KEY
-  return open('.', {
-    width: cols * 8,
-    height: rows * 16,
-    platform: 'linux',
-    storage,
-  })
-}
-
-type App = Awaited<ReturnType<typeof start>>
-
-const WIDE_RANGES: [number, number][] = [
-  [0x2E80, 0xA4CF],
-  [0xAC00, 0xD7A3],
-  [0xF900, 0xFAFF],
-  [0xFE30, 0xFE4F],
-  [0xFF00, 0xFF60],
-  [0xFFE0, 0xFFE6],
-]
-
-function isWide(symbol: string) {
-  const code = symbol.codePointAt(0)
-  return code !== undefined && WIDE_RANGES.some(([from, to]) => code >= from && code <= to)
-}
-
-interface Cell { symbol: string, fg: string, bg: string, modifiers: string[] }
-
-/** The terminal's rows as text (wide characters' second cells dropped); `null` headless. */
-async function screenRows(app: App): Promise<string[] | null> {
-  let bytes: Uint8Array
-  try {
-    bytes = await app.screenshot()
-  }
-  catch {
-    return null
-  }
-  if (bytes.length === 0)
-    return null
-  const rows = (JSON.parse(new TextDecoder().decode(bytes)) as { rows: Cell[][] }).rows
-  return rows.map((row) => {
-    let line = ''
-    for (let i = 0; i < row.length; i++) {
-      line += row[i].symbol
-      if (isWide(row[i].symbol))
-        i++
-    }
-    return line
-  })
-}
+import type { App } from './testkit'
+import { expect, test } from 'nsh/test'
+import { enterAsGuest, logInAsMember, screenRows, shows, start, waitForPart } from './testkit'
 
 /** Expects one screen row to hold every one of `parts` (on the terminal; headless draws no cells). */
 async function expectRow(app: App, ...parts: string[]) {
@@ -76,14 +19,6 @@ async function expectRow(app: App, ...parts: string[]) {
   const found = rows.find(row => parts.every(part => row.includes(part)))
   if (!found)
     throw new Error(`no row holds ${JSON.stringify(parts)}:\n${rows.join('\n')}`)
-}
-
-function shows(app: App, part: string) {
-  return app.texts().some(text => text.includes(part))
-}
-
-async function waitForPart(app: App, part: string) {
-  await app.waitUntil(() => shows(app, part))
 }
 
 /** A remembered member, on the cart page. */
@@ -99,11 +34,9 @@ async function memberCart(cols: number, rows: number) {
 /** A guest, on the catalog. */
 async function guest(cols: number, rows: number, transport?: string) {
   const app = await start(cols, rows, { transport })
-  await app.waitFor('text:登录 · SIGN IN')
-  await app.keyboard.press('g')
-  await app.waitFor(transport === 'fixture:empty'
-    ? 'text:商品列表 · 0 款 · 推荐'
-    : 'text:商品列表 · 8 款 · 推荐')
+  await enterAsGuest(app, transport === 'fixture:empty'
+    ? '商品列表 · 0 款 · 推荐'
+    : '商品列表 · 8 款 · 推荐')
   return app
 }
 
@@ -306,9 +239,7 @@ test('checkout gate 1: a guest goes to log in, then back to the cart', async () 
   await app.keyboard.press('c')
   await app.waitFor('text:登录 · SIGN IN')
   await app.waitFor('text:结算前请先登录')
-  await app.type('label:用户名', '林晓')
-  await app.type('label:密码', 'secret1')
-  await app.keyboard.press('enter')
+  await logInAsMember(app)
   await app.waitFor('text:购物车 · 3 件')
   await app.waitFor('text:收货地址')
   expect(app.texts()).toContain('天平路 88 弄 3 号 602 室')
@@ -413,8 +344,7 @@ test('the receipt at 130×40 and 100×30', async () => {
 
 test('a backend that fails: ✗ and ⏎ 重试', async () => {
   const app = await start(100, 30, { transport: 'fixture:error' })
-  await app.waitFor('text:登录 · SIGN IN')
-  await app.keyboard.press('g')
+  await enterAsGuest(app, '商品列表 · 加载失败')
   await app.keyboard.press('2')
   await app.waitFor('text:✗ 购物车加载失败')
   expect(app.texts()).toContain('重试')
