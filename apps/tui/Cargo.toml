@@ -13,3 +13,7 @@ path = "src/lib.rs"
 coffee-api.workspace = true
 nsh-core.workspace = true
 nsh-base.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Terminal cell widths: CJK takes two cells. The version nsh-platform-tui already uses.
+unicode-width = "0.2"
