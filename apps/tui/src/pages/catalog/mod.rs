@@ -101,8 +101,17 @@ fn lines(stores: Stores) -> Vec<Line> {
 pub fn render(_: &Route) -> Screen {
   let stores = Stores::get();
   let catalog = stores.catalog;
+  let ui_store = stores.ui;
   // The page's work: ask for the beans once it shows (the store keeps them after).
   effect(move || untracked(|| catalog.ensure_loaded()));
+  // The search box shows while it is asked for (`/`), focused, or holds text: a field
+  // always there would take the focus when the detail page above goes (nsh gives the
+  // revealed page's first field the focus), and with it the list's keys.
+  let searching = move || {
+    ui_store.focus_requested(SEARCH_FIELD)
+      || ui_store.focused_field() == Some(SEARCH_FIELD)
+      || !catalog.query().search.is_empty()
+  };
   ui::page(
     "选购 BROWSE",
     ui::panel(
@@ -116,13 +125,15 @@ pub fn render(_: &Route) -> Screen {
       },
       view()
         .flex_1()
-        .child(placeholder::field(
-          SEARCH_FIELD,
-          "/ 搜索",
-          move || catalog.query().search,
-          move |text| catalog.set_search(text),
-          false,
-        ))
+        .child(when(searching, move || {
+          placeholder::field(
+            SEARCH_FIELD,
+            "/ 搜索",
+            move || catalog.query().search,
+            move |text| catalog.set_search(text),
+            false,
+          )
+        }))
         .child(placeholder::lines(move || lines(stores))),
     ),
   )

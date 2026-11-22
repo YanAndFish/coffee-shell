@@ -60,7 +60,8 @@ fn bind_keys(stores: Stores, layout: Layout) {
         commands::resolve(&ctx, stroke, |command| (command.enabled)(&stores))
       });
       if let Some(command) = command {
-        (command.run)(&stores, stroke);
+        // One update for all a command changes (the route, a toast, an overlay).
+        batch(|| (command.run)(&stores, stroke));
       }
     });
   }

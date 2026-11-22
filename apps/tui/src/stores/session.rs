@@ -29,13 +29,14 @@ pub const TRANSPORT_OVERRIDE_KEY: &str = "coffee.transport";
 pub const FINGERPRINT_OVERRIDE_KEY: &str = "coffee.fingerprint";
 
 /// The transport, internal key and connection facts for `env`; with no env, `override_url`
-/// (from storage) or the contract fixtures, and `override_fingerprint`.
+/// (from storage) or the contract fixtures, and `override_fingerprint`. Fixture answers
+/// take one engine turn, as the network would.
 pub fn client_for(
   env: Option<&SessionEnv>,
   override_url: Option<&str>,
   override_fingerprint: Option<&str>,
 ) -> ApiClient {
-  match env {
+  let client = match env {
     Some(env) => ApiClient::new(Transport::from_url(&env.api_url), env.internal_key.clone())
       .with_fingerprint(env.ssh_fingerprint.clone())
       .with_client_ip(env.client_ip.clone()),
@@ -46,7 +47,8 @@ pub fn client_for(
       None,
     )
     .with_fingerprint(override_fingerprint.map(str::to_owned)),
-  }
+  };
+  client.with_fixture_latency()
 }
 
 /// A signed-in member.
@@ -204,8 +206,10 @@ impl SessionStore {
   }
 
   /// Runs `future` as a task of the root's owner (a page going away does not cancel it),
-  /// or to its end at once for an inline session.
+  /// or to its end at once for an inline session. Each stretch of the task between two
+  /// awaits runs in one `batch`: the UI sees its changes together, never half of them.
   pub fn spawn(&self, future: impl Future<Output = ()> + 'static) {
+    let future = Batched(Box::pin(future));
     if self.inline {
       self.owner.run(|| crate::api::now_or_never(future));
     } else {
@@ -495,6 +499,20 @@ impl SessionStore {
   }
 }
 
+/// A future whose every poll runs in one `batch`.
+struct Batched(std::pin::Pin<Box<dyn Future<Output = ()>>>);
+
+impl Future for Batched {
+  type Output = ();
+
+  fn poll(
+    mut self: std::pin::Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<()> {
+    batch(|| self.0.as_mut().poll(cx))
+  }
+}
+
 impl Default for SessionStore {
   fn default() -> Self {
     Self::new()
@@ -526,6 +544,7 @@ mod tests {
       )
       .with_fingerprint(Some("SHA256:abc".into()))
       .with_client_ip(Some("10.0.0.2".into()))
+      .with_fixture_latency()
     );
   }
 

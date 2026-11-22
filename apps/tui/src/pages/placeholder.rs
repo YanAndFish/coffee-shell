@@ -142,10 +142,10 @@ pub fn field(
   // A field that goes away with the focus in it (its page left the stack) gives the keys
   // back: no blur is reported then.
   cleanup(move || ui_store.field_blurred(field));
+  // A request is done once the focus arrived (a field shown for the request stays).
   effect(move || {
     if ui_store.focus_requested(field) {
       handle.focus();
-      ui_store.focus_taken(field);
     }
   });
   view()
@@ -157,9 +157,17 @@ pub fn field(
         .flex_1()
         .label(name)
         .masked(masked)
+        // Shown because the focus was asked for: focused as it appears (the ref's
+        // `focus()` above reaches a field already on screen).
+        .auto_focus(untracked(|| ui_store.focus_requested(field)))
         .value(value)
         .on_change(move |text: &str| on_change(text))
-        .on_focus(move || ui_store.field_focused(field, Some(handle)))
+        .on_focus(move || {
+          batch(|| {
+            ui_store.field_focused(field, Some(handle));
+            ui_store.focus_taken(field);
+          })
+        })
         .on_blur(move || ui_store.field_blurred(field))
         .element_ref(&handle),
     )

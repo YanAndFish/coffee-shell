@@ -25,7 +25,7 @@
 //! key is handled elsewhere (nsh's Tab traversal, or a global key such as `4` shown in a
 //! page's footer as `4 查看订单`), and a press on it runs it.
 
-use nsh_core::prelude::untracked;
+use nsh_core::prelude::{batch, untracked};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
@@ -540,7 +540,8 @@ pub fn press(stores: &Stores, id: &str) {
   };
   let ctx = untracked(|| context(stores));
   if command.active(&ctx) && untracked(|| (command.enabled)(stores)) {
-    (command.run)(stores, command.key.strokes.first().copied().unwrap_or(""));
+    let stroke = command.key.strokes.first().copied().unwrap_or("");
+    batch(|| (command.run)(stores, stroke));
   }
 }
 

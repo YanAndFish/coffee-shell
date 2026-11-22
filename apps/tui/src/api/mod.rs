@@ -284,7 +284,13 @@ pub struct ApiClient {
   fingerprint: Option<String>,
   client_ip: Option<String>,
   token: Option<String>,
+  fixture_latency: bool,
 }
+
+/// How long the fixture transport takes to answer in the app: one engine turn, as a
+/// round trip to the backend would (a page then sees its loading state, and an answer
+/// never lands in the same commit as the key press that asked).
+pub const FIXTURE_LATENCY: std::time::Duration = std::time::Duration::from_millis(1);
 
 impl ApiClient {
   /// A client over `transport`, sending `internal_key` as [`INTERNAL_KEY_HEADER`] when
@@ -296,7 +302,15 @@ impl ApiClient {
       fingerprint: None,
       client_ip: None,
       token: None,
+      fixture_latency: false,
     }
+  }
+
+  /// The client whose fixture answers wait [`FIXTURE_LATENCY`] (the app's; tests polling
+  /// with [`now_or_never`] keep them immediate).
+  pub fn with_fixture_latency(mut self) -> Self {
+    self.fixture_latency = true;
+    self
   }
 
   /// The client sending `fingerprint` as [`SSH_FINGERPRINT_HEADER`] where the contract
@@ -387,6 +401,9 @@ impl ApiClient {
         decode(response.status(), &response.body)
       }
       Transport::Fixture(set) => {
+        if self.fixture_latency {
+          timer(FIXTURE_LATENCY).await;
+        }
         let answer = set.answer(&call, self)?;
         decode(answer.status, answer.body.as_bytes())
       }

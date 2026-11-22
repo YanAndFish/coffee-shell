@@ -261,6 +261,22 @@ test('tabs 1–4, the detail page and back', async () => {
   await app.waitFor('text:商品列表 · 8 款 · 推荐')
 })
 
+test('/ from another tab goes to the list with the focus in the search box', async () => {
+  const app = await start(120, 36)
+  await browseAsGuest(app)
+  await app.keyboard.press('2')
+  await app.waitFor('text:购物车 · 0 件')
+  await app.keyboard.press('/')
+  await app.waitFor('text:离开搜索')
+  await app.type('label:/ 搜索', '茉莉')
+  await app.waitFor('text:商品列表 · 2 款 · 推荐')
+  // Esc leaves the box (the text stays); the list's keys work again.
+  await app.keyboard.press('escape')
+  await app.waitFor('text:移动')
+  await app.keyboard.press('escape')
+  await app.waitFor('text:商品列表 · 8 款 · 推荐')
+})
+
 test('a member\'s pages show their stores', async () => {
   const app = await start(120, 36, { transport: 'fixture:member', key: true })
   await app.waitFor('text:商品列表 · 8 款 · 推荐')
