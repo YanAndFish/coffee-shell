@@ -175,7 +175,19 @@ pub fn name_cell(
         )
         .child(tag.map(|tag| view().flex_none().pl(layout::cols(1)).child(tag))),
     )
-    .child(subtitle.map(|subtitle| label(subtitle, Tone::Mute).truncate()))
+    .child(subtitle.map(|subtitle| {
+      // The second row has nothing in the gap after the name column: the subtitle may run
+      // one cell into it (02-list.md: `Ethiopia · Yirgacheffe Konga G1` fills 31 cells of
+      // a 30-cell column), cut with `…` there.
+      view().w_full().h(layout::rows(1)).child(
+        view()
+          .absolute()
+          .top(px(0.0))
+          .left(px(0.0))
+          .right(px(-layout::CELL_WIDTH))
+          .child(label(subtitle, Tone::Mute).truncate()),
+      )
+    }))
     .into_element()
 }
 
