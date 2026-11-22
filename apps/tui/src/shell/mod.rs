@@ -13,7 +13,8 @@
 //! - **Header** ([`header`]): wordmark, tabs with the cart badge and the underline of the
 //!   current tab, the search entry, who is shopping.
 //! - **Content margins**: columns per `ui::content_margins` (XL 2, L/M 1, S 0) and the blank
-//!   row under the content at XL; the row above it is `ui::page`'s own.
+//!   row under the content at XL; the row above it is `ui::page`'s own. The login page has
+//!   none: its two columns are laid out on the whole width.
 //! - **Status bar** ([`footer`]): `ui::mode_line` with the command table's hints.
 //! - **Outlets** ([`outlets`]): the dialog of the overlay open (over the page, which stays
 //!   drawn and mounted) and the toast (bottom right).
@@ -43,7 +44,7 @@ use crate::{
   commands, pages,
   router::{Page, Route},
   stores::{Stores, actions},
-  ui::{self, Bp, Layout, layout},
+  ui::{self, Layout, layout},
 };
 
 /// The demo notice the system row always shows.
@@ -52,11 +53,9 @@ pub const DEMO_NOTICE: &str = ui::DEMO_NOTICE;
 /// Keystrokes bound `When::Always`: they reach the command table from a text field too.
 pub const ALWAYS: &[&str] = &["escape", "enter", "tab", "shift+tab"];
 
-/// The blank rows under the content at `bp` (responsive.md: XL 1, else 0; none under 32
-/// rows). The row above the content is the page's own (`ui::page`).
-pub fn bottom_margin(bp: Bp, short: bool) -> u16 {
-  u16::from(bp == Bp::Xl && !short)
-}
+/// The blank rows under the content at `bp` (`ui::bottom_margin`). The row above the
+/// content is the page's own (`ui::page`).
+pub use ui::bottom_margin;
 
 /// Binds every keystroke of the command table once: a key runs the first command active
 /// in the context now and enabled; it does nothing while the terminal is too small.
@@ -137,7 +136,12 @@ pub fn shell() -> impl IntoElement {
   });
   let time = clock::clock();
   let on_login = computed(move || stores.page() == Page::Login);
+  // The login page is laid out on the whole width between the system row and the status
+  // bar (01-login.md: brand column 95 + card column 65 at 160): no margins there.
   let margins = computed(move || {
+    if on_login.get() {
+      return (0, 0);
+    }
     let viewport = layout.viewport();
     let bp = viewport.bp();
     (
@@ -212,6 +216,7 @@ pub fn shell() -> impl IntoElement {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::ui::Bp;
 
   #[test]
   fn the_keys_of_fields_and_dialogs_are_bound_always() {

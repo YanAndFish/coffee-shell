@@ -69,9 +69,18 @@ impl Shape {
     }
   }
 
-  /// The columns the pages get (the shell keeps a column each side, 200 at most).
+  /// The columns the pages get: 200 at most, less the shell's margins (XL 2 each side,
+  /// L and M 1, S none).
   pub fn content_cols(self) -> u16 {
-    self.cols.min(MAX_CONTENT_COLS).saturating_sub(2)
+    self
+      .cols
+      .min(MAX_CONTENT_COLS)
+      .saturating_sub(2 * ui::content_margins(self.bp).0)
+  }
+
+  /// The columns between the cart and the checkout panel.
+  fn gap(self) -> u16 {
+    ui::panel_gap(self.bp)
   }
 
   /// The checkout column's width: XL 45, L 40, M 36.
@@ -95,7 +104,7 @@ impl Shape {
   pub fn wide_name_cells(self) -> u16 {
     self
       .content_cols()
-      .saturating_sub(self.checkout_cols() + 2 + 4 + 2 + 65)
+      .saturating_sub(self.checkout_cols() + self.gap() + 4 + 2 + 65)
   }
 
   /// How much of a cart row shows: S two-line rows; the wide form while its name column
@@ -118,7 +127,7 @@ impl Shape {
       // No spec (21) and unit (9) columns.
       CartForm::Medium => self
         .content_cols()
-        .saturating_sub(self.checkout_cols() + 2 + 4 + 2 + 35),
+        .saturating_sub(self.checkout_cols() + self.gap() + 4 + 2 + 35),
       // One column: the panel, its padding, the row's, cursor, box, stepper, total, delete.
       CartForm::Small => self
         .content_cols()
@@ -166,7 +175,7 @@ fn shop(stores: Stores, shape: Shape) -> View {
       .min_h(px(0.0))
       .flex_row()
       .child(lines::panel(stores, shape))
-      .child(ui::layout::hspace(2))
+      .child(ui::layout::hspace(ui::panel_gap(shape.bp)))
       .child(
         view()
           .flex_none()
@@ -223,11 +232,12 @@ mod tests {
     assert_eq!(Shape::of(78, 24).receipt_cols(), 76);
     assert_eq!(Shape::of(160, 50).key(), Shape::of(170, 50).key());
     assert_eq!(xl.form(), CartForm::Wide);
-    assert_eq!(xl.name_cells(), 40);
+    // 160 − 2 × 2 margins − checkout 45 − gap 2 − frame and paddings 6 − columns 65.
+    assert_eq!(xl.name_cells(), 38);
     assert_eq!(Shape::of(130, 40).form(), CartForm::Medium);
     assert_eq!(Shape::of(139, 40).form(), CartForm::Wide);
     assert_eq!(Shape::of(100, 30).form(), CartForm::Medium);
-    assert_eq!(Shape::of(100, 30).name_cells(), 19);
+    assert_eq!(Shape::of(100, 30).name_cells(), 20);
     assert_eq!(Shape::of(80, 24).form(), CartForm::Small);
     assert_ne!(Shape::of(80, 24).key(), Shape::of(90, 24).key());
   }

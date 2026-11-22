@@ -4,7 +4,7 @@
 //! The shell gives the page the content box (at most 200 columns, one column in from each
 //! side) and one blank row on top; the page adds the rest of the design's margins.
 
-use crate::ui::{Bp, Viewport, layout};
+use crate::ui::{self, Bp, Viewport};
 
 /// How the account panel is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -59,17 +59,12 @@ impl Geometry {
   pub fn at(viewport: Viewport) -> Self {
     let bp = viewport.bp();
     let short = viewport.short();
-    // The shell's content box: at most 200 columns, one column in from each side.
-    let content = viewport
-      .cols
-      .min(layout::MAX_CONTENT_COLS)
-      .saturating_sub(2);
-    // Rows under the header (5 rows, 3 when short) and above the status bar, less the
-    // shell's blank row on top.
-    let header = if short { 3 } else { 5 };
-    let body_rows = viewport.rows.saturating_sub(header + 1 + 1);
+    // The shell's content box (its margins already taken) and the rows under the header.
+    let content = ui::content_cols(viewport);
+    let body_rows = ui::content_rows(viewport);
+    // The shell keeps the margins: the page adds none of its own.
     let (margin, bottom, left, gap, pad) = match bp {
-      Bp::Xl => (1, 1, 47, 2, 2),
+      Bp::Xl => (0, 0, 47, 2, 2),
       Bp::L | Bp::M => (0, 0, 40, 1, 2),
       Bp::S | Bp::TooSmall => (0, 0, 0, 0, 1),
     };
@@ -206,11 +201,12 @@ mod tests {
   fn s_is_one_scrolling_column() {
     let s = at(80, 24);
     assert!(s.one_column && !s.radar);
-    assert_eq!(s.right, 77);
-    assert_eq!(s.left_inner(), 73);
+    // The whole width (S has no margins) less the scroll bar's column.
+    assert_eq!(s.right, 79);
+    assert_eq!(s.left_inner(), 75);
     assert_eq!(s.account, AccountForm::Inline);
-    assert_eq!(s.button(), 77);
-    assert_eq!(s.order_items(), 73 - 33 - 4);
+    assert_eq!(s.button(), 79);
+    assert_eq!(s.order_items(), 75 - 33 - 4);
   }
 
   #[test]

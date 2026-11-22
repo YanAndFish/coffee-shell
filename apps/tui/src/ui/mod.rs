@@ -68,14 +68,14 @@ pub use meter::{bar, meter, progress, thin_bar};
 pub use nav_tabs::{NavTab, nav_rule, nav_tabs, nav_tabs_with};
 pub use panel::{card, heading, inset, panel, panel_plain, panel_toned, rule};
 pub use radar::{radar, radar_fits, radar_label};
-pub use stack::{page, page_stack};
+pub use stack::{bottom_margin, content_cols, content_rows, page, page_stack, top_margin};
 pub use status_bar::{Hint, Mode, StatusRight, mode_line, status_bar};
 pub use stepper::{StepperForm, stepper, stock_note};
 pub use tag::{TagKind, count_badge, pill, pill_text, tag};
 pub use theme::{Fill, Tone};
 pub use toast::{ToastKind, toast, toast_box, toast_line};
 pub use toggle::{checkbox, radio, switch, switch_row, toggle_note};
-pub use window::{DEMO_NOTICE, content_margins, system_row};
+pub use window::{DEMO_NOTICE, content_margins, panel_gap, system_row};
 pub use wordmark::{wordmark, wordmark_block, wordmark_for, wordmark_line};
 
 use nsh_core::prelude::*;

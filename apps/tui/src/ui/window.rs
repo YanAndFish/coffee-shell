@@ -36,6 +36,16 @@ pub fn content_margins(bp: Bp) -> (u16, u16) {
   }
 }
 
+/// The columns between two panels side by side at `bp` (responsive.md, "面板间距": XL 2,
+/// L and M 1; S stacks its panels).
+pub fn panel_gap(bp: Bp) -> u16 {
+  match bp {
+    Bp::Xl => 2,
+    Bp::L | Bp::M => 1,
+    Bp::S | Bp::TooSmall => 0,
+  }
+}
+
 /// The system row. `has_key()`: the SSH client offered a public key; `clock()`: the server's
 /// time, `HH:MM`.
 pub fn system_row(
