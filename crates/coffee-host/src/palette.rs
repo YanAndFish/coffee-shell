@@ -324,8 +324,15 @@ impl Pin {
         .map_or(cell.fg, |(_, color)| color),
       None => cell.fg,
     };
-    cell.bg = bg;
-    cell.fg = fg;
+    // 实心标签的右边缘左半格有色。用底色画这半格，宽字符末尾就能沿用标签底色。
+    if cell.symbol() == "▌" && self.light_fills.contains(&fg) {
+      cell.set_symbol("▐");
+      cell.fg = bg;
+      cell.bg = fg;
+    } else {
+      cell.fg = fg;
+      cell.bg = bg;
+    }
   }
 
   fn sixteen_cell(&self, cell: &mut Cell) {

@@ -352,3 +352,33 @@ fn every_ui_token_keeps_its_attribute_in_monochrome() {
     }
   }
 }
+
+/// 在同一行渲染详情页的标签和选项，检查中文末尾的背景色。
+#[component]
+fn DetailPills() -> impl IntoElement {
+  view()
+    .flex_row()
+    .child(ui::tag(ui::TagKind::Solid, "新产季"))
+    .child(ui::chip(
+      "手冲",
+      ui::ChipPad::Tight,
+      || true,
+      || true,
+      || {},
+    ))
+}
+
+#[test]
+fn filled_labels_cover_the_final_chinese_character() {
+  for depth in [ColorDepth::TrueColor, ColorDepth::Ansi256] {
+    let buffer = render_root(themed::<DetailPills>(), depth, 40, 2);
+    for (x, last) in [(5, "季"), (11, "冲")] {
+      let glyph = &buffer[(x, 0)];
+      let cap = &buffer[(x + 2, 0)];
+      assert_eq!(glyph.symbol(), last);
+      assert_eq!(cap.bg, glyph.bg, "{last} 的右边缘应延续文字底色");
+      assert_eq!(cap.fg, buffer[(14, 0)].bg);
+      assert_eq!(cap.symbol(), "▐");
+    }
+  }
+}

@@ -222,7 +222,8 @@ def sku_choice(t: Term, group: str) -> str | None:
       if group == "数量":
         match = re.search(r"│\s*(\d+)\s*│", below)
       else:
-        match = re.search(r"▐\s*([^▌]+?)\s*▌", below)
+        # 右边缘在真彩色和 256 色下用 ▐ 绘制，在 16 色和单色下用 ▌ 绘制。
+        match = re.search(r"▐\s*([^▐▌]+?)\s*[▐▌]", below)
       return match.group(1) if match else None
   return None
 
