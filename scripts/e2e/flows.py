@@ -123,6 +123,8 @@ def flow_main(stack: Stack) -> None:
   # The profile lists the order with its status.
   guest.type("4")
   guest.wait("最近订单", receipt["number"])
+  # The order's toast (`RT… · 下一个烘焙日出炉`) repeats the number: read the row once it is gone.
+  guest.wait_for(lambda: "下一个烘焙日出炉" not in guest.text(), "the order toast going", 10)
   row = next(line for line in guest.text().splitlines() if receipt["number"] in line)
   check("烘焙中" in row, f"the order row has no status 烘焙中: {row.strip()}", guest)
   guest.snap("profile")
