@@ -25,7 +25,7 @@ slow machines more time per step (default 20 s).
 
 What the flows check (`scripts/e2e/flows.py`):
 
-- **main** — a client with a key: the login page shows `● 公钥已识别` and `[✓] 记住我`; register; filter by origin
+- **main** — a client with a key: the login page shows `[✓] 记住我 30 天 · 绑定当前 SSH 公钥`; register; filter by origin
   (`f`), clear (`Esc`), search (`/瑰夏`); open 波奎特 瑰夏, choose 100g · 手冲, add. A second client **without a key**
   browses as a guest (`g`), adds 保山 小粒 日晒; `c` on the cart is gated to login (`结算前请先登录`); logging in merges
   the guest cart (`已合并访客购物车 1 件`) and returns to the cart. A new address: the empty form is refused
@@ -45,7 +45,7 @@ What the flows check (`scripts/e2e/flows.py`):
   `下单失败` / `波奎特 瑰夏 库存不足，购物车没有变化`, one order, stock 2, the loser's cart unchanged. Also: a taken
   username (`✗ 这个用户名已被注册`), an invalid coupon (`✗ 优惠码无效或已过期`), a wrong password
   (`✗ 用户名或密码不正确`) and, on the sixth try within 10 minutes, `✗ 操作太频繁，请稍后再试`.
-- **session** — a keyless client: no prompt, `○ 未提供公钥`, `[ ] 记住我` with `当前连接没有 SSH 公钥，无法记住登录`; after
+- **session** — a keyless client: no prompt, `[ ] 记住我` with `当前连接没有 SSH 公钥，无法记住登录`; after
   registering, the profile says `○ 本次连接没有公钥` and nothing is remembered; the next keyless connection opens on
   the login page. A client killed (SIGKILL to `ssh`) right after `c`: its `coffee-tui` is gone within 5 s and the
   order is either whole (order + item + stock − 1 + line gone) or absent (cart and stock unchanged). The backend

@@ -369,6 +369,7 @@ test('keys typed while the first list loads land on it: g ↓ ↓ ⏎ opens the 
     ...cells(130, 40),
     platform: 'linux',
     clock: {},
+    storage: { 'coffee.splash': 'off' },
   })
   const clock = app.clock!
   for (let i = 0; i < 40 && !app.texts().includes('离开输入'); i++)

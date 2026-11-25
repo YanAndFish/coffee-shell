@@ -1,8 +1,9 @@
 //! Routes and the routes store: the pages of nsh's navigation stack, bottom to top.
 //!
 //! The shell renders one `nav_page` per route in a `nav_stack` (keyed by the route), so a
-//! page that stays in the stack keeps its state. A new connection starts on the login page
-//! (01-login.md, "何时出现"); a remembered key replaces it with the catalog. Tabs `1`–`4`
+//! page that stays in the stack keeps its state. A new connection starts on the splash
+//! (00-splash.md), which gives way to the login page (01-login.md, "何时出现") or, for a
+//! remembered key, the catalog. Tabs `1`–`4`
 //! replace the whole stack with their root route; the detail page is pushed over the
 //! catalog and popped by Esc / Backspace. When the user goes back natively, the page's
 //! `on_dismiss` truncates the routes.
@@ -19,6 +20,8 @@ use crate::ui::NavTab;
 /// A page of the app.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Route {
+  /// The splash while the connection starts (`欢迎 WELCOME`): no tab, no global keys.
+  Splash,
   /// Sign in or register (`登录 LOGIN`): no tab, no global keys.
   Login,
   /// The bean list: the tab `1 选购`.
@@ -37,6 +40,8 @@ pub enum Route {
 /// name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Page {
+  /// [`Route::Splash`].
+  Splash,
   /// [`Route::Login`].
   Login,
   /// [`Route::Catalog`].
@@ -53,7 +58,8 @@ pub enum Page {
 
 impl Page {
   /// Every page, in the order of the page modules.
-  pub const ALL: [Page; 6] = [
+  pub const ALL: [Page; 7] = [
+    Page::Splash,
     Page::Login,
     Page::Catalog,
     Page::Detail,
@@ -98,6 +104,7 @@ impl Route {
   /// Its kind of page.
   pub fn page(&self) -> Page {
     match self {
+      Route::Splash => Page::Splash,
       Route::Login => Page::Login,
       Route::Catalog => Page::Catalog,
       Route::Detail(_) => Page::Detail,
@@ -107,10 +114,11 @@ impl Route {
     }
   }
 
-  /// The tab this route belongs to (the detail page belongs to `选购`; login to none).
+  /// The tab this route belongs to (the detail page belongs to `选购`; splash and login to
+  /// none).
   pub fn tab(&self) -> Option<usize> {
     match self {
-      Route::Login => None,
+      Route::Splash | Route::Login => None,
       Route::Catalog | Route::Detail(_) => Some(0),
       Route::Cart => Some(1),
       Route::Addresses => Some(2),
@@ -315,6 +323,7 @@ mod tests {
     assert_eq!(Route::Login.tab(), None);
     assert_eq!(Route::Detail("yirga".into()).key(), "detail/yirga");
     assert_eq!(Route::Catalog.key(), "catalog");
-    assert_eq!(Page::ALL.len(), 6);
+    assert_eq!(Page::ALL.len(), 7);
+    assert_eq!(Route::Splash.tab(), None);
   }
 }

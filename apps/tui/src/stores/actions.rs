@@ -106,8 +106,10 @@ pub fn go_login(stores: &Stores) {
 
 // --- Session ----------------------------------------------------------------------------
 
-/// On connect: with a key, try to resume the remembered session (01-login.md); the login
-/// page shows meanwhile, and stays when the key is not remembered.
+/// On connect: with a key, try to resume the remembered session (01-login.md). While the
+/// splash is up it only records the outcome ([`leave_splash`] then picks the page); on the
+/// login page (the splash skipped) a resumed session replaces it with the catalog, and a key
+/// that is not remembered leaves it there.
 pub fn start(stores: &Stores) {
   if !stores.session.has_key() {
     return;
@@ -119,15 +121,39 @@ pub fn start(stores: &Stores) {
       Ok(auth) => {
         let name = auth.user.username.clone();
         stores.session.signed_in(auth);
-        stores.router.replace(Route::Catalog);
-        stores
-          .toasts
-          .ok(format!("欢迎回来，{name}"), "已通过 SSH 公钥恢复登录");
+        if stores.router.top_untracked() != Route::Splash {
+          stores.router.replace(Route::Catalog);
+          welcome_back(&stores, &name);
+        }
         sync_member(stores).await;
       }
-      Err(_) => stores.session.set_resuming(false),
+      Err(failure) => stores.session.resume_failed(failure),
     }
   });
+}
+
+/// `欢迎回来，{用户名}` / `已通过 SSH 公钥恢复登录`.
+fn welcome_back(stores: &Stores, name: &str) {
+  stores
+    .toasts
+    .ok(format!("欢迎回来，{name}"), "已通过 SSH 公钥恢复登录");
+}
+
+/// The splash is done (its work settled, or `⏎ 跳过`, or its time ran out): a resumed
+/// member goes to the catalog with the welcome toast, everyone else to the login page (a
+/// resume still under way then moves on from there). Only from the splash: later calls do
+/// nothing.
+pub fn leave_splash(stores: &Stores) {
+  if stores.router.top_untracked() != Route::Splash {
+    return;
+  }
+  match nsh_core::prelude::untracked(|| stores.session.member()) {
+    Some(member) => {
+      stores.router.replace(Route::Catalog);
+      welcome_back(stores, &member.user.username);
+    }
+    None => stores.router.replace(Route::Login),
+  }
 }
 
 /// After any sign-in: merge the guest cart (or load the member cart), load addresses and

@@ -2,16 +2,16 @@
 //! the session's start, and the too-small page. No page logic.
 //!
 //! ```text
-//! row 0        system row: roast@tty: ~/shop — 160×50 · ! 演示环境 · 不是真实商店 · ● 公钥已识别 · 21:04
+//! row 0        system row: roast@tty: ~/shop — 160×50 · ! 演示环境 · 不是真实商店 · 21:04
 //! rows 1–4     header (app pages; 2 rows at S and under 32 rows; the login page has none)
 //! …            the page stack, inside the content margins (at most 200 columns, centred)
 //! last row     status bar: ▐ 选购 BROWSE ▌ hints …  ● 鼠标   购物车 ¥426.00   ‹?› 帮助
 //! ```
 //!
-//! - **System row** (`ui::system_row`): the demo notice on every screen, the SSH key
-//!   indicator (`● 公钥已识别` / `○ 未提供公钥`) and the clock ([`clock`]).
+//! - **System row** (`ui::system_row`): the demo notice on every screen and the clock
+//!   ([`clock`]); no SSH key indicator (only the login card's 记住我 speaks of the key).
 //! - **Header** ([`header`]): wordmark, tabs with the cart badge and the underline of the
-//!   current tab, the search entry, who is shopping.
+//!   current tab, the search entry, who is shopping (not on the splash and the login page).
 //! - **Content margins**: columns per `ui::content_margins` (XL 2, L/M 1, S 0) and the blank
 //!   row under the content at XL; the row above it is `ui::page`'s own. The login page has
 //!   none: its two columns are laid out on the whole width.
@@ -125,7 +125,8 @@ pub fn shell() -> impl IntoElement {
   trap_focus(stores);
   // nsh's hover band shows only while 鼠标追踪 is on (components.md, "悬停").
   effect(move || ui::theme::set_hover_band(stores.settings.mouse_tracking()));
-  // The connection's start: resume a remembered key's session (once).
+  // The connection's start: resume a remembered key's session (once). The splash, when it
+  // is up, waits for it.
   effect(move || untracked(|| actions::start(&stores)));
   // A store saw the member session end: back to the login page (`登录已失效`).
   effect(move || {
@@ -137,11 +138,12 @@ pub fn shell() -> impl IntoElement {
     }
   });
   let time = clock::clock();
-  let on_login = computed(move || stores.page() == Page::Login);
-  // The login page is laid out on the whole width between the system row and the status
-  // bar (01-login.md: brand column 95 + card column 65 at 160): no margins there.
+  // The splash and the login page are laid out on the whole width between the system row
+  // and the status bar (01-login.md: brand column 95 + card column 65 at 160): no header,
+  // no margins there.
+  let bare = computed(move || matches!(stores.page(), Page::Splash | Page::Login));
   let margins = computed(move || {
-    if on_login.get() {
+    if bare.get() {
       return (0, 0);
     }
     let viewport = layout.viewport();
@@ -182,17 +184,14 @@ pub fn shell() -> impl IntoElement {
   let frame = view()
     .flex_1()
     .style_when(move || layout.too_small(), |s| s.hidden())
-    .child(ui::system_row(
-      move || stores.session.has_key(),
-      move || time.get(),
-    ))
+    .child(ui::system_row(move || time.get()))
     .child(
       view()
         .flex_1()
         .min_h(px(0.0))
         .items_center()
         .child(when(
-          move || !on_login.get(),
+          move || !bare.get(),
           move || {
             view()
               .flex_none()

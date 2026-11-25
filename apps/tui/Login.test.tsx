@@ -230,7 +230,6 @@ test('a click on 注册新账号 → (and on 去登录) leaves the focus in 用�
 test('without a key 记住我 is disabled with its reason, and Tab passes it', async () => {
   const app = await start(160, 50)
   await ready(app)
-  expect(app.texts()).toContain('○ 未提供公钥')
   expect(app.texts()).toContain('[ ]')
   expect(app.texts()).toContain('当前连接没有 SSH 公钥，无法记住登录')
   await typing(app)
@@ -248,7 +247,7 @@ test('with a key 记住我 is checked, with the key\'s note', async () => {
   await ready(app)
   expect(app.texts()).toContain('[✓]')
   expect(app.texts()).toContain(' · 绑定当前 SSH 公钥')
-  expect(app.texts()).toContain('● 公钥已识别')
+  expect(shows(app, '公钥已识别')).toBe(false)
 })
 
 // --- Validation, server errors, success -------------------------------------------------
@@ -347,7 +346,7 @@ test('submitting: the progress block replaces the button, only ? works, then the
     ...cells(160, 50),
     platform: 'linux',
     clock: {},
-    storage: { 'coffee.transport': 'fixture:slow' },
+    storage: { 'coffee.splash': 'off', 'coffee.transport': 'fixture:slow' },
   })
   const clock = app.clock!
   for (let i = 0; i < 40 && !app.texts().includes('离开输入'); i++)
@@ -400,7 +399,7 @@ test('resume on connect: the card says so while a remembered key is tried', asyn
     ...cells(100, 30),
     platform: 'linux',
     clock: {},
-    storage: { 'coffee.transport': 'fixture:slow', 'coffee.fingerprint': KEY },
+    storage: { 'coffee.splash': 'off', 'coffee.transport': 'fixture:slow', 'coffee.fingerprint': KEY },
   })
   const clock = app.clock!
   for (let i = 0; i < 40 && !shows(app, '正在通过 SSH 公钥恢复登录…'); i++)
@@ -451,7 +450,7 @@ test('the steam rests after 20 s without a key and moves again with the next one
     ...cells(160, 50),
     platform: 'linux',
     clock: {},
-    storage: { 'coffee.transport': 'fixture:' },
+    storage: { 'coffee.splash': 'off', 'coffee.transport': 'fixture:' },
   })
   const clock = app.clock!
   for (let i = 0; i < 40 && !app.texts().includes('离开输入'); i++)

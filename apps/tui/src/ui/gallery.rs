@@ -291,7 +291,7 @@ pub fn UiGallery() -> impl IntoElement {
     .flex_1()
     .bg(theme::bg)
     .text_color(theme::fg)
-    .child(system_row(|| true, || SharedString::from("21:04")))
+    .child(system_row(|| SharedString::from("21:04")))
     .child(
       view()
         .flex_none()

@@ -46,7 +46,7 @@ export const profileNoKeyExample: Profile = {
 
 /**
  * 林晓's profile (her orders, addresses and taste) on a connection without a key
- * (`○ 未提供公钥`): what a login without a key shows next to the cart and order fixtures.
+ * (记住我 unavailable): what a login without a key shows next to the cart and order fixtures.
  */
 export const profileOrdersNoKeyExample: Profile = {
   ...profileExample,

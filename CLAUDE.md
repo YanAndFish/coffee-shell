@@ -13,7 +13,7 @@ ssh client ─ coffee-sshd (russh: any key or none, PTY, session limits)
 
 Read before changing a layer: `docs/adr/0001-ssh-session-model.md` (sessions, auth, Ctrl+C, colour depth, limits),
 `docs/adr/0002-phase-2-architecture.md` (contract first, money on the server, accounts + key remember, colour
-carriers, fixture mode, tests), `docs/design/` (screens, keymap, copy, states, tokens; `decisions.md` = product
+carriers, fixture mode, tests), `docs/design/` (screens `00-splash`…`06-profile`, keymap, copy, states, tokens; `decisions.md` = product
 rules U1–U7 and API rules P-…), `packages/contract/README.md` (the API), `docs/acceptance.md` (the phase 2 checks).
 
 ## Map
@@ -59,7 +59,7 @@ Module map and per-screen contract: `apps/tui/README.md`. Dependencies point dow
 
 - **Only `src/ui/` touches `nsh_base` and theme tokens.** Pages compose `ui::*`; they never style base controls or
   write colours, radii, paddings. A missing look is a new variant in `ui/` first.
-- **Pages** are `pages/<name>/` (login, catalog, detail, cart, addresses, profile), each a `PageModule { page, mode,
+- **Pages** are `pages/<name>/` (splash, login, catalog, detail, cart, addresses, profile), each a `PageModule { page, mode,
 commands, view, dialogs }` in `pages::PAGES`. A screen worker edits only its page's directory.
 - **One command table** (`commands.rs`: `Command { id, key, label, scope, typing, busy, footer, enabled, run }`)
   drives key bindings (bound once in `shell/mod.rs`), buttons, status-bar hints and `?` help. Never bind keys elsewhere.
@@ -68,7 +68,8 @@ commands, view, dialogs }` in `pages::PAGES`. A screen worker edits only its pag
 - **The TUI never computes money**, not even unit × quantity: amounts are the server's (`PriceCell.totals`, `Cart.totals`).
 - Async work starts from events, effects or resources, with explicit loading / empty / error states. Component bodies
   run once; read signals inside closures.
-- A connection opens on the **login page**; `g` browses as a guest; a remembered key resumes to the catalogue.
+- A connection opens on the **splash** (`pages/splash`, ≥900 ms, at most 6 s, `⏎` skips; it never mentions the SSH
+  key), then the **login page**; `g` browses as a guest; a remembered key resumes to the catalogue.
   Checkout is the login gate (it returns to the cart).
 
 ## Contract first

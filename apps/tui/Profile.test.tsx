@@ -294,7 +294,7 @@ test('loading shows the spinner line until the orders arrive', async () => {
     ...cells(160, 50),
     platform: 'linux',
     clock: {},
-    storage: { 'coffee.transport': 'fixture:member', 'coffee.fingerprint': KEY },
+    storage: { 'coffee.splash': 'off', 'coffee.transport': 'fixture:member', 'coffee.fingerprint': KEY },
   })
   const clock = app.clock!
   for (let i = 0; i < 20 && !shows(app, '商品列表 · 8 款'); i++)

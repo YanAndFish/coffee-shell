@@ -1,5 +1,5 @@
-//! The pages, one module (directory) per screen: `login`, `catalog`, `detail`, `cart`,
-//! `addresses`, `profile`. Each is `pages/<name>/{mod.rs,commands.rs}` and registers
+//! The pages, one module (directory) per screen: `splash`, `login`, `catalog`, `detail`,
+//! `cart`, `addresses`, `profile`. Each is `pages/<name>/{mod.rs,commands.rs}` and registers
 //! itself here through its [`PageModule`] (`MODULE`): its page kind, its status-bar mode,
 //! its commands (keys, footer hints, help), its view, and the dialogs it draws.
 //!
@@ -18,6 +18,7 @@ pub mod format;
 pub mod login;
 pub mod placeholder;
 pub mod profile;
+pub mod splash;
 
 use nsh_core::{element::Screen, prelude::*};
 
@@ -53,7 +54,8 @@ pub struct PageModule {
 }
 
 /// Every page module, in [`Page::ALL`] order.
-pub const PAGES: [PageModule; 6] = [
+pub const PAGES: [PageModule; 7] = [
+  splash::MODULE,
   login::MODULE,
   catalog::MODULE,
   detail::MODULE,

@@ -74,9 +74,9 @@ pub fn mode(stores: &Stores) -> Mode {
 /// Where a command applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Scope {
-  /// Every page, the login page included (`?`).
+  /// Every page, the splash and the login page included (`?`).
   Pages,
-  /// The app pages: every page but the login page (`1`–`4`, `/`, `q`).
+  /// The app pages: every page but the splash and the login page (`1`–`4`, `/`, `q`).
   App,
   /// One kind of page.
   Page(Page),
@@ -244,7 +244,7 @@ impl Command {
       Some(overlay) => self.scope == Scope::Overlay(overlay),
       None => match self.scope {
         Scope::Pages => true,
-        Scope::App => ctx.page != Page::Login,
+        Scope::App => !matches!(ctx.page, Page::Splash | Page::Login),
         Scope::Page(page) => page == ctx.page,
         Scope::Overlay(_) => false,
       },
@@ -734,6 +734,7 @@ mod tests {
       assert_eq!(pages::module(page).page, page);
     }
     let modes = [
+      crate::pages::splash::MODE,
       crate::pages::login::MODE,
       crate::pages::login::REGISTER_MODE,
       crate::pages::catalog::MODE,
@@ -746,6 +747,7 @@ mod tests {
     assert_eq!(
       names,
       [
+        "欢迎 WELCOME",
         "登录 LOGIN",
         "注册 SIGN UP",
         "选购 BROWSE",
@@ -767,6 +769,12 @@ mod tests {
     assert_eq!(id(KeyContext::on(Page::Cart), "a"), Some("cart.all"));
     assert_eq!(id(KeyContext::on(Page::Catalog), "a"), Some("catalog.add"));
     // The login page takes none of 1–4 / q.
+    assert_eq!(id(KeyContext::on(Page::Splash), "1"), None);
+    assert_eq!(
+      id(KeyContext::on(Page::Splash), "enter"),
+      Some("splash.skip")
+    );
+    assert_eq!(id(KeyContext::on(Page::Splash), "shift+/"), Some(HELP));
     assert_eq!(id(KeyContext::on(Page::Login), "1"), None);
     assert_eq!(id(KeyContext::on(Page::Login), "/"), None);
     assert_eq!(id(KeyContext::on(Page::Login), "q"), None);
