@@ -53,6 +53,16 @@ use crate::{
   ui::{Bp, Viewport},
 };
 
+/// The storage key that turns the splash off (`off`) when no host configured the session:
+/// the screen tests open straight on the login page.
+pub const SPLASH_OVERRIDE_KEY: &str = "coffee.splash";
+
+/// Whether the connection opens on the splash.
+fn splash_wanted() -> bool {
+  crate::session_env().is_some()
+    || nsh_core::storage::Storage::get_item(SPLASH_OVERRIDE_KEY).as_deref() != Some("off")
+}
+
 /// Every store of the app. `Copy`: hold it anywhere.
 #[derive(Clone, Copy)]
 pub struct Stores {
@@ -83,7 +93,8 @@ pub struct Stores {
 
 impl Stores {
   /// Makes every store over `session`, with the terminal size from `viewport`, owned by
-  /// the current owner. The app starts on the login page.
+  /// the current owner. The app starts on the login page ([`Self::provide`] puts the
+  /// splash first).
   pub fn new(session: SessionStore, viewport: impl Fn() -> Viewport + 'static) -> Self {
     Self {
       session,
@@ -102,9 +113,14 @@ impl Stores {
   }
 
   /// Makes the stores for this process's session and provides them to what the current
-  /// owner makes. Call it once, in the root.
+  /// owner makes. Call it once, in the root. The connection opens on the splash, unless
+  /// storage [`SPLASH_OVERRIDE_KEY`] says `off` (tests; read only when no host configured
+  /// the session).
   pub fn provide() -> Self {
     let stores = Self::new(SessionStore::new(), Viewport::current);
+    if splash_wanted() {
+      stores.router.replace(Route::Splash);
+    }
     provide_context(stores);
     stores
   }

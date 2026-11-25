@@ -52,7 +52,7 @@ test('a new connection starts on the login page, with the demo notices', async (
   const texts = app.texts()
   expect(texts).toContain('! 演示环境 · 不是真实商店')
   expect(texts).toContain('! 演示环境 · 请勿使用真实密码')
-  expect(texts).toContain('○ 未提供公钥')
+  expect(shows(app, '公钥已识别') || shows(app, '未提供公钥')).toBe(false)
   expect(shows(app, '登录 LOGIN')).toBe(true)
   // The compact card (36 rows at 120 columns): 记住我 with its note on one row.
   expect(texts).toContain('[ ]')
@@ -145,9 +145,8 @@ test('a remembered key resumes the session on connect', async () => {
   await app.waitFor('text:商品列表 · 8 款 · 推荐')
   const texts = app.texts()
   expect(texts).toContain('林晓')
-  expect(texts).toContain('● 公钥已识别')
   await expectBadge(app, '3')
-  expect(shows(app, '已通过 SSH 公钥恢复登录')).toBe(true)
+  expect(shows(app, '已自动恢复登录')).toBe(true)
 })
 
 test('a key nobody remembered stays on the login page, 记住我 checked', async () => {
@@ -156,7 +155,6 @@ test('a key nobody remembered stays on the login page, 记住我 checked', async
   expect(app.texts()).toContain('[✓]')
   expect(app.texts()).toContain('记住我 30 天')
   expect(app.texts()).toContain(' · 绑定当前 SSH 公钥')
-  expect(app.texts()).toContain('● 公钥已识别')
 })
 
 test('q asks before logging out; Esc cancels, q q confirms', async () => {
@@ -307,24 +305,25 @@ test('the system row: the size, the demo notice, the key and the clock', async (
   const texts = app.texts()
   expect(texts).toContain('roast@tty: ~/shop — 160×50')
   expect(texts).toContain('! 演示环境 · 不是真实商店')
-  expect(texts).toContain('● 公钥已识别')
-  expect(texts.some(text => /^ · \d\d:\d\d$/.test(text))).toBe(true)
+  // No SSH key indicator: only the login card's 记住我 speaks of the key.
+  expect(shows(app, '公钥已识别')).toBe(false)
+  expect(texts.some(text => /^\d\d:\d\d$/.test(text))).toBe(true)
   const rows = await screenRows(app)
   if (rows)
-    expect(rows[0]).toMatch(/^ roast@tty: ~\/shop — 160×50 +! 演示环境 · 不是真实商店 +● 公钥已识别 · \d\d:\d\d $/)
+    expect(rows[0]).toMatch(/^ roast@tty: ~\/shop — 160×50 +! 演示环境 · 不是真实商店 +\d\d:\d\d $/)
   const cells = await screenCells(app)
   // The notice centred, the odd half cell rounded down: the mock's column 67.
   if (cells)
     expect(column(cells[0], '!')).toBe(67)
 
-  // Under 100 columns the path goes; without a key, `○ 未提供公钥`.
+  // Under 100 columns the path goes.
   const small = await start(80, 24)
   await small.waitFor('text:登录 · SIGN IN')
-  expect(small.texts()).toContain('○ 未提供公钥')
+  expect(shows(small, '未提供公钥')).toBe(false)
   expect(shows(small, 'roast@tty')).toBe(false)
   const smallRows = await screenRows(small)
   if (smallRows)
-    expect(smallRows[0]).toMatch(/! 演示环境 · 不是真实商店 +○ 未提供公钥 · \d\d:\d\d $/)
+    expect(smallRows[0]).toMatch(/! 演示环境 · 不是真实商店 +\d\d:\d\d $/)
 })
 
 test('the header: tabs with the cart badge, the rule under the current tab, the account', async () => {

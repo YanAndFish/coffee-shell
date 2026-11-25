@@ -176,6 +176,7 @@ pub struct SessionStore {
   token: Signal<Option<String>>,
   member: Signal<Option<Member>>,
   resuming: Signal<bool>,
+  resume_failure: Signal<Option<ApiFailure>>,
   draft: Signal<LoginDraft>,
   form_focus: Signal<Option<FormControl>>,
   step: Signal<Option<AuthStep>>,
@@ -219,6 +220,7 @@ impl SessionStore {
       token: signal(None),
       member: signal(None),
       resuming: signal(false),
+      resume_failure: signal(None),
       draft: signal(LoginDraft {
         remember: has_key,
         ..LoginDraft::default()
@@ -264,7 +266,7 @@ impl SessionStore {
       .with(|client| matches!(client.transport(), Transport::Fixture(_)))
   }
 
-  /// Whether the connection offered an SSH key (`● 公钥已识别` / `○ 未提供公钥`).
+  /// Whether the connection offered an SSH key (记住我 is available only then).
   pub fn has_key(&self) -> bool {
     self
       .base
@@ -316,6 +318,20 @@ impl SessionStore {
   /// Marks the resume-on-connect under way or done.
   pub fn set_resuming(&self, resuming: bool) {
     self.resuming.set(resuming);
+  }
+
+  /// The resume-on-connect is over without a session: why (`404 not_remembered` for a key
+  /// no account remembers, a network failure…).
+  pub fn resume_failed(&self, failure: ApiFailure) {
+    batch(|| {
+      self.resuming.set(false);
+      self.resume_failure.set(Some(failure));
+    });
+  }
+
+  /// Why the resume-on-connect ended without a session, if it did (tracked).
+  pub fn resume_failure(&self) -> Option<ApiFailure> {
+    self.resume_failure.get()
   }
 
   // --- The form ---------------------------------------------------------------------

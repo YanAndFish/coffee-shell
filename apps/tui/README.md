@@ -36,14 +36,14 @@ src/
   router.rs              Route, Page, Router (login first; tabs 1–4; detail over the catalog)
   commands.rs            the command model (Command, Key, Scope, Typing, Footer, KeyContext), global and
                          overlay commands, resolve / footer / bindings / press, mode()
-  pages/
+  pages/                 splash/ (00-splash.md) opens every connection, then login/ or catalog/
     mod.rs               PageModule registry (PAGES), page(route), dialog(overlay)
     format.rs            money / dates / quantities as copy.md writes them (formatting only)
     placeholder.rs       the plain bodies pages ship with: Line, screen, panel, lines, field
     login/ catalog/ detail/ cart/ addresses/ profile/
       mod.rs             the page: MODULE (mode, commands, view, dialogs) and its view (placeholder today)
       commands.rs        the page's COMMANDS: keys, footer ranks, help entries
-  shell/                 header (badge, account, key indicator), status bar, outlets (toast, dialog),
+  shell/                 header (badge, account), status bar, outlets (toast, dialog),
                          overlays (help, logout confirmation placeholders), too-small guard, key bindings
   ui/                    the design-system components (the only module touching nsh_base and theme tokens)
 ```
@@ -115,6 +115,15 @@ A screen worker edits **only its page's directory** `src/pages/<name>/`:
   `startOnClock` + `runUntil` on `fixture:slow` for loading and submitting states).
 
 What each screen has today (the files are `pages/<name>/*`; `stores.x` is a field of `Stores`):
+
+### 开屏 `splash`
+
+- Stores read: `stores.session` (`has_key`, `resuming`, `member`, `resume_failure`), `stores.catalog` (`phase`,
+  `count`, `failure`; the page prefetches the list), `stores.settings.animations`. Action: `actions::leave_splash`
+  (after `SPLASH_MIN` once `Facts::settled`, at `SPLASH_MAX`, or on `⏎`).
+- Keys: `⏎ 跳过` (`Esc`, `space`), `? 快捷键`.
+- Tests: `Splash.test.tsx` opens with `splash: true`; every other test opens with the splash off (storage
+  `coffee.splash` = `off`, testkit's default).
 
 ### 登录 `login`
 

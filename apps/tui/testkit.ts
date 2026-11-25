@@ -11,6 +11,9 @@ import { open } from 'nsh/test'
 /** The SSH key a connection gets with `key: true` (storage `coffee.fingerprint`). */
 export const KEY = 'SHA256:fixtureKeyFixtureKeyFixtureKeyFixtureKey0'
 
+/** Storage `coffee.splash`: `off` opens straight on the login page (the other tests). */
+export const SPLASH_KEY = 'coffee.splash'
+
 /** A viewport of `cols`×`rows` cells at nsh's 8×16 points per cell. */
 export function cells(cols: number, rows: number) {
   return { width: cols * 8, height: rows * 16 }
@@ -23,14 +26,18 @@ export interface Start {
   key?: boolean
   /** Stubbed answers of a live transport. */
   network?: OpenOptions['network']
+  /** Open on the splash (00-splash.md) as a connection does; off: straight on the login page. */
+  splash?: boolean
 }
 
 /**
  * Opens the app as a Linux desktop of `cols`×`rows` cells (the headless default is a phone,
  * whose shortcuts never fire).
  */
-export function start(cols: number, rows: number, { transport, key, network }: Start = {}) {
+export function start(cols: number, rows: number, { transport, key, network, splash }: Start = {}) {
   const storage: Record<string, string> = {}
+  if (!splash)
+    storage[SPLASH_KEY] = 'off'
   if (transport)
     storage['coffee.transport'] = transport
   if (key)
@@ -168,8 +175,10 @@ export async function logInAsMember(app: App, password = 'secret1') {
  * Opens the app on a manual clock (`fixture:slow` answers after 3 s; timers run only as the
  * test says): a request stays under way while the test looks at the screen and presses keys.
  */
-export async function startOnClock(cols: number, rows: number, { transport = 'fixture:slow', key }: Start = {}) {
+export async function startOnClock(cols: number, rows: number, { transport = 'fixture:slow', key, splash }: Start = {}) {
   const storage: Record<string, string> = { 'coffee.transport': transport }
+  if (!splash)
+    storage[SPLASH_KEY] = 'off'
   if (key)
     storage['coffee.fingerprint'] = KEY
   const app = await open('.', {

@@ -44,7 +44,7 @@ def flow_main(stack: Stack) -> None:
   # Connect with a key and register (记住我 is ticked by default when there is a key).
   member = stack.connect("member", key="main", size=SIZE)
   on_login_page(member)
-  member.wait("● 公钥已识别", "[✓] 记住我")
+  member.wait("[✓] 记住我", "绑定当前 SSH 公钥")
   member.snap("login")
   register(member, user)
   member.wait("注册成功，欢迎 " + user, "选购 BROWSE")
@@ -72,7 +72,7 @@ def flow_main(stack: Stack) -> None:
   # A guest in another connection, without a key: add, checkout is gated to login.
   guest = stack.connect("guest", key=None, size=SIZE)
   browse_as_guest(guest)
-  guest.wait("○ 未提供公钥", "以访客身份浏览")
+  guest.wait("以访客身份浏览")
   to_catalog(guest)
   search(guest, "保山")
   guest.wait("商品列表 · 1 款", "保山 小粒 日晒")
@@ -123,6 +123,8 @@ def flow_main(stack: Stack) -> None:
   # The profile lists the order with its status.
   guest.type("4")
   guest.wait("最近订单", receipt["number"])
+  # The order's toast (`RT… · 下一个烘焙日出炉`) repeats the number: read the row once it is gone.
+  guest.wait_for(lambda: "下一个烘焙日出炉" not in guest.text(), "the order toast going", 10)
   row = next(line for line in guest.text().splitlines() if receipt["number"] in line)
   check("烘焙中" in row, f"the order row has no status 烘焙中: {row.strip()}", guest)
   guest.snap("profile")
@@ -130,7 +132,7 @@ def flow_main(stack: Stack) -> None:
 
   # The same key again: resumed without a password.
   again = stack.connect("again", key="main", size=SIZE)
-  again.wait("已通过 SSH 公钥恢复登录", user)
+  again.wait("已自动恢复登录", user)
   again.snap("resumed")
 
   # q asks first; confirming logs out and forgets the key.
@@ -348,7 +350,7 @@ def flow_session(stack: Stack) -> None:
   user = "会话_e2e"
   t = stack.connect("keyless", key=None, size=SIZE)
   on_login_page(t)
-  t.wait("○ 未提供公钥", "[ ] 记住我", "当前连接没有 SSH 公钥，无法记住登录")
+  t.wait("[ ] 记住我", "当前连接没有 SSH 公钥，无法记住登录")
   t.snap("keyless-login")
   register(t, user)
   t.wait("注册成功")

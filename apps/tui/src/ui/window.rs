@@ -3,13 +3,14 @@
 //! the status bar at the bottom. This module draws the system row and gives the margins.
 //!
 //! ```text
-//!  roast@tty: ~/shop — 160×50        ! 演示环境 · 不是真实商店        ● 公钥已识别 · 21:04
+//!  roast@tty: ~/shop — 160×50        ! 演示环境 · 不是真实商店                     21:04
 //! ```
 //!
 //! The system row (row 0, `surface`): left `roast@tty: ~/shop — {cols}×{rows}` (`mute`, live,
 //! left out under 100 columns); centred the demo notice `! 演示环境 · 不是真实商店` (bold
-//! `acc`; bold carries it in monochrome; on the left under 100 columns); right `● 公钥已识别` (`acc2`) or `○ 未提供公钥`
-//! (`mute`) and ` · HH:MM` (`mute`), one cell from each edge. It stays visible over dialogs.
+//! `acc`; bold carries it in monochrome; on the left under 100 columns); right `HH:MM` (`mute`),
+//! one cell from each edge. It never mentions the SSH key: only the login card's 记住我 does.
+//! It stays visible over dialogs.
 
 use nsh_core::prelude::*;
 
@@ -51,12 +52,8 @@ pub fn panel_gap(bp: Bp) -> u16 {
   }
 }
 
-/// The system row. `has_key()`: the SSH client offered a public key; `clock()`: the server's
-/// time, `HH:MM`.
-pub fn system_row(
-  has_key: impl Fn() -> bool + Copy + 'static,
-  clock: impl Fn() -> SharedString + 'static,
-) -> View {
+/// The system row. `clock()`: the server's time, `HH:MM`.
+pub fn system_row(clock: impl Fn() -> SharedString + 'static) -> View {
   let layout = Layout::get();
   view()
     .flex_none()
@@ -85,17 +82,7 @@ pub fn system_row(
         .basis(px(0.0))
         .flex_row()
         .justify_end()
-        .child(dynamic(move || {
-          if has_key() {
-            label("● 公钥已识别", Tone::Acc2)
-          } else {
-            label("○ 未提供公钥", Tone::Mute)
-          }
-        }))
-        .child(label(
-          move || SharedString::from(format!(" · {}", clock())),
-          Tone::Mute,
-        )),
+        .child(label(clock, Tone::Mute)),
     )
 }
 
