@@ -41,7 +41,7 @@ test('a remembered key waits for the resume and the list: the catalog opens load
   expect(shows(app, '登录 · SIGN IN')).toBe(false)
   await runUntil(clock, () => shows(app, '商品列表 · 8 款'), 100)
   expect(shows(app, '正在载入商品…')).toBe(false)
-  expect(shows(app, '已通过 SSH 公钥恢复登录')).toBe(true)
+  expect(shows(app, '已自动恢复登录')).toBe(true)
 })
 
 test('a slow resume keeps the splash; skipping goes to the login page, which carries on', async () => {

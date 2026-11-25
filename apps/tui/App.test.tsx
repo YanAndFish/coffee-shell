@@ -146,7 +146,7 @@ test('a remembered key resumes the session on connect', async () => {
   const texts = app.texts()
   expect(texts).toContain('林晓')
   await expectBadge(app, '3')
-  expect(shows(app, '已通过 SSH 公钥恢复登录')).toBe(true)
+  expect(shows(app, '已自动恢复登录')).toBe(true)
 })
 
 test('a key nobody remembered stays on the login page, 记住我 checked', async () => {

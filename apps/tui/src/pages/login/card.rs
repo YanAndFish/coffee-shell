@@ -107,7 +107,7 @@ pub const KEYS_LINE: &str = "Tab 切换输入 · ⏎ 提交 · ? 查看全部快
 /// The card's demo notice (D8).
 pub const DEMO_PASSWORD: &str = "! 演示环境 · 请勿使用真实密码";
 /// What the subtitle says while a remembered key is being tried.
-pub const RESUMING: &str = "正在通过 SSH 公钥恢复登录…";
+pub const RESUMING: &str = "正在恢复登录…";
 
 /// The control an error line is about: the field to fix.
 pub fn error_target(message: &str) -> Option<FormControl> {

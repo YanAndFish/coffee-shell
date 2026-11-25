@@ -402,13 +402,13 @@ test('resume on connect: the card says so while a remembered key is tried', asyn
     storage: { 'coffee.splash': 'off', 'coffee.transport': 'fixture:slow', 'coffee.fingerprint': KEY },
   })
   const clock = app.clock!
-  for (let i = 0; i < 40 && !shows(app, '正在通过 SSH 公钥恢复登录…'); i++)
+  for (let i = 0; i < 40 && !shows(app, '正在恢复登录…'); i++)
     await clock.runFor(50)
-  expect(shows(app, '正在通过 SSH 公钥恢复登录…')).toBe(true)
+  expect(shows(app, '正在恢复登录…')).toBe(true)
   expect(app.texts()).toContain('登录 · SIGN IN')
-  for (let i = 0; i < 40 && shows(app, '正在通过 SSH 公钥恢复登录…'); i++)
+  for (let i = 0; i < 40 && shows(app, '正在恢复登录…'); i++)
     await clock.runFor(250)
-  expect(shows(app, '正在通过 SSH 公钥恢复登录…')).toBe(false)
+  expect(shows(app, '正在恢复登录…')).toBe(false)
   expect(app.texts()).toContain('登录以同步购物车、地址本与订单。')
 })
 

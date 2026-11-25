@@ -130,7 +130,7 @@ def flow_main(stack: Stack) -> None:
 
   # The same key again: resumed without a password.
   again = stack.connect("again", key="main", size=SIZE)
-  again.wait("已通过 SSH 公钥恢复登录", user)
+  again.wait("已自动恢复登录", user)
   again.snap("resumed")
 
   # q asks first; confirming logs out and forgets the key.

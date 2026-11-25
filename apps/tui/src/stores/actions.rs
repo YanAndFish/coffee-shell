@@ -132,11 +132,11 @@ pub fn start(stores: &Stores) {
   });
 }
 
-/// `欢迎回来，{用户名}` / `已通过 SSH 公钥恢复登录`.
+/// `欢迎回来，{用户名}` / `已自动恢复登录`.
 fn welcome_back(stores: &Stores, name: &str) {
   stores
     .toasts
-    .ok(format!("欢迎回来，{name}"), "已通过 SSH 公钥恢复登录");
+    .ok(format!("欢迎回来，{name}"), "已自动恢复登录");
 }
 
 /// The splash is done (its work settled, or `⏎ 跳过`, or its time ran out): a resumed
@@ -806,10 +806,7 @@ mod flows {
       assert!(stores.session.is_member());
       assert!(!stores.session.resuming());
       assert_eq!(stores.router.top(), Route::Catalog);
-      assert_eq!(
-        last_toast(&stores),
-        "欢迎回来，林晓 / 已通过 SSH 公钥恢复登录"
-      );
+      assert_eq!(last_toast(&stores), "欢迎回来，林晓 / 已自动恢复登录");
       assert_eq!(stores.cart.item_count(), 3);
       assert!(stores.session.key_remembered());
     });
