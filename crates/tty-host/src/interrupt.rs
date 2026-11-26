@@ -1,9 +1,9 @@
 //! Ctrl+C: press twice to quit.
 //!
 //! nsh's terminal key scheme makes Ctrl+C copy a selection, else quit at once. Over SSH
-//! one stray Ctrl+C would then drop the whole session (and a guest's cart). The host
-//! keeps Ctrl+C from the app: the first press arms a short window and shows a hint on
-//! the bottom row, a second press within it quits. See `docs/adr/0001-ssh-session-model.md`.
+//! one stray Ctrl+C would then drop the whole session (and everything the app kept in
+//! it). The host keeps Ctrl+C from the app: the first press arms a short window and shows
+//! a hint on the bottom row, a second press within it quits.
 
 use std::time::{Duration, Instant};
 
@@ -16,8 +16,9 @@ use ratatui_core::{
 /// How long the first Ctrl+C waits for the second.
 pub const WINDOW: Duration = Duration::from_secs(2);
 
-/// The hint shown while a Ctrl+C waits for the second.
-pub const HINT: &str = " 再按一次 Ctrl+C 退出 ";
+/// The hint shown while a Ctrl+C waits for the second, unless the caller gives its own
+/// (`HostOptions::interrupt_hint`).
+pub const DEFAULT_HINT: &str = " Press Ctrl+C again to quit ";
 
 /// What a Ctrl+C press does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,24 +77,24 @@ impl Interrupt {
   }
 }
 
-/// Draws [`HINT`] centred on the bottom row of `area`, reversed so it stands out in
-/// every colour depth (in pinned colours: amber with the dark ink).
-pub fn draw_hint(buffer: &mut Buffer, area: Rect, accent: Color) {
+/// Draws `hint` centred on the bottom row of `area`, reversed in `accent` so it stands
+/// out in every colour depth (a frame filter may then map the accent to its own colour).
+pub fn draw_hint(buffer: &mut Buffer, area: Rect, accent: Color, hint: &str) {
   if area.height == 0 || area.width == 0 {
     return;
   }
-  let width = unicode_width(HINT).min(area.width);
+  let width = unicode_width(hint).min(area.width);
   let x = area.x + (area.width - width) / 2;
   let y = area.y + area.height - 1;
   let style = Style::new()
     .fg(accent)
     .bg(Color::Reset)
     .add_modifier(Modifier::REVERSED | Modifier::BOLD);
-  buffer.set_stringn(x, y, HINT, usize::from(width), style);
+  buffer.set_stringn(x, y, hint, usize::from(width), style);
 }
 
-/// Display width of `text`: CJK characters take two cells.
-fn unicode_width(text: &str) -> u16 {
+/// Display width of `text`: wide (East Asian) characters take two cells.
+pub fn unicode_width(text: &str) -> u16 {
   let mut buffer = Buffer::empty(Rect::new(0, 0, 200, 1));
   let (end, _) = buffer.set_stringn(0, 0, text, usize::MAX, Style::new());
   end
@@ -140,16 +141,17 @@ mod tests {
   fn the_hint_sits_centred_on_the_last_row() {
     let area = Rect::new(0, 0, 40, 5);
     let mut buffer = Buffer::empty(area);
-    draw_hint(&mut buffer, area, Color::Yellow);
+    draw_hint(&mut buffer, area, Color::Yellow, DEFAULT_HINT);
     let row: String = (0..40)
       .map(|x| buffer[(x, 4)].symbol().to_string())
       .collect();
-    let squeezed: String = row.chars().filter(|c| *c != ' ').collect();
-    assert!(squeezed.contains("再按一次Ctrl+C退出"), "{row:?}");
+    assert_eq!(row.trim(), DEFAULT_HINT.trim(), "{row:?}");
+    let start = (40 - DEFAULT_HINT.len()) / 2;
+    assert!(row[..start].trim().is_empty() && row[start..].starts_with(DEFAULT_HINT));
     assert!(buffer[(20, 4)].modifier.contains(Modifier::REVERSED));
     // A narrow terminal clips the hint instead of panicking.
     let tiny = Rect::new(0, 0, 6, 1);
     let mut buffer = Buffer::empty(tiny);
-    draw_hint(&mut buffer, tiny, Color::Yellow);
+    draw_hint(&mut buffer, tiny, Color::Yellow, DEFAULT_HINT);
   }
 }

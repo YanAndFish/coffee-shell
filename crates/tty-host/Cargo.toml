@@ -1,0 +1,28 @@
+[package]
+name = "tty-host"
+description = "Runs an nsh Rust-mode root in the current terminal: one process per terminal or SSH session."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+base64 = "0.22"
+# The crossterm ratatui-crossterm re-exports, with its poll-based input reader: the
+# default (mio) reader spins at 100 % CPU forever once the PTY hangs up (it loops on
+# `read` returning 0 / EIO), so a dropped SSH client would leave a busy orphan.
+crossterm = { version = "0.29", features = [ "use-dev-tty" ] }
+nsh-core.workspace = true
+nsh-platform-tui = { workspace = true, features = [
+  "run-app",
+  "net"
+] }
+ratatui-core.workspace = true
+ratatui-crossterm.workspace = true
+rustix = { version = "1.1", features = [
+  "event",
+  "fs",
+  "stdio",
+  "termios"
+] }
+signal-hook = "0.3"

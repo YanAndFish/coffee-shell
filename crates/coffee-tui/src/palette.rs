@@ -32,10 +32,12 @@
 //! colour (pictures, fills nsh already drew as RGB or as an index) passes through.
 
 use coffee_app::ui::theme::{Ansi16, Channel, FILLS, Fill16, HOVER_TOKEN, INKS, hover_band};
-use nsh_platform_tui::ColorDepth;
-use ratatui_core::{
-  buffer::{Buffer, Cell},
-  style::{Color, Modifier},
+use tty_host::{
+  ColorDepth, FrameFilter,
+  ratatui_core::{
+    buffer::{Buffer, Cell},
+    style::{Color, Modifier},
+  },
 };
 
 /// An RGB triple.
@@ -182,7 +184,7 @@ pub struct Pin {
 impl Pin {
   /// The pin of `palette` at `depth`. At 16 colours and without colours only the carriers
   /// change (into the 16-colour roles, or attributes): the rest is the terminal's.
-  pub fn new(palette: Palette, depth: ColorDepth) -> Option<Self> {
+  pub fn new(palette: Palette, depth: ColorDepth) -> Self {
     let exact = matches!(depth, ColorDepth::TrueColor | ColorDepth::Ansi256);
     let at = |rgb: Rgb| -> Color {
       match depth {
@@ -213,7 +215,7 @@ impl Pin {
       .find(|(spec, _)| spec.token == "selection")
       .map_or(palette.card, |(_, (token, _))| token);
     let accent = |rgb: Rgb, sixteen: Color| if exact { at(rgb) } else { sixteen };
-    Some(Self {
+    Self {
       depth,
       background: at(palette.background),
       foreground: at(palette.foreground),
@@ -238,7 +240,7 @@ impl Pin {
         at(palette.success),
         at(palette.destructive),
       ],
-    })
+    }
   }
 
   /// The theme colour standing for nsh's accent `color` as a fill, if it is one.
@@ -409,6 +411,19 @@ impl Pin {
   }
 }
 
+/// The pin is the host's frame filter at every depth: it owns the colours even at 16
+/// colours and in monochrome (nsh draws bandless there too, and the pin maps the
+/// carriers into roles and attributes), so the terminal's own colours never reach nsh.
+impl FrameFilter for Pin {
+  fn apply(&mut self, buffer: &mut Buffer) {
+    self.buffer(buffer);
+  }
+
+  fn owns_colors(&self) -> bool {
+    true
+  }
+}
+
 /// The accent nsh 0.6.1 reads a saturated colour as (its `HUE_BANDS`: hue upper bounds in
 /// degrees).
 pub fn hue_band(rgb: Rgb) -> Color {
@@ -514,7 +529,7 @@ mod tests {
   }
 
   fn pin(depth: ColorDepth) -> Pin {
-    Pin::new(palette(), depth).unwrap()
+    Pin::new(palette(), depth)
   }
 
   fn pinned(pin: &Pin, fg: Color, bg: Color, modifier: Modifier) -> Cell {
@@ -814,7 +829,7 @@ mod tests {
 
   #[test]
   fn a_whole_buffer_is_pinned() {
-    use ratatui_core::layout::Rect;
+    use tty_host::ratatui_core::layout::Rect;
     let pin = pin(ColorDepth::TrueColor);
     let mut buffer = Buffer::empty(Rect::new(0, 0, 3, 2));
     pin.buffer(&mut buffer);

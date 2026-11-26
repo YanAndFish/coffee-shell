@@ -1,5 +1,5 @@
 //! The clipboard over the terminal (OSC 52): what the app copies reaches the clipboard
-//! of the machine the SSH client runs on, never the server's.
+//! of the machine the terminal (or the SSH client) runs on, never the server's.
 //!
 //! Adapted from `nsh-tui-host` 0.6.1 (`clipboard.rs`, Apache-2.0), without its fallback
 //! to the local desktop clipboard: on a server that would be the wrong machine's.
@@ -66,11 +66,11 @@ mod tests {
   #[test]
   fn a_copy_goes_out_once_as_osc_52() {
     let clipboard = TerminalClipboard::default();
-    clipboard.set_text(Some("RT2611220001".into()));
-    assert_eq!(clipboard.text().as_deref(), Some("RT2611220001"));
+    clipboard.set_text(Some("hello".into()));
+    assert_eq!(clipboard.text().as_deref(), Some("hello"));
     let mut out = Vec::new();
     clipboard.flush(&mut out).unwrap();
-    assert_eq!(out, b"\x1b]52;c;UlQyNjExMjIwMDAx\x07");
+    assert_eq!(out, b"\x1b]52;c;aGVsbG8=\x07");
     out.clear();
     clipboard.flush(&mut out).unwrap();
     assert!(out.is_empty());

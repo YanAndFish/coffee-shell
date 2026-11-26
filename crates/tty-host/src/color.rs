@@ -4,7 +4,7 @@
 //!
 //! | # | When                                                     | Depth                   |
 //! | - | -------------------------------------------------------- | ----------------------- |
-//! | 1 | `COFFEE_COLORS` is `truecolor`/`24bit`, `256`, `16`, `mono`/`none` | that one      |
+//! | 1 | the forced mode (`HostOptions::color_mode`) is `truecolor`/`24bit`, `256`, `16`, `mono`/`none` | that one |
 //! | 2 | `NO_COLOR` is set and not empty                          | mono                    |
 //! | 3 | `COLORTERM` is `truecolor` or `24bit`                    | 24-bit                  |
 //! | 4 | a terminal brand known for 24-bit colour ([`brand`])     | 24-bit                  |
@@ -24,7 +24,7 @@ use nsh_platform_tui::ColorDepth;
 /// Which rule decided the depth.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rule {
-  /// `COFFEE_COLORS`.
+  /// The forced mode the caller gave.
   Forced,
   /// `NO_COLOR`.
   NoColor,
@@ -46,8 +46,8 @@ pub struct Choice {
 }
 
 impl Choice {
-  /// The depth `color_mode` (the server's `COFFEE_COLORS`) and the environment `var`
-  /// reads give, before asking the terminal anything.
+  /// The depth `color_mode` (a mode the server forces) and the environment `var` reads
+  /// give, before asking the terminal anything.
   pub fn from_env(color_mode: Option<&str>, var: impl Fn(&str) -> Option<String>) -> Self {
     let choice = |depth, rule| Self { depth, rule };
     match color_mode.map(str::to_ascii_lowercase).as_deref() {
@@ -147,7 +147,7 @@ mod tests {
       Rule,
       ColorDepth,
     );
-    // (COFFEE_COLORS, environment, depth, rule, depth after a yes from the terminal)
+    // (forced mode, environment, depth, rule, depth after a yes from the terminal)
     let rows: &[Row] = &[
       // 1: the server's override beats everything, an answer included.
       (
@@ -190,7 +190,7 @@ mod tests {
         Rule::NoColor,
         Monochrome,
       ),
-      // An empty NO_COLOR is no NO_COLOR; an unknown COFFEE_COLORS is ignored.
+      // An empty NO_COLOR is no NO_COLOR; an unknown forced mode is ignored.
       (
         Some("bogus"),
         &[("NO_COLOR", ""), ("TERM", "xterm-256color")],

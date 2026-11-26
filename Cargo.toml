@@ -4,7 +4,8 @@ members = [
   "apps/tui",
   "crates/coffee-api",
   "crates/coffee-tui",
-  "crates/tty-gateway"
+  "crates/tty-gateway",
+  "crates/tty-host"
 ]
 # `nsh` writes the sources of the app's runners and hosts under `apps/tui/.nsh/`
 # (each with a Cargo.toml of its own); they are never members of this workspace.
@@ -30,3 +31,4 @@ serde_json = "1"
 
 coffee-app = { path = "apps/tui" }
 coffee-api = { path = "crates/coffee-api" }
+tty-host = { path = "crates/tty-host" }

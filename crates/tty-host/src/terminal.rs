@@ -142,14 +142,15 @@ pub struct Session {
 impl Session {
   /// Enters raw mode, queries the terminal (for 24-bit colour too when `ask_rgb`), then
   /// switches to the alternate screen with mouse capture, bracketed paste, focus reports
-  /// and (when answered) kitty keys.
-  pub fn enter(shutdown: &Shutdown, ask_rgb: bool) -> io::Result<Self> {
+  /// and (when answered) kitty keys. `program` names this program in the error when stdin
+  /// or stdout is not a terminal.
+  pub fn enter(shutdown: &Shutdown, ask_rgb: bool, program: &str) -> io::Result<Self> {
     let stdin = rustix::stdio::stdin();
     let stdout = rustix::stdio::stdout();
     if !rustix::termios::isatty(stdin) || !rustix::termios::isatty(stdout) {
       return Err(io::Error::new(
         io::ErrorKind::NotConnected,
-        "coffee-tui needs a terminal: run it in one, or connect with `ssh -t`",
+        format!("{program} needs a terminal: run it in one, or connect with `ssh -t`"),
       ));
     }
     let mut session = Self {

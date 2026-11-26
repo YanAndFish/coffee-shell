@@ -13,19 +13,19 @@ use coffee_app::ui::{
   self,
   theme::{Ansi16, INKS, Tone},
 };
-use coffee_tui::{
-  capabilities,
-  palette::{Palette, Pin, nearest_256},
-  terminal::Replies,
-};
+use coffee_tui::palette::{Palette, Pin, nearest_256};
 use nsh_base::theme;
 use nsh_core::prelude::*;
-use nsh_platform_tui::{AppOptions, AppView, Appearance, ColorDepth, Root, RunEvent, run_app};
-use ratatui_core::{
-  backend::TestBackend,
-  buffer::{Buffer, Cell},
-  style::{Color, Modifier},
-  terminal::Terminal,
+use tty_host::{
+  FrameFilter, capabilities,
+  nsh_platform_tui::{AppOptions, AppView, Appearance, ColorDepth, Root, RunEvent, run_app},
+  ratatui_core::{
+    backend::TestBackend,
+    buffer::{Buffer, Cell},
+    style::{Color, Modifier},
+    terminal::Terminal,
+  },
+  terminal::Replies,
 };
 
 /// One row per token: text in it, or a fill of it with a label.
@@ -107,9 +107,9 @@ fn Tokens() -> impl IntoElement {
 }
 
 fn render_root(root: Root, depth: ColorDepth, cols: u16, rows: u16) -> Buffer {
-  let pin = Pin::new(Palette::app().unwrap(), depth);
+  let mut pin = Pin::new(Palette::app().unwrap(), depth);
   let mut options = AppOptions::default();
-  options.capabilities = capabilities(depth, pin.is_some(), &Replies::default());
+  options.capabilities = capabilities(depth, pin.owns_colors(), &Replies::default());
   options.ui_sets = vec![nsh_base::registry(), coffee_app::registry()];
   let mut view = AppView::new(options);
   let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
@@ -126,9 +126,7 @@ fn render_root(root: Root, depth: ColorDepth, cols: u16, rows: u16) -> Buffer {
   })
   .unwrap();
   let mut buffer = terminal.backend().buffer().clone();
-  if let Some(pin) = pin {
-    pin.buffer(&mut buffer);
-  }
+  pin.apply(&mut buffer);
   buffer
 }
 

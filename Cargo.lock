@@ -451,17 +451,11 @@ dependencies = [
 name = "coffee-tui"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "coffee-app",
- "crossterm",
  "nsh-base",
  "nsh-core",
- "nsh-platform-tui",
- "ratatui-core",
- "ratatui-crossterm",
- "rustix",
  "serde_json",
- "signal-hook",
+ "tty-host",
 ]
 
 [[package]]
@@ -3971,6 +3965,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vt100",
+]
+
+[[package]]
+name = "tty-host"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "crossterm",
+ "nsh-core",
+ "nsh-platform-tui",
+ "ratatui-core",
+ "ratatui-crossterm",
+ "rustix",
+ "signal-hook",
 ]
 
 [[package]]
