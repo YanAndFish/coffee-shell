@@ -56,6 +56,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # The end-to-end tests (crates/tty-gateway/tests) start the coffee-tui binary.
       - run: cargo build --workspace --locked
+      - name: Check the shop's gateway configuration
+        run: target/debug/tty-gateway --check --config deploy/gateway.toml
       - run: cargo test --workspace --locked
 
   e2e:
@@ -79,6 +81,8 @@ jobs:
           save-if: false
       - name: Build coffee-tui and tty-gateway once
         run: cargo build --locked -p coffee-tui -p tty-gateway
+      - name: Check the shop's gateway configuration
+        run: target/debug/tty-gateway --check --config deploy/gateway.toml
       - name: Run the flows (fresh database each)
         run: python3 scripts/e2e/run.py
         env:
@@ -175,14 +179,16 @@ jobs:
           tags: roast-tty-server:ci
           cache-from: type=gha,scope=server
           cache-to: type=gha,scope=server,mode=max
-      - name: Smoke-test the images (non-root users, both gateway binaries)
+      - name: Smoke-test the images (non-root users, both gateway binaries, the gateway's config)
         run: |
           set -euo pipefail
           docker image ls 'roast-tty-*'
           test "$(docker run --rm --entrypoint id roast-tty-ssh:ci -u)" = 10001
           test "$(docker run --rm --entrypoint id roast-tty-server:ci -u)" = 10001
           docker run --rm --entrypoint sh roast-tty-ssh:ci -c \
-            'test -x /usr/local/bin/tty-gateway && test -x /usr/local/bin/coffee-tui'
+            'test -x /usr/local/bin/tty-gateway && test -x /usr/local/bin/coffee-tui && test -f /etc/tty-gateway/gateway.toml'
+          # The baked-in configuration checks out where the image runs it (TTY_GATEWAY_CONFIG).
+          docker run --rm roast-tty-ssh:ci --check
           # No secret is baked into either image.
           for image in roast-tty-ssh:ci roast-tty-server:ci; do
             ! docker image inspect "$image" --format '{{json .Config.Env}}' | grep -q COFFEE_INTERNAL_KEY
