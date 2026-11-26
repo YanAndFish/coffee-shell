@@ -205,6 +205,48 @@ async fn a_disconnect_ends_the_real_tui_within_two_seconds() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_stopping_server_restores_the_client_terminal_before_it_closes() {
+  let dir = temp_dir("real-stop");
+  let bin = dir.join("coffee-tui-stop-test");
+  std::os::unix::fs::symlink(tui_bin(), &bin).unwrap();
+  let mut server = TestServer::start(bin, |_| {}).await;
+  let before = children_named("coffee-tui-stop-test");
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let mut terminal = Terminal::open(&handle, 120, 40).await;
+  assert!(terminal.wait_text("◆ROAST/TTY", WAIT).await);
+  let pids: Vec<u32> = children_named("coffee-tui-stop-test")
+    .into_iter()
+    .filter(|pid| !before.contains(pid))
+    .collect();
+  assert_eq!(pids.len(), 1, "{pids:?}");
+  let shown = terminal.raw.len();
+  let stopping = Instant::now();
+  let served = server.stop();
+  assert!(terminal.wait_closed(Duration::from_secs(5)).await);
+  let after = String::from_utf8_lossy(&terminal.raw[shown..]).into_owned();
+  let left = after
+    .rfind("\x1b[?1049l")
+    .unwrap_or_else(|| panic!("the alternate screen was not left: {after:?}"));
+  let told = after
+    .find("服务正在停止")
+    .unwrap_or_else(|| panic!("no notice: {after:?}"));
+  assert!(left < told, "the notice goes on the restored screen");
+  assert_eq!(terminal.exit_status, Some(143));
+  tokio::time::timeout(Duration::from_secs(5), served)
+    .await
+    .expect("serve returns once the connections are gone")
+    .unwrap();
+  assert!(!alive(pids[0]), "coffee-tui {} still running", pids[0]);
+  assert!(
+    stopping.elapsed() <= Duration::from_secs(3),
+    "took {:?}",
+    stopping.elapsed()
+  );
+  drop(handle);
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn exec_sftp_and_forwarding_are_refused() {
   let dir = temp_dir("refused");
   let server = TestServer::start(probe_bin(&dir), |_| {}).await;

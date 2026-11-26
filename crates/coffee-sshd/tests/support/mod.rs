@@ -131,6 +131,7 @@ pub fn crash_bin(dir: &Path) -> PathBuf {
 pub struct TestServer {
   pub addr: SocketAddr,
   stop: Option<oneshot::Sender<()>>,
+  served: Option<tokio::task::JoinHandle<()>>,
   pub dir: PathBuf,
 }
 
@@ -151,7 +152,7 @@ impl TestServer {
     let listener = TcpListener::bind(config.addr).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
-    tokio::spawn(async move {
+    let served = tokio::spawn(async move {
       let _ = serve(listener, config, key, async {
         let _ = stopped.await;
       })
@@ -160,8 +161,17 @@ impl TestServer {
     Self {
       addr,
       stop: Some(stop),
+      served: Some(served),
       dir,
     }
+  }
+
+  /// Stops the server as SIGTERM does; the task that ends when `serve` returned.
+  pub fn stop(&mut self) -> tokio::task::JoinHandle<()> {
+    if let Some(stop) = self.stop.take() {
+      let _ = stop.send(());
+    }
+    self.served.take().expect("stopped once")
   }
 }
 
