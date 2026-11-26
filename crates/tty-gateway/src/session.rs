@@ -1,11 +1,20 @@
-//! One running session: pumps the upstream's output to the SSH channel and the client's
-//! input to the upstream until either side ends, then ends the other.
+//! One session: takes its place, starts the upstream, pumps the upstream's output to the
+//! SSH channel and the client's input to the upstream until either side ends (or the
+//! idle or time limit, or a shutdown), then ends the other.
+//!
+//! Nothing here blocks a russh handler: the connection hands input over through a
+//! [`Link`] that never waits (an unbounded queue with a byte budget, the latest size in
+//! a `watch`, hang-ups in another), and every call on the connection's [`Handle`] on the
+//! way out has a timeout (its queue is bounded and is not drained while the client's
+//! window is full).
 
 use std::{
+  future::Future,
   io,
+  net::IpAddr,
   sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
   },
   time::{Duration, Instant},
 };
@@ -13,14 +22,25 @@ use std::{
 use bytes::Bytes;
 use russh::{ChannelId, server::Handle};
 use tokio::{
-  sync::{mpsc, oneshot},
+  sync::{mpsc, watch},
   task::JoinHandle,
 };
 
-use crate::{config::Route, limits::Slot, upstream::Running};
+use crate::{
+  config::Route,
+  limits::{Caps, Limits, Refusal},
+  upstream::{Input, Launch},
+};
 
-/// How long a session's program has to leave after SIGHUP before it is killed.
+/// How long a session's program has to leave after SIGHUP before its group is killed.
 pub const KILL_GRACE: Duration = Duration::from_millis(1000);
+/// Client input queued for a program that does not read it, at most.
+pub const INPUT_BUDGET: usize = 1024 * 1024;
+/// How long one call on the connection's handle may take on the way out.
+pub const HANDLE_TIMEOUT: Duration = Duration::from_millis(250);
+/// Tries at starting a session's upstream, and the pause between them.
+const SPAWN_ATTEMPTS: u32 = 3;
+const SPAWN_RETRY: Duration = Duration::from_millis(150);
 
 /// Undoes what a session program that died may have left on the client's terminal: kitty
 /// keys, mouse, paste and focus reports, alternate scroll, a synchronized update, the
@@ -37,52 +57,265 @@ impl Clock {
   }
 }
 
-/// What a session task gets from its connection.
-pub enum ToUpstream {
-  Input(Vec<u8>),
-  Resize { cols: u16, rows: u16 },
+/// Why the client side ended a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hangup {
+  /// The channel was closed, or the connection is gone.
+  Closed,
+  /// The client sent EOF.
+  Eof,
+  /// The client sent more than [`INPUT_BUDGET`] the program did not take.
+  Overflow,
+}
+
+/// The connection's end of a session: never waits.
+#[derive(Debug)]
+pub struct Link {
+  input: mpsc::UnboundedSender<Vec<u8>>,
+  queued: Arc<AtomicUsize>,
+  size: watch::Sender<(u16, u16)>,
+  hangup: watch::Sender<Option<Hangup>>,
+}
+
+/// The session's end.
+#[derive(Debug)]
+pub struct LinkEnd {
+  input: mpsc::UnboundedReceiver<Vec<u8>>,
+  queued: Arc<AtomicUsize>,
+  size: watch::Receiver<(u16, u16)>,
+  hangup: watch::Receiver<Option<Hangup>>,
+}
+
+/// A new link for a terminal of `cols`×`rows`.
+pub fn link(cols: u16, rows: u16) -> (Link, LinkEnd) {
+  let (input, input_rx) = mpsc::unbounded_channel();
+  let queued = Arc::new(AtomicUsize::new(0));
+  let (size, size_rx) = watch::channel((cols, rows));
+  let (hangup, hangup_rx) = watch::channel(None);
+  (
+    Link {
+      input,
+      queued: queued.clone(),
+      size,
+      hangup,
+    },
+    LinkEnd {
+      input: input_rx,
+      queued,
+      size: size_rx,
+      hangup: hangup_rx,
+    },
+  )
+}
+
+impl Link {
+  /// Queues client input; `false` when it is over the budget (the session is then
+  /// ended, and nothing more is taken).
+  pub fn input(&self, bytes: &[u8]) -> bool {
+    if self.hangup.borrow().is_some() {
+      return true;
+    }
+    let before = self.queued.fetch_add(bytes.len(), Ordering::AcqRel);
+    if before + bytes.len() > INPUT_BUDGET {
+      self.hang_up(Hangup::Overflow);
+      return false;
+    }
+    let _ = self.input.send(bytes.to_vec());
+    true
+  }
+
+  /// The terminal's new size (the latest one wins).
+  pub fn resize(&self, cols: u16, rows: u16) {
+    self.size.send_replace((cols, rows));
+  }
+
+  /// Ends the session from the client's side (the first reason counts).
+  pub fn hang_up(&self, why: Hangup) {
+    self.hangup.send_if_modified(|current| {
+      if current.is_some() {
+        return false;
+      }
+      *current = Some(why);
+      true
+    });
+  }
+}
+
+/// Marks a connection as having a session until dropped.
+#[derive(Debug)]
+pub struct Alive(pub Arc<AtomicBool>);
+
+impl Alive {
+  pub fn new(flag: Arc<AtomicBool>) -> Self {
+    flag.store(true, Ordering::Release);
+    Self(flag)
+  }
+}
+
+impl Drop for Alive {
+  fn drop(&mut self) {
+    self.0.store(false, Ordering::Release);
+  }
 }
 
 /// Everything a session task needs.
 pub struct SessionTask {
   pub conn: u64,
   pub route: Arc<Route>,
-  pub running: Running,
-  pub from_connection: mpsc::Receiver<ToUpstream>,
+  /// The session's environment (the size comes from the link at the start).
+  pub env: Vec<(String, String)>,
+  pub link: LinkEnd,
   pub handle: Handle,
   pub channel: ChannelId,
   /// When the client last typed or resized, on `clock`.
   pub last_input: Arc<AtomicU64>,
   pub clock: Clock,
-  pub slot: Slot,
+  pub limits: Arc<Limits>,
+  pub ip: IpAddr,
+  pub caps: Caps,
+  /// Becomes `true` when the server shuts down.
+  pub shutdown: watch::Receiver<bool>,
+  /// How long the program has to leave at a shutdown.
+  pub shutdown_grace: Duration,
+  pub alive: Alive,
 }
 
 /// How a session ended.
 pub enum End {
   Exited(io::Result<u32>),
-  Disconnected,
+  Hangup(Hangup),
   Idle,
+  TimeLimit,
+  Shutdown,
 }
 
-/// Pumps the upstream to the channel and the channel to the upstream until it ends or
-/// the client goes; then stops it (see [`Running::stop`]) and closes the channel with its
-/// exit status.
+/// Resolves once `shutdown` is `true`; never if the server is gone without one.
+async fn shut(shutdown: &mut watch::Receiver<bool>) {
+  if shutdown.wait_for(|down| *down).await.is_err() {
+    std::future::pending::<()>().await;
+  }
+}
+
+/// Resolves once the client hangs up (the connection gone counts as closed).
+async fn hung_up(hangup: &mut watch::Receiver<Option<Hangup>>) -> Hangup {
+  match hangup.wait_for(Option::is_some).await {
+    Ok(why) => why.unwrap_or(Hangup::Closed),
+    Err(_) => Hangup::Closed,
+  }
+}
+
+/// `call` within [`HANDLE_TIMEOUT`].
+pub async fn within<T>(call: impl Future<Output = T>) -> Option<T> {
+  tokio::time::timeout(HANDLE_TIMEOUT, call).await.ok()
+}
+
+/// What the client is told when its session is refused, in the route's words.
+pub fn refusal_message(route: &Route, refusal: Refusal) -> String {
+  let messages = &route.messages;
+  match refusal {
+    Refusal::Full { max } => messages.full(max),
+    Refusal::PerIp { max } => messages.full_per_ip(max),
+    Refusal::Route { max } => messages.full_route(max),
+  }
+}
+
+/// Runs one session from its place to its end.
 pub async fn run_session(task: SessionTask) {
   let SessionTask {
     conn,
     route,
-    mut running,
-    mut from_connection,
+    env,
+    link,
     handle,
     channel,
     last_input,
     clock,
-    slot,
+    limits,
+    ip,
+    caps,
+    mut shutdown,
+    shutdown_grace,
+    alive,
   } = task;
-  let _slot = slot;
+  let _alive = alive;
+  let LinkEnd {
+    input,
+    queued,
+    mut size,
+    mut hangup,
+  } = link;
+  let route_name = route.name.as_str();
+
+  // The place is taken only now (and held by this task: freed on every way out).
+  let _slot = match limits.acquire(ip, route_name, caps, route.limits.max_sessions) {
+    Ok(slot) => slot,
+    Err(refusal) => {
+      tracing::warn!(
+        conn,
+        route = route_name,
+        refused = refusal.reason(),
+        "session refused"
+      );
+      tell_and_close(&handle, channel, &refusal_message(&route, refusal), 1).await;
+      return;
+    }
+  };
+
+  // A start can fail for a moment (no process or PTY to spare under load, the program
+  // being replaced): try again shortly before giving up on the session.
+  let mut attempt = 1;
+  let mut running = loop {
+    let (cols, rows) = *size.borrow_and_update();
+    let launch = Launch {
+      env: env.clone(),
+      cols,
+      rows,
+    };
+    let starting = route.clone();
+    let started = tokio::task::spawn_blocking(move || starting.upstream.start(&launch))
+      .await
+      .unwrap_or_else(|error| Err(io::Error::other(error)));
+    match started {
+      Ok(running) => break running,
+      Err(error) if attempt < SPAWN_ATTEMPTS => {
+        tracing::warn!(
+          conn,
+          route = route_name,
+          attempt,
+          %error,
+          "could not start the session program; trying again"
+        );
+        tokio::select! {
+          () = tokio::time::sleep(SPAWN_RETRY) => {}
+          _ = hung_up(&mut hangup) => return,
+          () = shut(&mut shutdown) => return,
+        }
+        attempt += 1;
+      }
+      Err(error) => {
+        tracing::error!(
+          conn,
+          route = route_name,
+          upstream = %route.upstream.describe(),
+          attempt,
+          %error,
+          "could not start the session program"
+        );
+        tell_and_close(&handle, channel, &route.messages.unavailable, 1).await;
+        return;
+      }
+    }
+  };
   let started = Instant::now();
   let pid = running.pid();
-  let Some((mut reader, mut writer)) = running.split() else {
+  tracing::info!(
+    conn,
+    route = route_name,
+    pid = pid.unwrap_or_default(),
+    active = limits.active(),
+    "session program started"
+  );
+  let Some((mut reader, writer)) = running.split() else {
     return;
   };
 
@@ -112,27 +345,15 @@ pub async fn run_session(task: SessionTask) {
       }
     }
   });
-
   // Input and resizes go to the upstream on their own task, so one that stops reading
-  // can never keep a disconnect from being noticed.
-  let (gone_tx, mut gone) = oneshot::channel::<()>();
-  let feeder = tokio::spawn(async move {
-    while let Some(message) = from_connection.recv().await {
-      match message {
-        ToUpstream::Input(bytes) => {
-          if writer.write_all(&bytes).await.is_err() {
-            break;
-          }
-        }
-        ToUpstream::Resize { cols, rows } => {
-          let _ = writer.resize(cols, rows);
-        }
-      }
-    }
-    let _ = gone_tx.send(());
-  });
+  // never holds up anything else.
+  let feeder = tokio::spawn(feed(writer, input, queued, size));
 
   let idle = route.limits.idle_timeout;
+  let time_limit = route
+    .limits
+    .max_session_time
+    .map(|limit| tokio::time::Instant::now() + limit);
   // How long ago the last input (or the first output) was, once there was output.
   let quiet = || {
     shown.load(Ordering::Acquire).then(|| {
@@ -151,7 +372,14 @@ pub async fn run_session(task: SessionTask) {
     };
     tokio::select! {
       status = running.wait() => break End::Exited(status),
-      _ = &mut gone => break End::Disconnected,
+      why = hung_up(&mut hangup) => break End::Hangup(why),
+      () = shut(&mut shutdown) => break End::Shutdown,
+      () = async {
+        match time_limit {
+          Some(at) => tokio::time::sleep_until(at).await,
+          None => std::future::pending().await,
+        }
+      } => break End::TimeLimit,
       () = tokio::time::sleep(check) => {
         if let (Some(idle), Some(quiet)) = (idle, quiet()) && quiet >= idle {
           break End::Idle;
@@ -159,11 +387,14 @@ pub async fn run_session(task: SessionTask) {
       }
     }
   };
+  feeder.abort();
+  let seconds = || started.elapsed().as_secs();
 
-  let route_name = route.name.as_str();
   match end {
     End::Exited(status) => {
-      feeder.abort();
+      // Whatever the program left in its group goes too (signalled at once: see
+      // `Running::hang_up`).
+      running.hang_up();
       // The last frame (the restored screen) may still be in the PTY.
       if tokio::time::timeout(Duration::from_millis(500), &mut pump)
         .await
@@ -172,14 +403,13 @@ pub async fn run_session(task: SessionTask) {
         pump.abort();
       }
       let code = status.unwrap_or(255);
-      let seconds = started.elapsed().as_secs();
       if code == 0 {
         tracing::info!(
           conn,
           route = route_name,
           ?pid,
           code,
-          seconds,
+          seconds = seconds(),
           "session ended: program exited"
         );
       } else {
@@ -190,53 +420,167 @@ pub async fn run_session(task: SessionTask) {
           route = route_name,
           ?pid,
           code,
-          seconds,
+          seconds = seconds(),
           "session ended: program failed"
         );
         let notice = format!("{TERMINAL_RESET}\r\n{}\r\n", route.messages.crashed(code));
-        let _ = handle.data(channel, Bytes::from(notice.into_bytes())).await;
+        within(handle.data(channel, Bytes::from(notice.into_bytes()))).await;
       }
-      let _ = handle.exit_status_request(channel, code).await;
-      let _ = handle.eof(channel).await;
-      let _ = handle.close(channel).await;
+      close(&handle, channel, code).await;
+      running.stop(KILL_GRACE).await;
     }
-    End::Disconnected => {
-      feeder.abort();
+    End::Hangup(why) => {
       let how = running.stop(KILL_GRACE).await;
+      if why == Hangup::Eof {
+        // The client still reads: what the program wrote last goes out first.
+        let _ = tokio::time::timeout(Duration::from_millis(300), &mut pump).await;
+      }
       pump.abort();
+      match why {
+        Hangup::Closed => {
+          tracing::info!(
+            conn,
+            route = route_name,
+            ?pid,
+            how,
+            seconds = seconds(),
+            "session ended: client left"
+          );
+        }
+        Hangup::Eof => {
+          tracing::info!(
+            conn,
+            route = route_name,
+            ?pid,
+            how,
+            seconds = seconds(),
+            "session ended: client sent EOF"
+          );
+          let code = running.wait().await.unwrap_or(255);
+          close(&handle, channel, code).await;
+        }
+        Hangup::Overflow => {
+          tracing::warn!(
+            conn,
+            route = route_name,
+            ?pid,
+            how,
+            budget = INPUT_BUDGET,
+            "session ended: input the program did not read"
+          );
+          disconnect(&handle, "input overflow").await;
+        }
+      }
+    }
+    End::Idle | End::TimeLimit => {
+      let how = running.stop(KILL_GRACE).await;
+      let _ = tokio::time::timeout(Duration::from_millis(300), &mut pump).await;
+      pump.abort();
+      let message = if matches!(end, End::Idle) {
+        let minutes = idle.map_or(0, |idle| idle.as_secs() / 60);
+        tracing::info!(conn, route = route_name, ?pid, how, "session ended: idle");
+        route.messages.idle(minutes)
+      } else {
+        tracing::info!(
+          conn,
+          route = route_name,
+          ?pid,
+          how,
+          seconds = seconds(),
+          "session ended: time limit"
+        );
+        route.messages.time_limit.clone()
+      };
+      tell_and_close(&handle, channel, &message, 124).await;
+      disconnect(&handle, "session over").await;
+    }
+    End::Shutdown => {
+      pump.abort();
+      let notice = format!("{TERMINAL_RESET}\r\n{}\r\n", route.messages.shutting_down);
+      within(handle.data(channel, Bytes::from(notice.into_bytes()))).await;
+      let how = running.stop(shutdown_grace).await;
       tracing::info!(
         conn,
         route = route_name,
         ?pid,
         how,
-        seconds = started.elapsed().as_secs(),
-        "session ended: client left"
+        seconds = seconds(),
+        "session ended: shutting down"
       );
-    }
-    End::Idle => {
-      feeder.abort();
-      let how = running.stop(KILL_GRACE).await;
-      let _ = tokio::time::timeout(Duration::from_millis(300), &mut pump).await;
-      pump.abort();
-      let minutes = idle.map_or(0, |idle| idle.as_secs() / 60);
-      tracing::info!(conn, route = route_name, ?pid, how, "session ended: idle");
-      tell_and_close(&handle, channel, &route.messages.idle(minutes), 124).await;
-      let _ = handle
-        .disconnect(
-          russh::Disconnect::ByApplication,
-          "idle".into(),
-          String::new(),
-        )
-        .await;
+      let code = running.wait().await.unwrap_or(255);
+      close(&handle, channel, code).await;
+      disconnect(&handle, "shutting down").await;
     }
   }
+}
+
+/// Writes queued input to the upstream, and resizes it; a write that does not complete
+/// (a program that does not read) never holds up a resize.
+async fn feed(
+  mut writer: Input,
+  mut input: mpsc::UnboundedReceiver<Vec<u8>>,
+  queued: Arc<AtomicUsize>,
+  mut size: watch::Receiver<(u16, u16)>,
+) {
+  enum Step {
+    Data(Option<Vec<u8>>),
+    Wrote(io::Result<usize>),
+    Resize(bool),
+  }
+  let mut pending: Option<(Vec<u8>, usize)> = None;
+  let mut sizes = true;
+  loop {
+    let step = match &pending {
+      None => tokio::select! {
+        bytes = input.recv() => Step::Data(bytes),
+        changed = size.changed(), if sizes => Step::Resize(changed.is_ok()),
+      },
+      Some((bytes, at)) => tokio::select! {
+        wrote = writer.write(&bytes[*at..]) => Step::Wrote(wrote),
+        changed = size.changed(), if sizes => Step::Resize(changed.is_ok()),
+      },
+    };
+    match step {
+      Step::Data(None) | Step::Wrote(Ok(0) | Err(_)) => return,
+      Step::Data(Some(bytes)) => {
+        if bytes.is_empty() {
+          continue;
+        }
+        pending = Some((bytes, 0));
+      }
+      Step::Wrote(Ok(wrote)) => {
+        queued.fetch_sub(wrote, Ordering::AcqRel);
+        if let Some((bytes, at)) = &mut pending {
+          *at += wrote;
+          if *at >= bytes.len() {
+            pending = None;
+          }
+        }
+      }
+      Step::Resize(true) => {
+        let (cols, rows) = *size.borrow_and_update();
+        let _ = writer.resize(cols, rows);
+      }
+      Step::Resize(false) => sizes = false,
+    }
+  }
+}
+
+/// Sends the exit status, EOF and the close, each within [`HANDLE_TIMEOUT`].
+async fn close(handle: &Handle, channel: ChannelId, status: u32) {
+  within(handle.exit_status_request(channel, status)).await;
+  within(handle.eof(channel)).await;
+  within(handle.close(channel)).await;
+}
+
+/// Ends the connection, within [`HANDLE_TIMEOUT`].
+pub async fn disconnect(handle: &Handle, why: &str) {
+  within(handle.disconnect(russh::Disconnect::ByApplication, why.into(), String::new())).await;
 }
 
 /// Writes `message` on the channel, then ends it with `status`.
 pub async fn tell_and_close(handle: &Handle, channel: ChannelId, message: &str, status: u32) {
   let text = format!("\r\n{message}\r\n");
-  let _ = handle.data(channel, Bytes::from(text.into_bytes())).await;
-  let _ = handle.exit_status_request(channel, status).await;
-  let _ = handle.eof(channel).await;
-  let _ = handle.close(channel).await;
+  within(handle.data(channel, Bytes::from(text.into_bytes()))).await;
+  close(handle, channel, status).await;
 }

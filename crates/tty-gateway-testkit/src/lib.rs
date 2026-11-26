@@ -84,6 +84,13 @@ pub fn probe_bin(dir: &Path, name: &str, vars: &[&str]) -> PathBuf {
   path
 }
 
+/// An executable `/bin/sh` script `dir/name` with `body` after the `#!` line.
+pub fn script_bin(dir: &Path, name: &str, body: &str) -> PathBuf {
+  let path = dir.join(name);
+  write_script(&path, &format!("#!/bin/sh\n{body}"));
+  path
+}
+
 /// A stand-in session program that prints a line and then dies of SIGSEGV, as a crashed
 /// program would.
 pub fn crash_bin(dir: &Path) -> PathBuf {
@@ -159,14 +166,21 @@ impl TestServer {
     Ok(())
   }
 
-  /// Stops accepting and waits (at most 5 s) for the server to return.
-  pub async fn shutdown(mut self) {
+  /// Shuts the server down as a SIGTERM would (the whole drain) and waits for `serve`
+  /// to return, at most 10 s; how long it took (10 s if it did not return).
+  pub async fn shutdown(mut self) -> Duration {
+    let started = Instant::now();
     if let Some(stop) = self.stop.take() {
       let _ = stop.send(());
     }
-    if let Some(task) = self.task.take() {
-      let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+    if let Some(task) = self.task.take()
+      && tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .is_err()
+    {
+      return Duration::from_secs(10);
     }
+    started.elapsed()
   }
 }
 

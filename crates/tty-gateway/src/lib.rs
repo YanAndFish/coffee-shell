@@ -12,6 +12,7 @@ pub mod hostkey;
 pub mod limits;
 pub mod server;
 pub mod session;
+pub mod tasks;
 pub mod upstream;
 
 pub use config::{ConfigError, Snapshot, load, load_str};
