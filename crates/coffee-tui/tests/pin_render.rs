@@ -13,7 +13,7 @@ use coffee_app::ui::{
   self,
   theme::{Ansi16, INKS, Tone},
 };
-use coffee_host::{
+use coffee_tui::{
   capabilities,
   palette::{Palette, Pin, nearest_256},
   terminal::Replies,

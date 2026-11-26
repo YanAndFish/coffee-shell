@@ -54,12 +54,12 @@ jobs:
           shared-key: workspace-debug
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      # The end-to-end tests (crates/coffee-sshd/tests) start the coffee-tui binary.
+      # The end-to-end tests (crates/tty-gateway/tests) start the coffee-tui binary.
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
 
   e2e:
-    name: e2e (real backend + coffee-sshd + stock ssh, scripts/e2e)
+    name: e2e (real backend + tty-gateway + stock ssh, scripts/e2e)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -77,8 +77,8 @@ jobs:
           # Reads the rust job's cache and adds none of its own (the cache budget is 10 GB).
           shared-key: workspace-debug
           save-if: false
-      - name: Build coffee-tui and coffee-sshd once
-        run: cargo build --locked -p coffee-host -p coffee-sshd
+      - name: Build coffee-tui and tty-gateway once
+        run: cargo build --locked -p coffee-tui -p tty-gateway
       - name: Run the flows (fresh database each)
         run: python3 scripts/e2e/run.py
         env:
@@ -182,7 +182,7 @@ jobs:
           test "$(docker run --rm --entrypoint id roast-tty-ssh:ci -u)" = 10001
           test "$(docker run --rm --entrypoint id roast-tty-server:ci -u)" = 10001
           docker run --rm --entrypoint sh roast-tty-ssh:ci -c \
-            'test -x /usr/local/bin/coffee-sshd && test -x /usr/local/bin/coffee-tui'
+            'test -x /usr/local/bin/tty-gateway && test -x /usr/local/bin/coffee-tui'
           # No secret is baked into either image.
           for image in roast-tty-ssh:ci roast-tty-server:ci; do
             ! docker image inspect "$image" --format '{{json .Config.Env}}' | grep -q COFFEE_INTERNAL_KEY

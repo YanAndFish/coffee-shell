@@ -10,7 +10,6 @@ use std::{
   time::{Duration, Instant},
 };
 
-use coffee_sshd::{Config, serve};
 use russh::{
   ChannelMsg,
   client::{self, Handle},
@@ -21,13 +20,14 @@ use tokio::{
   net::TcpListener,
   sync::oneshot,
 };
+use tty_gateway::{Config, serve};
 
 /// A fresh, empty directory for one test.
 pub fn temp_dir(name: &str) -> PathBuf {
   static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
   let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
   let dir = std::env::temp_dir().join(format!(
-    "coffee-sshd-test-{}-{name}-{n}",
+    "tty-gateway-test-{}-{name}-{n}",
     std::process::id()
   ));
   let _ = std::fs::remove_dir_all(&dir);
@@ -68,7 +68,7 @@ pub fn tui_bin() -> PathBuf {
         .args([
           "build",
           "-p",
-          "coffee-host",
+          "coffee-tui",
           "--bin",
           "coffee-tui",
           "--message-format=json-render-diagnostics",
@@ -138,7 +138,7 @@ impl TestServer {
   pub async fn start(tui_bin: PathBuf, tune: impl FnOnce(&mut Config)) -> Self {
     // The server's log on stderr (uncaptured) when asked for, e.g. COFFEE_SSH_LOG=info.
     if std::env::var_os("COFFEE_SSH_LOG").is_some() {
-      coffee_sshd::init_logging();
+      tty_gateway::init_logging();
     }
     let dir = temp_dir("server");
     let mut config = Config::from_vars(|_| None, None).unwrap();
@@ -147,7 +147,7 @@ impl TestServer {
     config.tui_bin = tui_bin;
     config.api_url = "http://127.0.0.1:9".into();
     tune(&mut config);
-    let (key, _) = coffee_sshd::hostkey::load_or_generate(&config.host_key).unwrap();
+    let (key, _) = tty_gateway::hostkey::load_or_generate(&config.host_key).unwrap();
     let listener = TcpListener::bind(config.addr).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();

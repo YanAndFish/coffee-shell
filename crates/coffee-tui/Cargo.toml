@@ -1,5 +1,5 @@
 [package]
-name = "coffee-host"
+name = "coffee-tui"
 description = "Runs the coffee-app root in a terminal (one process per SSH session)."
 version.workspace = true
 edition.workspace = true

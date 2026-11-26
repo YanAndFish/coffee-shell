@@ -1,4 +1,4 @@
-"""The real stack for end-to-end flows: a backend on a fresh SQLite database, `coffee-sshd`,
+"""The real stack for end-to-end flows: a backend on a fresh SQLite database, `tty-gateway`,
 and stock `ssh` clients on pseudo-terminals whose screens are read as text.
 
 Nothing here knows the shop: flows (`flows.py`) say what to press and what to wait for.
@@ -224,11 +224,11 @@ class Stack:
       "COFFEE_SSH_LOG": "info,russh=warn",
       **overrides,
     }
-    self.sshd = Process("sshd", [str(self.bins / "coffee-sshd")], env, self.flow_dir / "sshd.log")
+    self.sshd = Process("sshd", [str(self.bins / "tty-gateway")], env, self.flow_dir / "sshd.log")
     if not wait_until(lambda: listening(self.ssh_port) or not self.sshd.alive(), 30):
-      raise Failure(f"coffee-sshd is not listening after 30 s:\n{self.sshd.tail()}")
+      raise Failure(f"tty-gateway is not listening after 30 s:\n{self.sshd.tail()}")
     if not self.sshd.alive():
-      raise Failure(f"coffee-sshd exited:\n{self.sshd.tail()}")
+      raise Failure(f"tty-gateway exited:\n{self.sshd.tail()}")
 
   def stop_sshd(self) -> None:
     if self.sshd:

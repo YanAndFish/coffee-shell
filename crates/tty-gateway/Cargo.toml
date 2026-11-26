@@ -1,5 +1,5 @@
 [package]
-name = "coffee-sshd"
+name = "tty-gateway"
 description = "ROAST/TTY SSH front end: one coffee-tui child process per session on a PTY."
 version.workspace = true
 edition.workspace = true
@@ -10,7 +10,7 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [[bin]]
-name = "coffee-sshd"
+name = "tty-gateway"
 path = "src/main.rs"
 
 [dependencies]

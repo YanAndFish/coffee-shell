@@ -4,7 +4,7 @@ Two images and a compose file that runs them together:
 
 | File                | Image (tag used here) | What                                                                            |
 | ------------------- | --------------------- | ------------------------------------------------------------------------------- |
-| `Dockerfile`        | `roast-tty-ssh`       | the SSH gateway: `coffee-sshd` and the `coffee-tui` it starts for each session  |
+| `Dockerfile`        | `roast-tty-ssh`       | the SSH gateway: `tty-gateway` and the `coffee-tui` it starts for each session  |
 | `server.Dockerfile` | `roast-tty-server`    | the backend `@coffee/server` (Koa + Prisma + SQLite)                            |
 | `compose.yaml`      |                       | both, the backend on a private network, the gateway on port 2222                |
 | `smoke-test.sh`     |                       | starts the pair and checks it end to end over a stock `ssh` (CI's `docker` job) |

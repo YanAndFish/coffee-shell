@@ -1,4 +1,4 @@
-//! `coffee-sshd`: the ROAST/TTY SSH front end.
+//! `tty-gateway`: the ROAST/TTY SSH front end.
 //!
 //! Accepts any SSH client without a password: any public key is taken (its SHA256
 //! fingerprint goes to the session), and a client without one logs in through

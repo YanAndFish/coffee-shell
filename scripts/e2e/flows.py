@@ -1,6 +1,6 @@
 """The Phase 2 acceptance flows (docs/acceptance.md), each on a fresh database.
 
-A flow gets a running `Stack` (backend + coffee-sshd) and drives stock `ssh` clients through
+A flow gets a running `Stack` (backend + tty-gateway) and drives stock `ssh` clients through
 it. It fails by raising `Failure` (a wait that timed out carries its screen); `snap(label)`
 keeps a named text screenshot next to the flow's logs.
 """

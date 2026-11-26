@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // `pnpm dev`: the whole demo on this machine.
 //
-// 1. Builds `coffee-tui` (crate `coffee-host`) and `coffee-sshd` with Cargo.
+// 1. Builds `coffee-tui` and `tty-gateway` with Cargo.
 // 2. Starts the backend (`pnpm --filter @coffee/server dev`) and waits for `/v1/health`.
-// 3. Starts `coffee-sshd`, which runs one `coffee-tui` per SSH session on a PTY.
+// 3. Starts `tty-gateway`, which runs one `coffee-tui` per SSH session on a PTY.
 // 4. Prints how to connect, prefixes both logs, and stops both on Ctrl+C.
 //
 // Both processes share a random `COFFEE_INTERNAL_KEY` made for this run only (never printed).
@@ -157,7 +157,7 @@ const exe = process.platform === 'win32'
   ? '.exe'
   : ''
 const tuiBin = join(targetDir, 'debug', `coffee-tui${exe}`)
-const sshdBin = join(targetDir, 'debug', `coffee-sshd${exe}`)
+const sshdBin = join(targetDir, 'debug', `tty-gateway${exe}`)
 
 for (const [port, host, what, variable] of [
   [
@@ -169,7 +169,7 @@ for (const [port, host, what, variable] of [
   [
     sshPort,
     sshHost,
-    'coffee-sshd',
+    'tty-gateway',
     'COFFEE_SSH_ADDR',
   ],
 ]) {
@@ -183,17 +183,17 @@ await unlessStopping()
 if (skipBuild) {
   for (const bin of [tuiBin, sshdBin]) {
     if (!existsSync(bin))
-      fail(`${bin} is not built.`, 'Run `pnpm dev` without --skip-build, or `cargo build -p coffee-host -p coffee-sshd`.')
+      fail(`${bin} is not built.`, 'Run `pnpm dev` without --skip-build, or `cargo build -p coffee-tui -p tty-gateway`.')
   }
 }
 else {
-  log('building coffee-tui and coffee-sshd (cargo build -p coffee-host -p coffee-sshd)…')
+  log('building coffee-tui and tty-gateway (cargo build -p coffee-tui -p tty-gateway)…')
   const build = await launch('build', 'cargo', [
     'build',
     '-p',
-    'coffee-host',
+    'coffee-tui',
     '-p',
-    'coffee-sshd',
+    'tty-gateway',
   ], {
     stdio: ['ignore', 'inherit', 'inherit'],
   }).done
@@ -253,7 +253,7 @@ async function run() {
   }
   log('✓ backend is healthy')
 
-  log(`starting coffee-sshd on ${sshAddr}`)
+  log(`starting tty-gateway on ${sshAddr}`)
   start('sshd', sshdBin, [], {
     COFFEE_SSH_ADDR: sshAddr,
     COFFEE_SSH_HOST_KEY: hostKey,
@@ -263,7 +263,7 @@ async function run() {
   })
   if (!(await waitFor(() => listening(sshHost, sshPort), 30_000))) {
     if (!stopping) {
-      console.error(`${tags.dev} ${paint('31', `✗ coffee-sshd is not listening on ${sshAddr} after 30 s.`)}`)
+      console.error(`${tags.dev} ${paint('31', `✗ tty-gateway is not listening on ${sshAddr} after 30 s.`)}`)
       await stop(1)
     }
     return

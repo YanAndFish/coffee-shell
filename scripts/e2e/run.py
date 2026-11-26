@@ -2,7 +2,7 @@
 """End-to-end flows of ROAST/TTY over the real stack (`pnpm test:e2e:real`).
 
 For each flow: a copy of a freshly migrated and seeded SQLite database, the backend
-(`node apps/server/src/main.ts`) and `coffee-sshd` on free ports, and stock `ssh` clients on
+(`node apps/server/src/main.ts`) and `tty-gateway` on free ports, and stock `ssh` clients on
 pseudo-terminals driven by what their screens show. After a flow: no `coffee-tui` may be left,
 and the logs may hold no password, token or internal key.
 
@@ -10,7 +10,7 @@ and the logs may hold no password, token or internal key.
   python3 scripts/e2e/run.py main money      # some flows
   python3 scripts/e2e/run.py --repeat 5      # stability: the whole set five times
 
-Needs the debug binaries (`cargo build -p coffee-host -p coffee-sshd`; `pnpm test:e2e:real`
+Needs the debug binaries (`cargo build -p coffee-tui -p tty-gateway`; `pnpm test:e2e:real`
 builds them), `pnpm install` done, `ssh` and `ssh-keygen`. Output (text screenshots, logs,
 FAIL.txt on failure) goes to `.data/e2e/` or `--out`.
 """
@@ -117,9 +117,9 @@ def main() -> int:
   bins = None
   if not gateway:
     bins = Path(os.environ.get("E2E_BIN_DIR") or cargo_target_dir() / "debug")
-    for binary in ("coffee-tui", "coffee-sshd"):
+    for binary in ("coffee-tui", "tty-gateway"):
       if not (bins / binary).is_file():
-        parser.error(f"{bins / binary} is not built: cargo build -p coffee-host -p coffee-sshd")
+        parser.error(f"{bins / binary} is not built: cargo build -p coffee-tui -p tty-gateway")
 
   out = args.out.resolve()
   if out.exists():

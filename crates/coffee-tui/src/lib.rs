@@ -1,6 +1,6 @@
-//! `coffee-host`: runs the `coffee-app` root in the terminal this process was started in.
+//! `coffee-tui`: runs the `coffee-app` root in the terminal this process was started in.
 //!
-//! One process serves one terminal: locally any terminal, behind `coffee-sshd` the PTY of
+//! One process serves one terminal: locally any terminal, behind `tty-gateway` the PTY of
 //! one SSH session. The host:
 //!
 //! - enters raw mode and the alternate screen, asks the terminal what it supports
@@ -45,7 +45,7 @@ pub mod terminal;
 use interrupt::{Interrupt, Press};
 use palette::{Palette, Pin};
 
-/// Reads the session settings `coffee-sshd` passes in the environment.
+/// Reads the session settings `tty-gateway` passes in the environment.
 ///
 /// `COFFEE_API_URL` (default `http://127.0.0.1:3000`), `COFFEE_INTERNAL_KEY`,
 /// `COFFEE_SSH_FINGERPRINT`, `COFFEE_CLIENT_IP`, `COFFEE_COLORS`.

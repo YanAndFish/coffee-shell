@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# ROAST/TTY SSH gateway: coffee-sshd plus the coffee-tui it starts for every session.
+# ROAST/TTY SSH gateway: tty-gateway plus the coffee-tui it starts for every session.
 # Build from the repository root:
 #
 #   docker build -f deploy/Dockerfile -t roast-tty-ssh .
@@ -21,8 +21,8 @@ COPY crates ./crates
 COPY packages/contract/fixtures ./packages/contract/fixtures
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p coffee-sshd -p coffee-host \
- && install -D -m 0755 target/release/coffee-sshd /out/coffee-sshd \
+    cargo build --release --locked -p tty-gateway -p coffee-tui \
+ && install -D -m 0755 target/release/tty-gateway /out/tty-gateway \
  && install -D -m 0755 target/release/coffee-tui /out/coffee-tui
 
 FROM debian:${DEBIAN_RELEASE}-slim AS runtime
@@ -34,7 +34,7 @@ RUN apt-get update \
  && useradd --system --uid 10001 --gid coffee --home-dir /home/coffee --create-home \
       --shell /usr/sbin/nologin coffee \
  && install -d -o coffee -g coffee -m 0700 /data
-COPY --from=build /out/coffee-sshd /out/coffee-tui /usr/local/bin/
+COPY --from=build /out/tty-gateway /out/coffee-tui /usr/local/bin/
 
 ENV COFFEE_SSH_ADDR=0.0.0.0:2222 \
     COFFEE_SSH_HOST_KEY=/data/ssh_host_ed25519_key \
@@ -48,4 +48,4 @@ USER coffee:coffee
 WORKDIR /home/coffee
 EXPOSE 2222
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/usr/local/bin/coffee-sshd"]
+ENTRYPOINT ["/usr/local/bin/tty-gateway"]

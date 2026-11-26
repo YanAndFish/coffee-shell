@@ -1,4 +1,4 @@
-//! `coffee-sshd`'s settings, read from the environment.
+//! `tty-gateway`'s settings, read from the environment.
 
 use std::{
   net::SocketAddr,
@@ -6,7 +6,7 @@ use std::{
   time::Duration,
 };
 
-/// Everything `coffee-sshd` can be told, with its environment variable.
+/// Everything `tty-gateway` can be told, with its environment variable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
   /// `COFFEE_SSH_ADDR`: where to listen (`127.0.0.1:2222`).

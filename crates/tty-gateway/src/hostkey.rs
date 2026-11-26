@@ -49,7 +49,7 @@ mod tests {
 
   #[test]
   fn a_key_is_made_once_with_owner_only_access() {
-    let dir = std::env::temp_dir().join(format!("coffee-sshd-hostkey-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("tty-gateway-hostkey-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     let path = dir.join("nested/ssh_host_ed25519_key");
     let (made, fresh) = load_or_generate(&path).unwrap();

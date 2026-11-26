@@ -1,10 +1,10 @@
-//! `coffee-sshd`: passwordless SSH on `COFFEE_SSH_ADDR` (127.0.0.1:2222), one
-//! `coffee-tui` per session. Settings: see `coffee_sshd::Config`.
+//! `tty-gateway`: passwordless SSH on `COFFEE_SSH_ADDR` (127.0.0.1:2222), one
+//! `coffee-tui` per session. Settings: see `tty_gateway::Config`.
 
 use std::process::ExitCode;
 
-use coffee_sshd::{Config, hostkey, init_logging, serve};
 use tokio::signal::unix::{SignalKind, signal};
+use tty_gateway::{Config, hostkey, init_logging, serve};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -19,7 +19,7 @@ async fn main() -> ExitCode {
   if !config.tui_bin.is_file() {
     tracing::warn!(
       bin = %config.tui_bin.display(),
-      "COFFEE_TUI_BIN does not exist yet: run `cargo build -p coffee-host` (sessions fail until it does)"
+      "COFFEE_TUI_BIN does not exist yet: run `cargo build -p coffee-tui` (sessions fail until it does)"
     );
   }
   let (key, generated) = match hostkey::load_or_generate(&config.host_key) {

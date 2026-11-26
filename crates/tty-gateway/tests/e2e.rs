@@ -1,4 +1,4 @@
-//! End to end: a russh client with a `vt100` screen against `coffee-sshd` on an
+//! End to end: a russh client with a `vt100` screen against `tty-gateway` on an
 //! ephemeral port, with the real `coffee-tui` or a size-reporting stand-in as the
 //! session program.
 
@@ -651,7 +651,7 @@ fn children_of(parent: u32) -> Vec<u32> {
 }
 
 /// The measurement behind `docs/adr/0001-ssh-session-model.md`: 20 concurrent sessions
-/// of the real `coffee-tui`. Against a running `coffee-sshd` when `COFFEE_SPIKE_ADDR`
+/// of the real `coffee-tui`. Against a running `tty-gateway` when `COFFEE_SPIKE_ADDR`
 /// and `COFFEE_SPIKE_PID` are set, else an in-process server (`COFFEE_TUI_BIN` picks
 /// the program, e.g. a release build). The first frame is the login page (its demo
 /// notice); with `COFFEE_SPIKE_WAIT` (text of the product list, e.g. `耶加雪菲 孔加`)
@@ -818,7 +818,7 @@ async fn measure_twenty_sessions() {
   println!(
     "| server ({}) | RSS {:.1} MB (was {:.1} MB) · idle CPU {:.2} % |",
     if external.is_some() {
-      "coffee-sshd"
+      "tty-gateway"
     } else {
       "test process"
     },
