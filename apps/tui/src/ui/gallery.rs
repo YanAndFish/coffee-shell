@@ -4,7 +4,8 @@
 //! - **Tests** open it from `src/ui/gallery.entry.tsx` (`open('./src/ui/gallery.entry.tsx',
 //!   …)` in `apps/tui/Gallery.test.tsx`); it is registered next to `App`.
 //! - **The real host**: `COFFEE_UI_GALLERY=1 target/debug/coffee-tui` (or through
-//!   `scripts/pty-run.py --env COFFEE_UI_GALLERY=1`) shows it over the app, with the host's
+//!   `scripts/pty-run.py --env COFFEE_UI_GALLERY=1`, or `ssh -p 2222 gallery@localhost`, the
+//!   gateway's `gallery` route) shows it over the app, with the host's
 //!   palette pin and colour depths (`COFFEE_COLORS=16|mono`).
 //!
 //! Keys (the gallery's own small table; the app never mounts it): `← →` / `h l` / `[ ]` turn

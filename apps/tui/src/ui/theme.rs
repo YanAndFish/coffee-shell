@@ -10,7 +10,7 @@
 //! standard gray otherwise. Nine shades of brown would all come out as "dim".
 //!
 //! So each design token travels through nsh on a **carrier** that survives that mapping, and
-//! `coffee-host`'s palette pin (`crates/coffee-host/src/palette.rs`) swaps the carrier back for
+//! `coffee-tui`'s palette pin (`crates/coffee-tui/src/palette.rs`) swaps the carrier back for
 //! the token's value at every colour depth:
 //!
 //! - a text tone ([`Tone`]) is a [`Channel`] (the ANSI meaning nsh picks) plus an optional

@@ -15,7 +15,7 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
 - Source: `docs/design/raw/design-system/components/<Name>/README.md` and `components/bundle.css` (class prefix
   `t-`). Screens that use it: `docs/design/screens/*.md` (160×50 and 80×24 mocks with exact cells).
 - Look at the gallery first: it shows every component in every state.
-  `cargo build -p coffee-host && python3 scripts/pty-run.py --size 160x50 --env COFFEE_UI_GALLERY=1 --env
+  `cargo build -p coffee-tui && python3 scripts/pty-run.py --size 160x50 --env COFFEE_UI_GALLERY=1 --env
   COFFEE_API_URL=fixture: --step key=right -- target/debug/coffee-tui` (`←/→` turn pages; see `ui/gallery.rs`).
 
 ## 2. What already exists (one file each)
@@ -62,7 +62,7 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
    block, props, states, an example.
 2. **Colours**: only `Tone` / `Fill` through `ui::label` & co. They are carriers (`theme.rs`, "Carriers"): a marked tone
    is drawn italic and the host's pin turns it into the token. A new colour = a new row in `theme.json`, in `INKS` or
-   `FILLS`, in `docs/design/tokens.md`, and a case in `crates/coffee-host/tests/pin_render.rs`.
+   `FILLS`, in `docs/design/tokens.md`, and a case in `crates/coffee-tui/tests/pin_render.rs`.
 3. **Frames**: nsh draws only thin borders and only on boxes it deems cards; use `frame()` (glyph frames) for anything
    else, with a known height when you have one.
 4. **Spacing**: horizontal padding is at most 2 columns (one on a box of text), vertical padding under 24 pt and gaps
@@ -87,16 +87,16 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
 - `apps/tui/Gallery.test.tsx`: opens `./src/ui/gallery.entry.tsx` at 160×50, 130×40, 100×30, 80×24 (`platform:
   'linux'`, explicit size); texts headless, cells (`symbol`, `fg`, `bg`, `modifiers`) on `--target tui`. Colours in that
   JSON are nsh's own (carriers, `italic` marks); pinned colours are checked in `pin_render.rs`.
-- `crates/coffee-host/tests/pin_render.rs`: a new token at true colour, 256, 16 and mono.
+- `crates/coffee-tui/tests/pin_render.rs`: a new token at true colour, 256, 16 and mono.
 
 ## 6. Verify
 
 ```sh
 cd apps/tui && nsh check && nsh test && nsh test --target tui
 cd ../.. && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check
-cargo test -p coffee-app -p coffee-host && pnpm lint
+cargo test -p coffee-app -p coffee-tui -p tty-host && pnpm lint
 ```
 
-Then look at it for real, at every depth: `cargo build -p coffee-host && python3 scripts/pty-run.py --size 160x50
+Then look at it for real, at every depth: `cargo build -p coffee-tui && python3 scripts/pty-run.py --size 160x50
 --env COFFEE_UI_GALLERY=1 --env COFFEE_COLORS=mono -- target/debug/coffee-tui` (`--raw FILE` keeps the SGR bytes).
 Grep your diff for `#` hex literals and `rgb(` outside `theme.json`.

@@ -8,19 +8,20 @@ database: neither part touches `apps/server/.data/coffee.db`.
 
 From the repository root, after `pnpm install`:
 
-| #   | Command                                                    | Passes when                                                       |
-| --- | ---------------------------------------------------------- | ----------------------------------------------------------------- |
-| A1  | `pnpm check`                                               | eslint, mock sizes, `tsc`, `cargo fmt --check`, clippy all clean  |
-| A2  | `pnpm test`                                                | Rust tests (SSH end-to-end in `crates/coffee-sshd/tests`), vitest |
-| A3  | `pnpm check:tui` and `pnpm test:tui` (needs the nsh CLI)   | `nsh check`, every `apps/tui/*.test.tsx` headless and on the TUI  |
-| A4  | `pnpm test:e2e:real`                                       | every flow of `scripts/e2e` passes (about 2 minutes)              |
-| A5  | `python3 scripts/e2e/run.py --repeat 5`                    | stability: 5 × 5 flows, zero failures                             |
-| A6  | `deploy/smoke-test.sh` (Docker; CI's `docker` job runs it) | the compose pair answers, serves the catalogue and sells one bag  |
+| #   | Command                                                         | Passes when                                                                                            |
+| --- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| A1  | `pnpm check`                                                    | eslint, mock sizes, `tsc`, `cargo fmt --check`, clippy all clean                                       |
+| A2  | `pnpm test`                                                     | Rust tests (SSH end-to-end in `crates/tty-gateway/tests` and `crates/coffee-tui/tests/ssh.rs`), vitest |
+| A3  | `pnpm check:tui` and `pnpm test:tui` (needs the nsh CLI)        | `nsh check`, every `apps/tui/*.test.tsx` headless and on the TUI                                       |
+| A4  | `pnpm test:e2e:real`                                            | every flow of `scripts/e2e` passes (about 2 minutes)                                                   |
+| A5  | `python3 scripts/e2e/run.py --repeat 5`                         | stability: 5 × 5 flows, zero failures                                                                  |
+| A6  | `deploy/smoke-test.sh` (Docker; CI's `docker` job runs it)      | the compose pair answers, serves the catalogue and sells one bag; `gallery@` opens the gallery         |
+| A7  | `target/debug/tty-gateway --check --config deploy/gateway.toml` | routes `coffee (default)` and `gallery`, env names only, `ok`, exit 0                                  |
 
-A4 builds `coffee-tui` and `coffee-sshd`, migrates and seeds one template database, and runs each flow on its own
-copy with its own backend and `coffee-sshd` on free ports, through stock `ssh` clients on pseudo-terminals. Text
-screenshots and logs land in `.data/e2e/<flow>/` (`NN-<session>-<step>.txt`, `backend.log`, `sshd.log`, `FAIL.txt`
-with the last screens on a failure). `python3 scripts/e2e/run.py main money` runs some flows; `E2E_WAIT=30` gives
+A4 builds `coffee-tui` and `tty-gateway`, migrates and seeds one template database, and runs each flow on its own
+copy with its own backend and `tty-gateway` (reading `deploy/gateway.toml`) on free ports, through stock `ssh`
+clients on pseudo-terminals. Text screenshots and logs land in `.data/e2e/<flow>/` (`NN-<session>-<step>.txt`,
+`backend.log`, `sshd.log` (the gateway's), `FAIL.txt` with the last screens on a failure). `python3 scripts/e2e/run.py main money` runs some flows; `E2E_WAIT=30` gives
 slow machines more time per step (default 20 s).
 
 What the flows check (`scripts/e2e/flows.py`):
@@ -53,10 +54,10 @@ What the flows check (`scripts/e2e/flows.py`):
   survives). A detail page with 500g chosen, resized to 60×20 (`终端太小`, `当前 60×20`) and back: same page, same
   choice.
 - **gateway** — the backend down when a client connects: logging in says `✗ 连接服务器失败，按 ⏎ 重试`; the guest
-  list says `✗ 商品加载失败` with `⏎ 重试`, which works once the backend is back. `coffee-sshd` started with a missing
-  `COFFEE_TUI_BIN`: a warning at start, and a client sees `ROAST/TTY 暂时无法启动，请稍后再试。` with exit status 1,
-  logged as `could not start the session program`.
-- After every flow: no `coffee-tui` left under that flow's `coffee-sshd`; neither log contains a password, the
+  list says `✗ 商品加载失败` with `⏎ 重试`, which works once the backend is back. `tty-gateway` started with a
+  configuration whose `coffee` route names a missing program: a warning at start (`routes.coffee.command: …`), and a
+  client sees `ROAST/TTY 暂时无法启动，请稍后再试。` with exit status 1, logged as `could not start the session program`.
+- After every flow: no `coffee-tui` left under that flow's `tty-gateway`; neither log contains a password, the
   internal key or a bearer token; the backend's log has no full key fingerprint (the gateway logs them by design,
   ADR 0001).
 
@@ -89,7 +90,19 @@ Do not use a real password anywhere. Tick each line:
 9. [ ] Ctrl+C twice leaves (`再按一次 Ctrl+C 退出` in between). Reconnect with the key: `已自动恢复登录`.
 10. [ ] `q`: the confirmation; `q` again: `已退出登录`. Reconnect with the key: the login page.
 11. [ ] Resize the window below 80×24: `终端太小`; back: the same page.
-12. [ ] Stop `pnpm dev` with Ctrl+C. `pgrep -fl "scripts/dev.mjs|coffee-sshd|coffee-tui|src/main.ts"` prints nothing;
+12. [ ] Routing by user name: `ssh -p 2222 coffee@localhost` and `ssh -p 2222 whoever@localhost` open the shop;
+        `ssh -p 2222 gallery@localhost` opens the UI gallery (`← →` turn pages). The gateway's log shows each
+        `authenticated` / `session started` line with `user` and `route` (`coffee`, `coffee`, `gallery`).
+13. [ ] `target/debug/tty-gateway --check --config deploy/gateway.toml` lists both routes and ends with `ok`; a copy
+        with `oops = 1` under `[server]` exits 1 with an error that names `oops`.
+14. [ ] Reload: keep a shop session open; add `"demo"` to `routes.gallery.users` in `deploy/gateway.toml` and
+        `kill -HUP` the `tty-gateway` process. `ssh -p 2222 demo@localhost` now opens the gallery, the open session
+        carries on. Break the file (`oops = 1` under `[server]`), `kill -HUP` again: the log has an error, `demo@`
+        still opens the gallery. `git checkout deploy/gateway.toml`, `kill -HUP` once more.
+15. [ ] Graceful stop: with a session open, `kill -TERM` the `tty-gateway` process. The client sees the shutdown
+        notice, its terminal is restored (no alternate screen, cursor shown) and `ssh` exits within 3 s; no
+        `coffee-tui` is left.
+16. [ ] Stop `pnpm dev` with Ctrl+C. `pgrep -fl "dev.mjs|tty-gateway|coffee-tui|src/main.ts"` prints nothing;
         `lsof -nP -iTCP:3000 -iTCP:2222 -sTCP:LISTEN` too. `rm .data/acceptance.db`.
 
 ## Not covered

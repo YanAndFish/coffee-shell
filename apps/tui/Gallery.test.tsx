@@ -1,10 +1,10 @@
 // The component gallery (`src/ui/gallery.rs`, opened through `src/ui/gallery.entry.tsx`) at
 // the four design sizes. `nsh test` runs these headless (texts and behaviour);
 // `nsh test --target tui` runs the same steps on the terminal host's in-memory terminal,
-// where the cell checks also run. Colours there are nsh's own (before `coffee-host` pins the
+// where the cell checks also run. Colours there are nsh's own (before `coffee-tui` pins the
 // palette): carrier fills show as their carrier RGB, marked tones carry `italic` (see
 // `src/ui/theme.rs`, "Carriers"); the pinned colours are checked in
-// `crates/coffee-host/tests/pin_render.rs`.
+// `crates/coffee-tui/tests/pin_render.rs`.
 import { expect, open, test } from 'nsh/test'
 
 const ENTRY = './src/ui/gallery.entry.tsx'
