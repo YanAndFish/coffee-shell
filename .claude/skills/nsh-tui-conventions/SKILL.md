@@ -155,6 +155,17 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
   that arrives before them, so the host holds all input until the engine woke and stayed quiet for 100 ms
   (`terminal::Startup`, at most 2 s). Nothing else may read stdin.
 
+## nsh 0.7 changes that bit (the 0.6.1 → 0.7.1 upgrade)
+
+- **A Rust desktop root shows only its `window()`**: `App` puts the shell in
+  `nsh_core::element::desktop::window().id("main")`. Without it the headless `nsh test` runs (a Linux desktop)
+  see an empty screen; in a terminal the window's content is the screen, so `coffee-tui` is unaffected. (The prelude's
+  `window()` is the window's *size*.)
+- **Vertical padding is a row from 12 points** and a gap inside a bordered box from 12 (see "Paddings and gaps"
+  below): a `.pt(rows(1))` 0.6.1 ignored is now a blank row.
+- **True colour paints ANSI `Blue` in nsh's brand indigo** before the host's filter: the pin reads it back.
+- **A page word touching a dialog's frame is no longer blanked**: half a word can show beside a dialog.
+
 ## nsh pitfalls (found in wave 4 on 0.6.1; rechecked on 0.7.1)
 
 - **Controls side by side keep two blank columns** ("controls read as words" in nsh's
