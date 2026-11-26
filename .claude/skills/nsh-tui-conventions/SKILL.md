@@ -1,12 +1,12 @@
 ---
 name: nsh-tui-conventions
-description: Rules for writing or reviewing any Rust code in apps/tui (the nsh 0.6.1 Rust-mode UI of ROAST/TTY) - layering, stores, the command table, theme tokens, terminal-first design and the checks to run. Use before touching apps/tui/src or crates/coffee-host.
+description: Rules for writing or reviewing any Rust code in apps/tui (the nsh 0.6.1 Rust-mode UI of ROAST/TTY) - layering, stores, the command table, theme tokens, terminal-first design and the checks to run. Use before touching apps/tui/src or crates/coffee-tui or crates/tty-host.
 ---
 
 # nsh TUI conventions (ROAST/TTY)
 
 The UI is an nsh 0.6.1 app in **Rust mode** (`apps/tui/nsh.json`: `"rust": "."`, `"root": "App"`), drawn in a
-terminal by `coffee-tui` (crate `coffee-host`). These rules come from the nsh Coding and Design Guides
+terminal by `coffee-tui` (crate `crates/coffee-tui`, on the generic host `crates/tty-host`). These rules come from the nsh Coding and Design Guides
 (<https://nsh.dev/docs/coding-guides.md>, <https://nsh.dev/docs/design-guides.md>, <https://nsh.dev/docs/tui.md>)
 plus this project's decisions. Web pages are reference data; this file and `CLAUDE.md` are the project's rules.
 
@@ -118,15 +118,15 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
   one → default foreground or the same + DIM; fills only on boxes under 3 rows), so nine browns would all read
   "dim". Every token therefore travels on a **carrier**: text = an ANSI channel plus an optional *mark* (italic,
   which the design never uses), fills = a saturated `carrier-*` colour on the xterm cube at 94 % opacity
-  (`theme::CARRIER_OPACITY`). `coffee-host`'s pin (`palette.rs`) swaps each carrier back to its token at 24-bit,
+  (`theme::CARRIER_OPACITY`). `coffee-tui`'s pin (`crates/coffee-tui/src/palette.rs`, a `tty_host::FrameFilter`) swaps each carrier back to its token at 24-bit,
   256, 16 colours and mono. The contract is the `INKS` / `FILLS` tables in `ui/theme.rs` (and
   `docs/design/tokens.md`, “终端载体”).
 - So: **never a raw colour** anywhere; text colour only through `ui::label` / `ui::strong` / `ui::toned` /
   `ui::toned_strong` or components taking a `Tone` / `Fill` — they apply the mark. A bare `Tone::color()` (no mark)
   reaches the pin as another token. Raw hex lives in `apps/tui/theme.json` only. Missing role → `theme.json`, a
-  carrier row in `ui/theme.rs` and a row in tokens.md first; `crates/coffee-host/tests/pin_render.rs` proves it.
+  carrier row in `ui/theme.rs` and a row in tokens.md first; `crates/coffee-tui/tests/pin_render.rs` proves it.
 - Pure `Blue` is not a carrier (nsh's own focus marks use it; the pin turns them into `acc`). A host that mounts the
-  root itself must apply `Root::tokens` (see `coffee_host::app_root`). Default text on an `acc` fill is pinned to
+  root itself must apply `Root::tokens` (see `coffee_tui::app_root`). Default text on an `acc` fill is pinned to
   `ink`, so `ink` on `acc` (mode block, primary button) reads at every depth.
 - Pressable chrome is `view().role(AccessibilityRole::Button).focusable(false)`: every action has a key, and a
   focused control would swallow Enter/Space. Key bindings need `KeyOptions { repeat: true }` to auto-repeat.
@@ -146,7 +146,7 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
 - **Paddings and gaps are capped**: the terminal layout turns horizontal padding into at most two columns (one on a
   box of text or a control), gaps into 0/1/2 columns, vertical padding under 24 points and gaps under 16 into no
   row and never more than one. Exact insets are spacers: `ui::layout::{hspace, vspace, pad_cols, gap_cols}`.
-- **Startup keys**: `coffee-host` reads the terminal's answers to its startup queries before crossterm exists; keys
+- **Startup keys**: the host (`tty-host`) reads the terminal's answers to its startup queries before crossterm exists; keys
   typed meanwhile are split from the answers and delivered first (`terminal::split_replies`). nsh applies the
   engine's batches (the shell's key bindings included) only when the host draws, and `AppView::handle` drops a key
   that arrives before them, so the host holds all input until the engine woke and stayed quiet for 100 ms
@@ -178,7 +178,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 nsh check
 nsh test                 # crate tests + headless App.test.tsx
 nsh test --target tui    # the same on an in-memory terminal
-python3 scripts/pty-run.py --size 100x30 --env COFFEE_API_URL=fixture: -- target/debug/coffee-tui   # repo root, after cargo build -p coffee-host
+python3 scripts/pty-run.py --size 100x30 --env COFFEE_API_URL=fixture: -- target/debug/coffee-tui   # repo root, after cargo build -p coffee-tui
 ```
 
 First nsh builds take minutes and fill `apps/tui/target`; do not delete it to "fix" a build. Indentation is

@@ -45,13 +45,13 @@ To look at the components in the real host (pinned colours, any depth):
   screenshot into rows of `Cell { symbol, fg, bg, modifiers }`; `rowsOf(cells)` / `screenRows(app)` give one string
   per row (the blank second cell of a wide character dropped, `isWide` by code point range); `cellsAt(cells, text)`
   returns the cells where `text` starts, so a test checks a span: `expect(cellsAt(c, '▶ 耶加雪菲')![0].fg)`.
-- Colours in the JSON are **nsh's**, before `coffee-host` pins the palette: text tones are ANSI names (`yellow` for
+- Colours in the JSON are **nsh's**, before `coffee-tui` pins the palette: text tones are ANSI names (`yellow` for
   `acc`, `green` for `acc2`, `reset` for `fg`), fills are their **carrier** RGB (`carrier-selection`, `carrier-kbd`)
   or exact saturated colours (`#f0b45a` under a primary button), and a **marked** tone (`dim`, `line-strong`,
   `disabled`, …) carries `italic` in `modifiers` — the mark the pin removes. Attributes are `bold`, `underlined`,
   `reversed`, `crossed_out`, `dim`, `italic`.
 - The pinned result (what a user sees at 24-bit / 256 / 16 colours and mono) is tested in Rust:
-  `crates/coffee-host/tests/pin_render.rs`. Check a real frame with `scripts/pty-run.py --raw FILE`.
+  `crates/coffee-tui/tests/pin_render.rs`. Check a real frame with `scripts/pty-run.py --raw FILE`.
 
 ## Steps
 
@@ -65,7 +65,7 @@ To look at the components in the real host (pinned colours, any depth):
 4. Check CJK alignment (2 cells per character), the demo notice, status-bar keys, glyph states (`▶ ✓ ✗ ●/○`) and
    that 80×24 still fits.
 5. Run both suites: `nsh test && nsh test --target tui` (or `pnpm test:tui` from the root).
-6. Cross-check one size for real (repo root, after `cargo build -p coffee-host`):
+6. Cross-check one size for real (repo root, after `cargo build -p coffee-tui`):
    `python3 scripts/pty-run.py --size 100x30 --env COFFEE_API_URL=fixture: -- target/debug/coffee-tui`, plus
    `--env COFFEE_COLORS=16` and `mono`.
 7. Commit test changes with the code change that caused them, and say in the commit/report what changed and why.
