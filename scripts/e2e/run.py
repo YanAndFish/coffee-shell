@@ -29,8 +29,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from flows import DEFAULT, EXTERNAL, FLOWS  # noqa: E402
-from harness import (ROOT, Failure, Stack, cargo_target_dir, check_toml_writer,  # noqa: E402
-                     fail_report, log, make_template_db, wait_until)
+from harness import (ROOT, Failure, Stack, cargo_target_dir, check_sync_frames,  # noqa: E402
+                     check_toml_writer, fail_report, log, make_template_db, wait_until)
 from shop import PASSWORD  # noqa: E402
 
 FULL_FINGERPRINT = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")
@@ -87,6 +87,11 @@ def run_flow(name: str, out: Path, work: Path, template: Path | None, bins: Path
     traceback.print_exc()
   finally:
     stack.close()
+  screens = [term.session.screen for term in stack.terms]
+  frames = sum(screen.frames for screen in screens)
+  split = sum(screen.split_frames for screen in screens)
+  if split:
+    log(f"e2e:   {split} reads ended inside a frame ({frames} frames): read whole")
   return ok, time.monotonic() - started
 
 
@@ -134,6 +139,7 @@ def main() -> int:
   work = out / "work"
   work.mkdir(parents=True)
   template = None
+  check_sync_frames()
   if not gateway:
     check_toml_writer()
     log(f"e2e: preparing the template database in {work}")

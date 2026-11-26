@@ -64,8 +64,29 @@ def char_width(ch: str) -> int:
   return 2 if unicodedata.east_asian_width(ch) in WIDE else 1
 
 
+class Frame:
+  """What a reader sees: a grid, its size and the cursor (where the program left it; with
+  `cursor_visible` false that is wherever its last write ended, not a place it chose)."""
+
+  def __init__(self, grid: list[list[str]], x: int, y: int, cursor_visible: bool = True):
+    self.grid, self.x, self.y, self.cursor_visible = grid, x, y, cursor_visible
+    self.rows, self.cols = len(grid), len(grid[0]) if grid else 0
+
+  def text(self) -> str:
+    return "\n".join("".join(row).rstrip() for row in self.grid)
+
+
+# A synchronized update (mode 2026) left open this long is shown as it stands, as terminals do.
+SYNC_TIMEOUT = 2.0
+
+
 class Screen:
-  """A character grid that understands the escape sequences TUIs (crossterm/ratatui) emit."""
+  """A character grid that understands the escape sequences TUIs (crossterm/ratatui) emit.
+
+  Synchronized updates (`CSI ? 2026 h` … `CSI ? 2026 l`, DECRQM-reported as supported) are
+  honoured: `frame` is the screen as of the last completed update while one is being drawn,
+  so a frame that arrives in several reads is never seen half-painted. Without them (a
+  program that does not use 2026), `frame` is the live screen."""
 
   def __init__(self, cols: int, rows: int):
     self.cols, self.rows = cols, rows
@@ -74,6 +95,7 @@ class Screen:
     self.grid = self.main
     self.x = self.y = 0
     self.saved = (0, 0)
+    self.cursor_visible = True
     self.top, self.bottom = 0, rows - 1
     self.pending_wrap = False
     self.replies: list[bytes] = []
@@ -82,6 +104,34 @@ class Screen:
     self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
     self._state = "ground"
     self._seq = ""
+    # Inside a synchronized update: since when, and the screen as it was when it began.
+    self._sync_since: float | None = None
+    self._sync_frame: Frame | None = None
+    # Updates completed, and reads that ended inside one (a frame split across reads).
+    self.frames = 0
+    self.split_frames = 0
+
+  @property
+  def frame(self) -> Frame:
+    """The screen to read: the last completed frame while a synchronized update is open
+    (for at most SYNC_TIMEOUT), else the live grid."""
+    if (self._sync_frame is not None and self._sync_since is not None
+        and time.monotonic() - self._sync_since < SYNC_TIMEOUT):
+      return self._sync_frame
+    return Frame(self.grid, self.x, self.y, self.cursor_visible)
+
+  @property
+  def in_update(self) -> bool:
+    return self._sync_since is not None
+
+  def _sync(self, on: bool) -> None:
+    if on and self._sync_since is None:
+      self._sync_frame = Frame([row[:] for row in self.grid], self.x, self.y,
+                               self.cursor_visible)
+      self._sync_since = time.monotonic()
+    elif not on and self._sync_since is not None:
+      self._sync_since = self._sync_frame = None
+      self.frames += 1
 
   # Grid helpers
 
@@ -103,8 +153,11 @@ class Screen:
     self.top, self.bottom = 0, rows - 1
     self.x, self.y = min(self.x, cols - 1), min(self.y, rows - 1)
     self.pending_wrap = False
+    # The old frame no longer fits: whatever the program draws next is the screen.
+    self._sync(False)
 
   def text(self) -> str:
+    """The live grid as text (see `frame` for what a reader should look at)."""
     lines = ["".join(cell for cell in row).rstrip() for row in self.grid]
     return "\n".join(lines)
 
@@ -157,6 +210,8 @@ class Screen:
   def feed(self, data: bytes) -> None:
     for ch in self._decoder.decode(data):
       self._feed_char(ch)
+    if self._sync_since is not None:
+      self.split_frames += 1
 
   def _feed_char(self, ch: str) -> None:
     state = self._state
@@ -228,7 +283,9 @@ class Screen:
       elif self.y > 0:
         self.y -= 1
     elif ch == "c":
+      frames, split = self.frames, self.split_frames
       self.__init__(self.cols, self.rows)  # type: ignore[misc]
+      self.frames, self.split_frames = frames, split
 
   def _osc(self, body: str) -> None:
     # Answer colour queries (OSC 10/11) so a host that asks does not wait for a timeout.
@@ -252,7 +309,11 @@ class Screen:
       if final in "hl":
         on = final == "h"
         for mode in params:
-          if mode in (47, 1047, 1049):
+          if mode == 25:
+            self.cursor_visible = on
+          elif mode == 2026:
+            self._sync(on)
+          elif mode in (47, 1047, 1049):
             target = self.alt if on else self.main
             if target is not self.grid:
               if on:
@@ -267,6 +328,10 @@ class Screen:
                 self.x, self.y = self.saved
       elif final == "u":
         pass  # kitty keyboard query: not answering means "unsupported"
+      elif final == "p" and params:
+        # DECRQM: synchronized output is known (2: reset); anything else is not (0).
+        state = 2 if params[0] == 2026 else 0
+        self.replies.append(f"\x1b[?{params[0]};{state}$y".encode())
       return
     if private in "<=>" and private:
       if final == "c":
@@ -548,11 +613,11 @@ def main() -> int:
       if kind == "wait":
         session.pump(float(value))
       elif kind == "until":
-        if not session.wait_until(lambda: value in session.screen.text(), args.timeout):
+        if not session.wait_until(lambda: value in session.screen.frame.text(), args.timeout):
           failures.append(f"step {step!r}: not on screen after {args.timeout:g} s")
           break
       elif kind == "gone":
-        if not session.wait_until(lambda: value not in session.screen.text(), args.timeout):
+        if not session.wait_until(lambda: value not in session.screen.frame.text(), args.timeout):
           failures.append(f"step {step!r}: still on screen after {args.timeout:g} s")
           break
       elif kind == "text":
@@ -570,7 +635,7 @@ def main() -> int:
           break
       elif kind == "snap":
         print(f"--- snap after {len(session.raw)} bytes ---")
-        show(session.screen.text(), session.screen.cols)
+        show(session.screen.frame.text(), session.screen.cols)
       else:
         parser.error(f"unknown step {step!r}")
   except ValueError as error:
@@ -581,7 +646,7 @@ def main() -> int:
     # Read the screen before hanging up: a TUI leaves the alternate screen as it exits.
     screen = session.screen
     was_running = session.alive()
-    text = screen.text()
+    text = screen.frame.text()
     note = ""
     if not was_running and screen.grid is screen.main and screen.last_alt_frame is not None:
       text, note = screen.last_alt_frame, " (showing its last alternate-screen frame)"

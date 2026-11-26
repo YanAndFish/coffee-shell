@@ -213,6 +213,41 @@ def check_toml_writer() -> None:
     raise Failure(f"the TOML writer does not round-trip:\n{text}")
 
 
+def check_sync_frames() -> None:
+  """The emulator's synchronized updates: a frame fed in pieces changes nothing a reader sees
+  (text, cursor) until its closing marker; without mode 2026 the screen is live; an update
+  left open is shown as it stands after SYNC_TIMEOUT; DECRQM 2026 is answered."""
+  def expect(what: bool, message: str) -> None:
+    if not what:
+      raise Failure(f"emulator self-check: {message}")
+
+  screen = pty_run.Screen(20, 3)
+  screen.feed(b"\x1b[?2026h\x1b[1;1Hold\x1b[2;5H\x1b[?2026l")
+  frame = screen.frame
+  expect(frame.text().startswith("old") and (frame.x, frame.y) == (4, 1), "the first frame")
+  for half in (b"\x1b[?2026h\x1b[2J\x1b[1;1Hnew", b"\x1b[3;", b"9H\x1b[?20"):
+    screen.feed(half)
+    frame = screen.frame
+    expect(screen.in_update and frame.text().startswith("old") and (frame.x, frame.y) == (4, 1),
+           f"half a frame showed through after {half!r}: {frame.text()!r} at {(frame.x, frame.y)}")
+  screen.feed(b"26l")
+  frame = screen.frame
+  expect(not screen.in_update and frame.text().startswith("new") and (frame.x, frame.y) == (8, 2),
+         f"the completed frame: {frame.text()!r} at {(frame.x, frame.y)}")
+  expect(screen.frames == 2 and screen.split_frames == 3,
+         f"{screen.frames} frames, {screen.split_frames} split reads")
+  screen.feed(b"\x1b[1;1Hlive")
+  expect(screen.frame.text().startswith("live"), "output outside an update is not live")
+  screen.feed(b"\x1b[?2026h\x1b[1;1Hstuck")
+  expect(screen.frame.text().startswith("live"), "an open update showed through")
+  screen._sync_since -= pty_run.SYNC_TIMEOUT + 0.1
+  expect(screen.frame.text().startswith("stuck"), "an update left open is never shown")
+  screen.feed(b"\x1b[?2026l\x1b[?25l")
+  expect(not screen.frame.cursor_visible, "a hidden cursor reads as visible")
+  screen.feed(b"\x1b[?2026$p")
+  expect(screen.replies == [b"\x1b[?2026;2$y"], f"DECRQM 2026 answered {screen.replies}")
+
+
 class Process:
   """A child in its own process group, its output in a log file."""
 
@@ -424,8 +459,11 @@ class Term:
   # Reading
 
   @property
-  def screen(self):
-    return self.session.screen
+  def screen(self) -> "pty_run.Frame":
+    """The last completed frame: the host draws each frame inside a synchronized update, and
+    one that arrives over several reads is not seen until it is whole (a half-painted frame
+    moves the cursor and the status bar before the focus has really moved)."""
+    return self.session.screen.frame
 
   def text(self) -> str:
     return self.screen.text()
@@ -437,9 +475,11 @@ class Term:
     """The status bar: the bottom row."""
     return self.row(self.screen.rows - 1)
 
-  def cursor(self) -> tuple[int, int]:
-    """(column, row) of the terminal cursor: where a focused text field puts it."""
-    return self.screen.x, self.screen.y
+  def cursor(self) -> tuple[int, int] | None:
+    """(column, row) of the terminal cursor, where a focused text field puts it; None while
+    it is hidden (its position then only says where the last frame's drawing ended)."""
+    screen = self.screen
+    return (screen.x, screen.y) if screen.cursor_visible else None
 
   def find(self, needle: str) -> tuple[int, int] | None:
     """(row, cell column) of the first `needle` on screen. Columns count cells: a CJK

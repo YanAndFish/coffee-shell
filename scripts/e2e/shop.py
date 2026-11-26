@@ -56,26 +56,49 @@ def on_login_page(t: Term) -> None:
   t.wait_footer("离开输入")
 
 
+def field_focused(t: Term, label: str) -> bool:
+  """Whether the field under `label` is drawn focused: a heavy box (`┏━┓`, light `╭─╮`
+  otherwise), below the label or with the label in its top border at compact sizes."""
+  if t.find_re(rf"┏━ ({label}) ━"):
+    return True
+  at = find_label(t, label)
+  if not at:
+    return False
+  for row in (at[0] + 1, at[0] + 2):
+    if row < t.screen.rows and t.screen.grid[row][at[1]] in "┏╭":
+      return t.screen.grid[row][at[1]] == "┏"
+  return False
+
+
+def login_focus(t: Term) -> str | None:
+  """The login card's focused control, from its glyphs: `用户名` / `密码` (a heavy box), a
+  button (`›` before it: `button@ROW:COL`), or None. Not from the cursor: with a button
+  focused it is hidden and stays wherever the last frame drew (the animated steam)."""
+  for label in ("用户名", "密码"):
+    if field_focused(t, label):
+      return label
+  at = t.find_re(r"(›)[\[▐]")
+  return f"button@{at[0]}:{at[1]}" if at else None
+
+
 def login_field(t: Term) -> str | None:
-  """The login card's text field holding the focus (`用户名` / `密码`), from the status bar
-  (`离开输入` while typing) and where the cursor sits (the field below its label)."""
+  """The login card's text field holding the focus (`用户名` / `密码`): the status bar says
+  `离开输入` (typing) and the field is drawn focused."""
   if "离开输入" not in t.footer():
     return None
-  _, row = t.cursor()
-  for label in ("用户名", "密码"):
-    at = find_label(t, label)
-    if at and at[0] < row <= at[0] + 3:
-      return label
-  return None
+  focus = login_focus(t)
+  return focus if focus in ("用户名", "密码") else None
 
 
 def focus_login_field(t: Term, label: str) -> None:
+  """Tab until `label` has the focus, one Tab at a time: each waits for the focus to move
+  (frames that only animate change nothing here), so Tabs never outrun the card."""
   for _ in range(8):
     if login_field(t) == label:
       return
-    before = (t.footer(), t.cursor())
+    before = login_focus(t)
     t.key("tab")
-    t.wait_for(lambda: (t.footer(), t.cursor()) != before, "Tab moving the focus", 5)
+    t.wait_for(lambda: login_focus(t) != before, "Tab moving the focus", 5)
   raise t.fail(f"Tab never reached the {label} field")
 
 
@@ -133,6 +156,9 @@ def to_register_mode(t: Term) -> None:
   seen = t.wait_any("创建账号", "商品列表")
   if seen != "创建账号":
     raise t.fail("⏎ on the control before 用户名 did not open 注册")
+  # The rebuilt card shows with no focus first and puts it in 用户名 a frame later: a Tab
+  # sent in between lands after that focus and moves it on to 密码.
+  t.wait_for(lambda: login_field(t) == "用户名", "the 注册 card's focus in 用户名")
 
 
 def register(t: Term, username: str, password: str = PASSWORD) -> None:
