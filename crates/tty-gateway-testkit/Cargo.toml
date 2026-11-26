@@ -1,0 +1,26 @@
+[package]
+name = "tty-gateway-testkit"
+description = "Test kit for tty-gateway: an in-process server, a russh client and a vt100 screen."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+rand = "0.10"
+russh = { version = "0.65", default-features = false, features = [
+  "flate2",
+  "ring",
+  "rsa"
+] }
+rustix = { version = "1.1", features = [ "process" ] }
+tokio = { version = "1", features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "sync",
+  "time"
+] }
+tty-gateway = { path = "../tty-gateway" }
+vt100 = "0.18"

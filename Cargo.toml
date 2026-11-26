@@ -4,7 +4,8 @@ members = [
   "apps/tui",
   "crates/coffee-api",
   "crates/coffee-tui",
-  "crates/tty-gateway"
+  "crates/tty-gateway",
+  "crates/tty-gateway-testkit"
 ]
 # `nsh` writes the sources of the app's runners and hosts under `apps/tui/.nsh/`
 # (each with a Cargo.toml of its own); they are never members of this workspace.
