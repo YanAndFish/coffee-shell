@@ -27,13 +27,13 @@ pnpm --filter @coffee/contract check:generated   # fail when they are stale (CI)
 
 ### Transport (headers)
 
-| Header                           | Who sets it                                   | Meaning                                                                                                                                                                                   |
-| -------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `X-Internal-Key`                 | the TUI, from `COFFEE_INTERNAL_KEY`           | Gateway ↔ backend secret. When the backend has one, every route except `/v1/health` requires it (`401 unauthorized`). This is what makes the two headers below trustworthy.               |
-| `Authorization: Bearer <token>`  | the TUI, after register / login / resume      | The member session: 43 base64url characters, 7 days, stored hashed. `auth: user` endpoints answer `401 login_required` without it and `401 session_expired` for a bad or old one.         |
-| `X-SSH-Fingerprint`              | the TUI, from `COFFEE_SSH_FINGERPRINT`        | `SHA256:` + 43 base64 characters, as sshd computed it. Used by 记住我 (register/login), resume, logout, me and profile. Malformed → `400 validation_failed` (`header.x-ssh-fingerprint`). |
-| `X-Client-IP`                    | the TUI, from `COFFEE_CLIENT_IP` (auth calls) | The SSH client's address, only for rate limits and logs.                                                                                                                                  |
-| `Content-Type: application/json` | every request with a body                     | Bodies are JSON (≤ 64 KiB); anything else is `400 bad_request`.                                                                                                                           |
+| Header                           | Who sets it                                   | Meaning                                                                                                                                                                                          |
+| -------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `X-Internal-Key`                 | the TUI, from `COFFEE_INTERNAL_KEY`           | Gateway ↔ backend secret. When the backend has one, every route except `/v1/health` requires it (`401 unauthorized`). This is what makes the two headers below trustworthy.                      |
+| `Authorization: Bearer <token>`  | the TUI, after register / login / resume      | The member session: 43 base64url characters, 7 days, stored hashed. `auth: user` endpoints answer `401 login_required` without it and `401 session_expired` for a bad or old one.                |
+| `X-SSH-Fingerprint`              | the TUI, from `COFFEE_SSH_FINGERPRINT`        | `SHA256:` + 43 base64 characters, as the gateway computed it. Used by 记住我 (register/login), resume, logout, me and profile. Malformed → `400 validation_failed` (`header.x-ssh-fingerprint`). |
+| `X-Client-IP`                    | the TUI, from `COFFEE_CLIENT_IP` (auth calls) | The SSH client's address, only for rate limits and logs.                                                                                                                                         |
+| `Content-Type: application/json` | every request with a body                     | Bodies are JSON (≤ 64 KiB); anything else is `400 bad_request`.                                                                                                                                  |
 
 There is no pagination: lists are small. `GET /v1/orders` takes `limit` (1–50, default 20) and returns `total`.
 
@@ -89,7 +89,7 @@ user`), `session_expired` (`auth: optional`), `validation_failed` (any input), `
 ## Fixtures
 
 `fixtures/v1/` holds at least one success example per endpoint (`src/generate.ts` lists each with its endpoint and
-status) and one envelope per error code (`errors/<code>.json`). The first three paths are frozen (the TUI and the sshd
+status) and one envelope per error code (`errors/<code>.json`). The first three paths are frozen (the TUI and the SSH
 e2e stub read them): `health.json`, `products.json` (the unfiltered list), `error.json` (404). Every listed product
 has its detail, `catalog/product-<id>.json`, plus `catalog/detail-no-stock.json` (nyeri out of stock). State variants
 the UI renders: empty / partly selected / coupon / problem / no-address carts, the guest quote, the merge result,

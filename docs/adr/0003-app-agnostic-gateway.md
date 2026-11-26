@@ -51,7 +51,7 @@ ADR 0001 的会话模型、认证方式与度量结论不变，变的是名字�
 | 路由      | 用户名                     | 程序                                | 说明                               |
 | --------- | -------------------------- | ----------------------------------- | ---------------------------------- |
 | `coffee`  | `coffee`、`shop`；默认路由 | `coffee-tui`                        | 商店；带内部密钥、指纹、客户端地址 |
-| `gallery` | `gallery`                  | `coffee-tui`，`COFFEE_UI_GALLERY=1` | 组件画廊；不带内部密钥             |
+| `gallery` | `gallery`                  | `coffee-tui`，`COFFEE_UI_GALLERY=1` | 组件画廊；不带后端地址与内部密钥   |
 
 所以 `ssh -p 2222 localhost`（本机用户名）、`ssh -p 2222 anything@localhost` 都还是商店，
 `ssh -p 2222 gallery@localhost` 是画廊。
@@ -116,23 +116,31 @@ keyboard-interactive，`none` 仍然拒绝（否则带密钥的客户端不出�
 **`--check`**：读文件、校验、打印路由摘要（监听地址、限额、每条路由的用户名、命令、工作目录、变量名），配置错误
 时错误信息点出键名、退出码 1。命令文件不存在**只是警告**：程序可能稍后才构建或挂载，而 e2e 的 `gateway`
 流程恰好要测“程序缺失”时客户端看到什么。裸程序名（`coffee-tui`）每次启动时先在网关可执行文件旁边找，再找
-`PATH`，所以 `target/debug/` 与镜像的 `/usr/local/bin/` 都不用写绝对路径。
+`PATH`，所以 `target/debug/` 与镜像的 `/usr/local/bin/` 都不用写绝对路径。带 `/` 的相对
+`command` 与相对的 `cwd` 在读文件时按网关的工作目录解析（`host_key` 也相对于它）；`cwd` 默认是临时目录。
 
 ## 3. 重载
 
 **决定**：SIGHUP 重新读取并校验文件。成功则换上新快照（`tokio::sync::watch<Arc<Snapshot>>`）：**新连接**用新的
-路由、限额与文案；每个连接在 accept 时拿到当时的快照并一直用它，所以**进行中的会话不受影响**。失败则记一行
-错误、保留旧配置——一个手误不会让网关停下。`listen` 与 `host_key` 的变化只告警：换监听地址或主机密钥需要重启
-（主机密钥变了，所有客户端都会报警，不应该悄悄发生）。
+路由、限额与文案；每个连接在 accept 时拿到当时的快照并一直用它，所以**进行中的会话不受影响**。日志一行
+`reloaded config=… changes=routes added … · removed … · changed … · also changed …`，只列路由名与表名
+（`server`、`limits`、`messages`），从不列值。失败则记 `reload failed: the running configuration stays` 和错误、
+保留旧配置——一个手误不会让网关停下。`listen` 与 `host_key` 的变化只告警（`server.listen changed: restart to
+apply it`）：换监听地址或主机密钥需要重启（主机密钥变了，所有客户端都会报警，不应该悄悄发生）。
 
 限额计数器（`Limits` / `Gate`）常驻，上限按每次调用传入：重载改上限不会把正在计的会话数与令牌桶清零，调低上限
 只影响之后的新会话。
 
 ## 4. 优雅停机
 
-**决定**：SIGTERM / SIGINT 时：停止 accept → 通知所有连接 → 每个会话收到 `shutting_down` 提示 → 向每个程序的
-进程组发 SIGHUP → 等 `server.shutdown_grace`（默认 2 秒）→ 仍在的 SIGKILL → 带超时的 `disconnect` → 强关
-socket → 等所有任务结束。总时长不超过 grace + 1 秒。
+**决定**：第一个 SIGTERM / SIGINT 时（日志 `shutting down`、`draining connections=…`）：停止 accept，广播停机；
+已有会话的连接由会话自己收尾：先发终端复位（与崩溃提示前的相同），再发 `shutting_down` 文案，向程序的进程组发
+SIGHUP，`server.shutdown_grace`（默认 2 秒）后仍在则 SIGKILL，以**程序自己的退出状态**关闭通道并 `disconnect`；
+还在登录的连接直接 `disconnect`。到 grace + 0.7 秒仍未结束的连接强关 socket；整个过程以 grace + 1 秒为界，最后
+记 `stopped done=… millis=…`（`done=false` 表示有任务没在界限内结束），进程以 0 退出。
+
+**第二个信号**：排空期间再来一个 SIGTERM / SIGINT，网关记 `second signal: exiting now` 并**立即以状态 1 退出**，
+不再等待，也不回收会话程序——它们可能成为孤儿（见“已知缺口”）。这是给“卡住时还能退出”的出口，不是正常停法。
 
 **为什么**：以前停机直接丢下会话，客户端的终端可能停在备用屏、raw 模式里，用户看不到原因。现在 `coffee-tui`
 收到 SIGHUP 会恢复终端再退出，客户端看到一句说明。时长上限低于 `scripts/dev.mjs` 与 e2e harness 等子进程的
@@ -140,22 +148,33 @@ socket → 等所有任务结束。总时长不超过 grace + 1 秒。
 
 ## 5. 健壮性
 
+数值都是 `crates/tty-gateway/src/session.rs` 里的常量：`INPUT_BUDGET` 1 MiB、`KILL_GRACE` 1 秒、
+`HANDLE_TIMEOUT` 250 ms。
+
 - **输入不阻塞**：russh 的 `data()` / `window_change_request()` 回调不再 `await` 有界队列（子进程不读输入时，
-  整条连接的事件循环会卡在那里，连断开都处理不了）。输入进一个按**字节预算 1 MiB** 计的队列，**溢出就结束会话**：
-  一个不读输入的程序或一个灌数据的客户端，与其无限缓冲或丢字节（丢字节会把转义序列切碎），不如明确结束。
-  resize 用 `watch`（只留最新的尺寸，中间的不重要）；向 PTY 写入的任务用可取消的 `write` 与 resize 一起 `select!`。
+  整条连接的事件循环会卡在那里，连断开都处理不了）。输入进一个无界通道，但按**字节预算 `INPUT_BUDGET`** 计数，
+  **超出就结束会话**（日志 `session ended: input the program did not read`，连接直接断开，没有提示文案）：一个
+  不读输入的程序或一个灌数据的客户端，与其无限缓冲或丢字节（丢字节会把转义序列切碎），不如明确结束。resize 用
+  `watch`（只留最新的尺寸）；向 PTY 写入的任务用可取消的 `write` 与 resize 一起 `select!`，写卡住也不耽误 resize。
 - **启动不占 handler**：`shell_request` 只建输入通道并 spawn 会话任务；名额（`Slot`）在任务里获取并由任务持有，
-  fork/exec 与重试的睡眠不再占着连接的 handler。
-- **进程组**：每个会话程序是自己进程组的组长；**所有**结束路径（正常退出、断开、空闲、时限、溢出、停机、
-  `Drop` 守卫）都对进程组 SIGHUP → 宽限 → SIGKILL，程序自己启动的子进程一起回收。
-- **EOF = 挂断**：客户端的 `channel_eof`（例如 `ssh -tt … </dev/null`）按挂断处理，会话随即结束；以前它会让
-  会话挂到空闲超时。
-- **会话最长时长**：`limits.max_session_time`（可按路由覆盖，默认 `0` 不限），到时以状态 124 结束并显示
-  `time_limit`。ADR 0001 列为“尚未做”的这一项由此关闭：一直有输入的会话也不能永远占着名额。
-- **路由级上限**：`routes.NAME.max_sessions`，在全局与每地址上限之外；满了显示 `full_route`，不影响其他路由。
-- **超时与 `TCP_NODELAY`**：结束路径上所有对 `Handle` 的调用（发提示、`exit_status`、`close`、`disconnect`）都带
-  超时，一个不读数据的客户端拖不住回收；accept 之后 `set_nodelay(true)`（russh `Config.nodelay` 对 `run_stream`
-  不起作用，按键回显因此多等一个 Nagle 周期）；任务边界记录 panic。
+  fork/exec 与重试（最多 3 次，间隔 150 ms）不再占着连接的 handler。
+- **进程组**：每个会话程序是自己进程组的组长；**所有**结束路径都回收整个组。程序自己退出：立即对组发 SIGHUP，
+  通道关闭后再按 `KILL_GRACE` 收尾；断开、EOF、空闲、时限、溢出：SIGHUP → `KILL_GRACE` → SIGKILL；停机：同上但
+  宽限是 `shutdown_grace`；会话任务被取消或 panic：`Drop` 守卫对组 SIGKILL。
+- **EOF = 挂断**：客户端的 `channel_eof`（例如 `ssh -tt … </dev/null`）按挂断处理：停掉程序，最多再等 0.3 秒把
+  最后的输出送出，然后以程序自己的退出状态关闭通道（`coffee-tui` 收到 SIGHUP 正常退出，是 0；被信号杀死的程序
+  是 128 + 信号，通常 129 或 137）。以前它会让会话挂到空闲超时。
+- **会话最长时长**：`limits.max_session_time`（可按路由覆盖，默认 `0` 不限），从会话开始计，**输入不会延长它**；
+  到时以状态 124 结束并显示 `time_limit`。ADR 0001 列为“尚未做”的这一项由此关闭：一直有输入的会话也不能永远
+  占着名额。空闲超时同样是 124。
+- **路由级上限**：`routes.NAME.max_sessions`，在全局与每地址上限之外；满了显示 `full_route`（`{max}` 填上限），
+  不影响其他路由。
+- **超时与 `TCP_NODELAY`**：结束路径上所有对 `Handle` 的调用（发提示、`exit_status`、`eof`、`close`、
+  `disconnect`）都限 `HANDLE_TIMEOUT`，一个不读数据的客户端拖不住回收；accept 之后 `set_nodelay(true)`（russh
+  `Config.nodelay` 对 `run_stream` 不起作用，按键回显因此多等一个 Nagle 周期）；任务边界（`tasks.rs`）记录
+  `task panicked`。
+- **客户端环境**：每个会话最多收 16 个客户端变量，名字与值都要“纯净”；客户端永远不能设 `PATH`、`HOME`、
+  `TMPDIR`、`USER`、`LOGNAME`、`TERM`，也不能设路由 `env` 表里的任何名字。
 
 ## 6. 上游抽象：只做本地命令
 
@@ -173,51 +192,67 @@ socket → 等所有任务结束。总时长不超过 grace + 1 秒。
 
 ```rust
 #[non_exhaustive]
-pub struct HostOptions {
-  pub program: String,              // 日志与提示里的程序名
-  pub root: Root,                   // nsh 根组件
-  pub ui_sets: Vec<Registry>,
-  pub color_mode: Option<String>,   // 强制色深（咖啡馆传 COFFEE_COLORS）
-  pub interrupt_hint: String,       // “再按一次 Ctrl+C 退出”
-  pub frame_filter: Option<FrameFilterFactory>,
-  pub quiet_panics: bool,
+pub struct HostOptions { pub program: String, pub root: Root, pub ui_sets: Vec<Registry>,
+  pub color_mode: Option<String>, pub interrupt_hint: String,
+  pub frame_filter: Option<FrameFilterFactory>, pub quiet_panics: bool }
+impl HostOptions {
+  pub fn new(program: impl Into<String>, root: Root) -> Self   // nsh 基础 UI 集、自动色深、英文提示、无过滤器
+  pub fn ui_sets(self, …) -> Self; pub fn color_mode(self, …) -> Self; pub fn interrupt_hint(self, …) -> Self;
+  pub fn frame_filter(self, factory: impl FnOnce(ColorDepth) -> Box<dyn FrameFilter> + 'static) -> Self;
+  pub fn quiet_panics(self, quiet: bool) -> Self
 }
 pub trait FrameFilter { fn apply(&mut self, buffer: &mut Buffer); fn owns_colors(&self) -> bool { true } }
-pub type FrameFilterFactory = Box<dyn FnOnce(ColorDepth) -> Box<dyn FrameFilter>>;
 pub fn run(options: HostOptions) -> io::Result<()>
+pub fn is_panic(error: &io::Error) -> bool
 ```
 
+`#[non_exhaustive]` 让别的 crate 不能写结构体字面量，只能 `HostOptions::new(...)` 加构建方法，以后加选项不破坏
+调用方。
+
 `tty-host` 负责 ADR 0001“终端宿主加固”里的一切：自己的 `poll` 主循环、信号、挂断检测、`use-dev-tty`、非阻塞
-写出、启动查询、OSC 52、色深判断（`crates/tty-host/src/color.rs`）、Ctrl+C 连按两次。`coffee-tui` 是咖啡馆的薄
-入口：从进程环境读 `SessionEnv`（`session_env_from_process`）、画廊开关、`Root`、调用 `coffee_app::configure`，
-再交给 `tty_host::run`。
+写出、启动查询（`terminal.rs`）、OSC 52、色深判断（`crates/tty-host/src/color.rs`）、Ctrl+C 连按两次
+（`interrupt.rs`）。`coffee-tui` 是咖啡馆的薄入口（`crates/coffee-tui/src/lib.rs`）：从进程环境读 `SessionEnv`
+（`session_env_from_process`）、画廊开关（`app_root`）、调用 `coffee_app::configure`，再以
+`HostOptions::new("coffee-tui", root).ui_sets(…).color_mode(COFFEE_COLORS).interrupt_hint(" 再按一次 Ctrl+C 退出 ")
+.frame_filter(Pin).quiet_panics(is_remote)` 交给 `tty_host::run`。
 
 **钉色留在咖啡馆**：`palette.rs` 的 `Pin` 实现 `FrameFilter`，在每帧渲染后、diff 之前把载体换回 token（ADR 0002
 第 4 节）。它依赖 `apps/tui/src/ui/theme.rs` 的载体表与 `theme.json`，这是一家店的设计决定，不是终端的通用能力；
 别的应用可以不要过滤器，或带自己的。`owns_colors()` 在所有色深都为 `true`，快照与 `tests/pin_render.rs` 不变
 （它们一起搬到 `crates/coffee-tui`）。
 
-**panic 处理**：nsh 引擎线程上的 panic 以前可能被当成“应用已结束”，进程以 0 退出，网关不显示崩溃提示。现在
-panic hook 置位并请求停机，主循环以错误结束（非零退出码，网关显示 `crashed`），优先级高于“已结束”；只有
-`AppError::is_fatal()` 的错误才结束循环，非致命错误不再把正常退出变成退出码 1。`quiet_panics`：`coffee-tui`
-在有 `COFFEE_CLIENT_IP`（即经网关运行）时打开，终端上只打印一行中性提示，不把 panic 文案与源码路径泄给 SSH
-客户端；本地直接运行时照常打印，方便调试。
+**panic 与错误**：nsh 引擎线程上的 panic 以前可能被当成“应用已结束”，进程以 0 退出，网关不显示崩溃提示。现在
+panic hook 置位并请求停机，`run` 返回 `Panicked` 错误（`tty_host::is_panic` 认得它），优先级高于“已结束”；
+`coffee-tui` 据此以**状态 101** 退出（与主线程 panic 相同），网关显示 `crashed`。panic 怎么报由
+`terminal::PanicReport` 决定：`Full`（本地开发：照常打印信息、位置与回溯）或 `Line`（`quiet_panics`：恢复终端后
+只打印一行 `coffee-tui: the session ended after an internal error`）。`coffee-tui` 在有 `COFFEE_CLIENT_IP`（网关
+总会设，即远程会话）时打开 `quiet_panics`，不把 panic 文案与源码路径泄给 SSH 客户端。只有 `AppError::is_fatal()`
+的错误才结束循环（`run` 返回带其文字的错误，`coffee-tui` 打印 `coffee-tui: <消息>`，状态 1）；应用撑过去的非致命
+错误不再把正常退出变成状态 1，只在**非远程**会话正常结束、终端恢复之后在 stderr 列出。
 
 ## 8. 测试
 
 - `crates/tty-gateway-testkit`：从原来的 `tests/support/mod.rs` 提出来的进程内 `TestServer`（临时端口、给定配置
-  文本）、russh 客户端（可选公钥、可选用户名）、`vt100` 终端、探针程序（打印指定环境变量）。网关自己的测试与
-  商店的 SSH 测试共用它。
-- `crates/tty-gateway/tests`：只用探针程序与中性文案——认证、限额、空闲、崩溃、resize、路由（`routes.rs`：
-  三种用户名、默认路由、密钥只到点名的路由、无公钥时省略指纹、客户端不能伪造路由变量、路由级上限、重载、
-  `--check`），以及第 5 节的健壮性（卡住的子进程不阻塞关闭、输入洪泛、孙进程回收、EOF、时限、坏文件保留旧
-  配置、停机在 grace + 1 秒内回收）。
+  文本、可带环境）、russh 客户端（可选公钥、可选用户名）、`vt100` 终端、探针程序（打印指定环境变量）。网关自己
+  的测试与商店的 SSH 测试共用它；`TTY_GATEWAY_LOG=info` 让测试里的服务器把日志打到 stderr。
+- `crates/tty-gateway/tests`，只用探针程序与中性文案：
+  - `e2e.rs`：认证、横幅、resize、断开、exec/sftp/转发被拒、无 PTY、限额、空闲、崩溃、程序缺失、登录时限、速率；
+  - `routes.rs`：三种用户名与默认路由、密钥只到点名的路由、无公钥时省略指纹、客户端不能伪造路由变量、路由级
+    上限、怪用户名、新连接用新配置、`--check`；
+  - `robustness.rs`：不读输入的程序不拖住关闭、输入超预算结束会话并释放名额、孙进程回收、EOF、时限 124、
+    shell 请求后立即到达的输入、输入卡住时 resize 仍生效；
+  - `lifecycle.rs`：重载只影响新会话、停机通知每个客户端并回收每个程序、不读数据的客户端拖不住停机，以及真实
+    二进制上的 SIGHUP 重载与 SIGTERM 排空。
 - 依赖真实 `coffee-tui`、中文文案与 stub 后端的用例（以前在 `coffee-sshd/tests/e2e.rs`，过渡期在
-  `tty-gateway/tests/shop.rs`）最终搬到 **`crates/coffee-tui/tests/ssh.rs`**：用 testkit、
-  `CARGO_BIN_EXE_coffee-tui` 与仓库里的 `deploy/gateway.toml`，所以 `pnpm test` 不再需要先构建 `coffee-tui`。
-  ADR 0001 的度量 `measure_twenty_sessions` 也在那里。
-- `scripts/e2e` 用 `tomllib` 读 `deploy/gateway.toml`，只覆盖测试需要的两项；CI 对它跑 `--check`；
-  `deploy/smoke-test.sh` 多一次 `ssh gallery@`。
+  `tty-gateway/tests/shop.rs`）搬到 **`crates/coffee-tui/tests/ssh.rs`**：用 testkit、`CARGO_BIN_EXE_coffee-tui`
+  与仓库里随发布的 `deploy/gateway.toml`，所以 `pnpm test` 就是 `cargo test --workspace && vitest run`，
+  `pnpm test:e2e` 是 `cargo test -p tty-gateway -p coffee-tui --tests`。ADR 0001 的度量 `measure_twenty_sessions`
+  也在那里。
+- `scripts/e2e`：harness 用 `tomllib` 读 `deploy/gateway.toml`，只把 `limits.connections_per_minute` 设为 0，地址、
+  主机密钥与日志级别经 `TTY_GATEWAY_*` 给出；`Stack.connect(..., user=…)` 选路由；`gateway` 流程覆盖三种用户名，
+  并（系统能读进程环境时）只按变量名检查内部密钥与后端地址只到商店路由。驱动尊重同步更新（mode 2026），只读
+  完整的帧，焦点从字形读出。CI 对构建出的二进制与镜像都跑 `--check`；`deploy/smoke-test.sh` 多一次 `ssh gallery@`
+  并检查日志里的 `route=gallery`。
 
 ## 后果
 
@@ -241,5 +276,11 @@ panic hook 置位并请求停机，主循环以错误结束（非零退出码，
 - **没有 metrics 端点**：只有日志。
 - **横幅不能按路由**（第 1 节，russh 的限制）。
 - **调优只在文件里**（见“后果”）。
+- **停机时的第二个信号会留下孤儿**：排空期间的第二个 SIGTERM / SIGINT 立即 `exit(1)`，不对会话的进程组发信号；
+  还在跑的会话程序失去网关后只会在 PTY 挂断时自己退出（`coffee-tui` 会），别的程序可能一直留着。只发一个信号、
+  等它排空。
+- **输入溢出没有提示**：超出 `INPUT_BUDGET` 时连接直接断开，客户端看不到原因（只有网关日志）。
+- **只在 macOS 上跑过**：到目前为止所有测试与手动检查都在 macOS 上；Linux 只有 CI。输入洪泛与“不读输入的程序”
+  两类测试依赖“程序不读时 PTY 主端的写会阻塞”，这在 Linux 的 PTY 缓冲大小下应当同样成立，但未在本机验证。
 - 未能从源码核实：OpenSSH 客户端在 PTY 会话上发送 EOF 的确切时机；由手动检查 `ssh -tt … </dev/null` 立即结束
   覆盖。

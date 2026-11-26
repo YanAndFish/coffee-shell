@@ -22,7 +22,8 @@ pnpm ssh        # in a second terminal: ssh -p 2222 localhost (forwards COLORTER
 `pnpm dev` prints `✓ ready — connect with: ssh -p 2222 localhost` once both are up; Ctrl+C stops everything. Any SSH
 key works and so does none; inside, press **Ctrl+C twice** to leave. The database is `apps/server/.data/coffee.db`
 and the gateway's host key `.data/ssh_host_ed25519_key` (both git-ignored); `DATABASE_URL=file:/elsewhere.db pnpm dev`
-uses another database.
+uses another database. `pnpm dev` checks the gateway's configuration (`tty-gateway --check`) before it starts it;
+`TTY_GATEWAY_CONFIG=my-gateway.toml pnpm dev` runs another file.
 
 The gateway routes by SSH **user name** (`deploy/gateway.toml`):
 
@@ -182,11 +183,12 @@ command = [ "/usr/bin/top" ]
   is left out, so a secret reaches only the routes that name it. Secrets stay in the environment, not in the file.
 - `tty-gateway --config FILE --check` reads and checks the file, prints the routes (variable names, never values)
   and exits 1 on an error; a program that is not there yet is only a warning.
-- `kill -HUP <pid>` reloads the file: new connections get the new routes, limits and messages, sessions already
-  running keep theirs, and a broken file is logged and ignored (the old configuration stays). `listen` and
-  `host_key` need a restart.
-- SIGTERM / SIGINT stop gracefully: no new connections, every session is told and hung up, and whatever still runs
-  after `server.shutdown_grace` (2 s) is killed.
+- A SIGHUP to the gateway (`pkill -HUP -x tty-gateway`; not to `pnpm dev`, which stops on it) reloads the file: new
+  connections get the new routes, limits and messages, sessions already running keep theirs, and a broken file is
+  logged and ignored (`reload failed: the running configuration stays`). `listen` and `host_key` need a restart.
+- SIGTERM / SIGINT stop gracefully: no new connections, every session is told and hung up, whatever still runs
+  after `server.shutdown_grace` (2 s) is killed, and the gateway is gone within grace + 1 s. A second signal during
+  that drain exits at once and may leave session programs behind.
 
 The shop's file is [`deploy/gateway.toml`](deploy/gateway.toml); every key, default and variable is in
 [`deploy/README.md`](deploy/README.md), the reasons in [ADR 0003](docs/adr/0003-app-agnostic-gateway.md).
@@ -228,7 +230,7 @@ The rule (`NO_COLOR` included) is in [`crates/tty-host/src/color.rs`](crates/tty
   them (`lsof -nP -iTCP:3000 -iTCP:2222 -sTCP:LISTEN`) or move them: `PORT=3917 TTY_GATEWAY_ADDR=127.0.0.1:2917 pnpm dev`,
   then `ssh -p 2917 localhost`.
 - **`ssh gallery@localhost` opens the shop**: the running gateway has an older configuration. Check the file
-  (`target/debug/tty-gateway --check --config deploy/gateway.toml`), then reload it (`kill -HUP` the gateway) or
+  (`target/debug/tty-gateway --check --config deploy/gateway.toml`), then reload it (`pkill -HUP -x tty-gateway`) or
   restart `pnpm dev`.
 - **The backend stops at start with `[server] ✗ the database … does not exist / is not migrated / is locked`**: run
   `pnpm --filter @coffee/server db:migrate` (and `db:seed`), or stop the other process holding the SQLite file (a
