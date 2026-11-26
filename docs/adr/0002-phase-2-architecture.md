@@ -4,6 +4,12 @@
 - 日期：2026-11-22
 - 范围：`packages/contract`、`crates/coffee-api`、`apps/server`、`apps/tui`、`crates/coffee-host`、`scripts/e2e`
 
+> **状态注记（2026-11-26）**：七条决定都仍然有效；只有名字被 [ADR 0003](0003-app-agnostic-gateway.md) 取代，
+> 下文保留当时的写法：`coffee-sshd` → `tty-gateway`；`crates/coffee-host` → `crates/tty-host`（通用宿主）+
+> `crates/coffee-tui`（咖啡馆入口，钉色 `src/palette.rs` 与 `tests/pin_render.rs` 在这里，实现
+> `tty_host::FrameFilter`）。`COFFEE_SSH_FINGERPRINT` 与内部密钥现在经 `deploy/gateway.toml` 里 `coffee` 路由的
+> `env` 表交给会话，只到达点名它们的路由（画廊路由没有内部密钥）。
+
 第二阶段把第一阶段的 SSH 外壳（[ADR 0001](0001-ssh-session-model.md)）做成了一家能注册、加购、结算的演示店。
 产品规则（U1–U7）与接口层的细则（P-…）记在 [`docs/design/decisions.md`](../design/decisions.md)；本篇只记
 **跨层的架构决定**：它们决定代码放在哪里、谁对什么负责，改动其中任何一条都会牵动多个目录。
