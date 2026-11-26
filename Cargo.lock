@@ -455,6 +455,9 @@ dependencies = [
  "nsh-base",
  "nsh-core",
  "serde_json",
+ "tokio",
+ "toml",
+ "tty-gateway-testkit",
  "tty-host",
 ]
 
@@ -3961,7 +3964,6 @@ dependencies = [
  "russh",
  "rustix",
  "serde",
- "serde_json",
  "tokio",
  "toml",
  "tracing",

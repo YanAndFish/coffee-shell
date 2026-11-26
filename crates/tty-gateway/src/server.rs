@@ -752,7 +752,7 @@ impl server::Handler for Connection {
       && !link.input(data)
       && !std::mem::replace(&mut self.overflowed, true)
     {
-      tracing::warn!(conn = self.id, "input over the budget; ending the session");
+      tracing::debug!(conn = self.id, "input over the budget");
     }
     Ok(())
   }

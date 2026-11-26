@@ -19,3 +19,13 @@ tty-host.workspace = true
 [dev-dependencies]
 # `#[component]` in the probe components of `tests/pin_render.rs`.
 nsh-core.workspace = true
+# `tests/ssh.rs`: the shop behind an in-process tty-gateway on `deploy/gateway.toml`.
+tokio = { version = "1", features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "time"
+] }
+toml = "0.8"
+tty-gateway-testkit = { path = "../tty-gateway-testkit" }

@@ -109,6 +109,7 @@ pub struct TestServer {
   pub addr: SocketAddr,
   pub dir: PathBuf,
   env: Vec<(String, String)>,
+  exe_dir: Option<PathBuf>,
   snapshots: watch::Sender<Arc<Snapshot>>,
   stop: Option<oneshot::Sender<()>>,
   task: Option<JoinHandle<()>>,
@@ -122,6 +123,18 @@ impl TestServer {
 
   /// Starts a server on `toml`; `env` is the gateway's environment for `${env:…}`.
   pub async fn start_with_env(toml: &str, env: &[(&str, &str)]) -> Self {
+    Self::start_with_exe_dir(toml, env, None).await
+  }
+
+  /// [`TestServer::start_with_env`], with bare program names (`command = ["prog"]`)
+  /// looked for in `exe_dir` first, as next to a real gateway's executable (else only on
+  /// `PATH`). E.g. the directory of a `CARGO_BIN_EXE_*` program, to run a shipped
+  /// configuration unchanged.
+  pub async fn start_with_exe_dir(
+    toml: &str,
+    env: &[(&str, &str)],
+    exe_dir: Option<&Path>,
+  ) -> Self {
     // The server's log on stderr (uncaptured) when asked for, e.g. TTY_GATEWAY_LOG=info.
     if std::env::var_os("TTY_GATEWAY_LOG").is_some() {
       tty_gateway::init_logging();
@@ -136,7 +149,9 @@ impl TestServer {
       "TTY_GATEWAY_HOST_KEY".into(),
       dir.join("host_key").to_string_lossy().into_owned(),
     ));
-    let snapshot = load(toml, &env).unwrap_or_else(|error| panic!("bad test config: {error}"));
+    let exe_dir = exe_dir.map(Path::to_owned);
+    let snapshot = load(toml, &env, exe_dir.as_deref())
+      .unwrap_or_else(|error| panic!("bad test config: {error}"));
     let (key, _) = tty_gateway::hostkey::load_or_generate(&snapshot.server.host_key).unwrap();
     let listener = TcpListener::bind(snapshot.server.listen).await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -152,6 +167,7 @@ impl TestServer {
       addr,
       dir,
       env,
+      exe_dir,
       snapshots,
       stop: Some(stop),
       task: Some(task),
@@ -161,7 +177,7 @@ impl TestServer {
   /// Puts `toml` in force for new connections (as a reload would); open ones keep
   /// theirs. A configuration that does not load changes nothing.
   pub fn reload(&self, toml: &str) -> Result<(), ConfigError> {
-    let snapshot = load(toml, &self.env)?;
+    let snapshot = load(toml, &self.env, self.exe_dir.as_deref())?;
     self.snapshots.send_replace(Arc::new(snapshot));
     Ok(())
   }
@@ -184,7 +200,11 @@ impl TestServer {
   }
 }
 
-fn load(toml: &str, env: &[(String, String)]) -> Result<Snapshot, ConfigError> {
+fn load(
+  toml: &str,
+  env: &[(String, String)],
+  exe_dir: Option<&Path>,
+) -> Result<Snapshot, ConfigError> {
   let lookup = |name: &str| {
     env
       .iter()
@@ -192,7 +212,7 @@ fn load(toml: &str, env: &[(String, String)]) -> Result<Snapshot, ConfigError> {
       .find(|(key, _)| key == name)
       .map(|(_, value)| value.clone())
   };
-  load_str(toml, lookup, None).map(|(snapshot, _)| snapshot)
+  load_str(toml, lookup, exe_dir).map(|(snapshot, _)| snapshot)
 }
 
 impl Drop for TestServer {

@@ -43,5 +43,4 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 
 [dev-dependencies]
-serde_json.workspace = true
 tty-gateway-testkit = { path = "../tty-gateway-testkit" }

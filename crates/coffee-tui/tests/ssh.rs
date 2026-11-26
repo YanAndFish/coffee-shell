@@ -1,13 +1,10 @@
-//! The ROAST/TTY shop behind the gateway: the real `coffee-tui`, a stub backend serving
-//! the contract fixtures, and a shop configuration that reproduces the gateway's
-//! behaviour from before it was made application-neutral (server id, banner, Chinese
-//! messages, the `COFFEE_*` session environment). These tests move to the shop's own
-//! crate later; nothing in `src/` knows about the shop.
+//! The shop over SSH: the real `coffee-tui` behind an in-process `tty-gateway` running the
+//! repo's own `deploy/gateway.toml` (only what a test needs is overridden: a program, a
+//! limit), a russh client with a `vt100` screen, and a stub backend serving the contract
+//! fixtures. A change to the shipped banner, messages or routes shows up here.
 
 use std::{
   path::{Path, PathBuf},
-  process::Command,
-  sync::OnceLock,
   time::{Duration, Instant},
 };
 
@@ -16,112 +13,87 @@ use tokio::{
   net::TcpListener,
 };
 use tty_gateway_testkit::{
-  Login, Terminal, TestServer, alive, children_named, connect, crash_bin, field, probe_bin, quote,
-  quote_path, temp_dir,
+  Login, Terminal, TestServer, alive, children_named, connect, connect_as, crash_bin, field,
+  probe_bin, temp_dir,
 };
 
 const WAIT: Duration = Duration::from_secs(10);
 
-/// The shop's banner, as the gateway sent it before.
-const BANNER: &str = "\n  ◆ROAST/TTY 终端咖啡馆\n  演示环境 · 不是真实商店 · 不收款、不发货 · 请勿使用真实密码、地址或电话\n\n";
+/// The configuration the repo ships (`pnpm dev`, Docker, scripts/e2e).
+const SHIPPED: &str = include_str!("../../../deploy/gateway.toml");
 
-/// The shop's configuration with `bin` as the session program and `limits` as the body
-/// of `[limits]`. The backend URL, internal key and forced colour depth come from the
-/// gateway's environment.
-fn shop_config(bin: &Path, limits: &str) -> String {
-  format!(
-    r#"
-[server]
-server_id = "SSH-2.0-ROAST_TTY"
-banner = {banner}
-default_route = "coffee"
+/// The shipped configuration, with overrides.
+#[derive(Clone)]
+struct Config(toml::Table);
 
-[limits]
-{limits}
+impl Config {
+  fn shipped() -> Self {
+    Self(SHIPPED.parse().expect("deploy/gateway.toml is TOML"))
+  }
 
-[messages]
-no_pty = "ROAST/TTY 需要一个终端：请用 `ssh -t`，不要加 -T。"
-unavailable = "ROAST/TTY 暂时无法启动，请稍后再试。"
-crashed = "ROAST/TTY 出错了，会话已结束（代码 {{code}}）。请重新连接；如果一直这样，请稍后再试。"
-idle = "ROAST/TTY 空闲超过 {{minutes}} 分钟，连接已关闭。"
-full = "ROAST/TTY 当前在线会话已满（上限 {{max}}），请稍后再试。"
-full_per_ip = "ROAST/TTY 来自你的地址的会话已达上限（{{max}} 个），请先关闭其他会话。"
+  /// Sets `path` (dotted, e.g. `limits.max_sessions`); every table on the way must
+  /// already be in the shipped file.
+  fn set(mut self, path: &str, value: impl Into<toml::Value>) -> Self {
+    let mut keys: Vec<&str> = path.split('.').collect();
+    let last = keys.pop().unwrap();
+    let mut table = &mut self.0;
+    for key in keys {
+      table = table
+        .get_mut(key)
+        .and_then(toml::Value::as_table_mut)
+        .unwrap_or_else(|| panic!("no table {key:?} on the way to {path:?}"));
+    }
+    table.insert(last.to_owned(), value.into());
+    self
+  }
 
-[routes.coffee]
-command = [{bin}]
+  /// Runs `program` for `route` instead of the shipped command.
+  fn command(self, route: &str, program: &Path) -> Self {
+    let program = toml::Value::String(program.to_string_lossy().into_owned());
+    self.set(&format!("routes.{route}.command"), vec![program])
+  }
 
-[routes.coffee.env]
-COFFEE_API_URL = "${{env:COFFEE_API_URL:-http://127.0.0.1:3000}}"
-COFFEE_INTERNAL_KEY = "${{env:COFFEE_INTERNAL_KEY}}"
-COFFEE_SSH_FINGERPRINT = "${{fingerprint}}"
-COFFEE_CLIENT_IP = "${{client_ip}}"
-COFFEE_COLORS = "${{env:COFFEE_COLORS}}"
-"#,
-    banner = quote(BANNER),
-    bin = quote_path(bin),
-  )
+  /// A shipped string (e.g. `messages.full`, `server.banner`).
+  fn text(&self, path: &str) -> String {
+    let mut keys = path.split('.');
+    let mut value = keys.next().and_then(|key| self.0.get(key));
+    for key in keys {
+      value = value.and_then(|value| value.get(key));
+    }
+    value
+      .and_then(toml::Value::as_str)
+      .unwrap_or_else(|| panic!("no string {path:?} in the config"))
+      .to_owned()
+  }
+
+  /// A shipped message with `{name}` filled in, as the gateway does.
+  fn message(&self, key: &str, name: &str, value: &str) -> String {
+    self
+      .text(&format!("messages.{key}"))
+      .replace(&format!("{{{name}}}"), value)
+  }
+
+  /// A gateway on this configuration, `env` its environment. A bare `coffee-tui` is the
+  /// one Cargo built for these tests (as next to a real gateway's executable).
+  async fn start(&self, env: &[(&str, &str)]) -> TestServer {
+    let text = toml::to_string(&self.0).unwrap();
+    TestServer::start_with_exe_dir(&text, env, Some(tui_dir())).await
+  }
 }
 
-/// A shop gateway in this process, the backend at `api`.
-async fn shop(bin: &Path, api: &str, limits: &str) -> TestServer {
-  TestServer::start_with_env(&shop_config(bin, limits), &[("COFFEE_API_URL", api)]).await
+/// Where Cargo put `coffee-tui` for these tests.
+fn tui_dir() -> &'static Path {
+  Path::new(env!("CARGO_BIN_EXE_coffee-tui"))
+    .parent()
+    .unwrap()
 }
 
-/// The real `coffee-tui`, built once per test run with the workspace's cargo.
 fn tui_bin() -> PathBuf {
-  static BIN: OnceLock<PathBuf> = OnceLock::new();
-  BIN
-    .get_or_init(|| {
-      let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-      let mut build = Command::new(cargo);
-      // Without what `cargo test` sets for this test binary: some build scripts rerun
-      // when those change (`CARGO_MANIFEST_DIR`, `CARGO_PKG_NAME`, ...), which relinked
-      // coffee-tui on every switch between `cargo build` and `cargo test`, and under a
-      // test run alongside killed the sessions of the other (macOS kills a program whose
-      // binary is rewritten under it; the exec in between finds no file).
-      for (name, _) in std::env::vars_os() {
-        let name = name.to_string_lossy();
-        if name.starts_with("CARGO_PKG_")
-          || name.starts_with("CARGO_MANIFEST_")
-          || name.starts_with("CARGO_BIN_")
-          || [
-            "CARGO_CRATE_NAME",
-            "CARGO_PRIMARY_PACKAGE",
-            "CARGO_TARGET_TMPDIR",
-            "CARGO_RUSTC_CURRENT_DIR",
-            "OUT_DIR",
-          ]
-          .contains(&name.as_ref())
-        {
-          build.env_remove(name.as_ref());
-        }
-      }
-      let output = build
-        .args([
-          "build",
-          "-p",
-          "coffee-tui",
-          "--bin",
-          "coffee-tui",
-          "--message-format=json-render-diagnostics",
-        ])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("cargo build coffee-tui");
-      assert!(
-        output.status.success(),
-        "building coffee-tui failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-      );
-      String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|message| message["target"]["name"] == "coffee-tui")
-        .find_map(|message| message["executable"].as_str().map(PathBuf::from))
-        .expect("cargo reported no coffee-tui executable")
-    })
-    .clone()
+  PathBuf::from(env!("CARGO_BIN_EXE_coffee-tui"))
 }
+
+/// The backend's address the tests give the gateway (nothing listens there).
+const NO_API: (&str, &str) = ("COFFEE_API_URL", "http://127.0.0.1:9");
 
 /// A tiny HTTP server answering `GET /v1/products` and `/v1/health` with the contract
 /// fixtures; returns its base URL.
@@ -166,33 +138,37 @@ async fn stub_backend() -> String {
   format!("http://{addr}")
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn the_shop_config_hands_the_coffee_environment_to_the_session() {
-  let dir = temp_dir("shop-env");
-  let probe = probe_bin(
-    &dir,
-    "probe.sh",
-    &[
-      "COFFEE_SSH_FINGERPRINT",
-      "COFFEE_CLIENT_IP",
-      "COFFEE_API_URL",
-      "COFFEE_INTERNAL_KEY",
-      "COFFEE_COLORS",
-    ],
+/// What the probe stand-in prints.
+const COFFEE_VARS: &[&str] = &[
+  "COFFEE_SSH_FINGERPRINT",
+  "COFFEE_CLIENT_IP",
+  "COFFEE_API_URL",
+  "COFFEE_INTERNAL_KEY",
+  "COFFEE_COLORS",
+  "COFFEE_UI_GALLERY",
+];
+
+/// Logs in as `user`, opens a shell and returns its output once a probe is up.
+async fn probe_session(server: &TestServer, user: &str, login: Login) -> String {
+  let (handle, _) = connect_as(server.addr, user, login).await;
+  let mut terminal = Terminal::open(&handle, 80, 24).await;
+  assert!(
+    terminal.wait_raw("SIZE=", WAIT).await,
+    "{user}: {}",
+    terminal.raw_text()
   );
-  let server = TestServer::start_with_env(
-    &shop_config(&probe, ""),
-    &[
-      ("COFFEE_API_URL", "http://127.0.0.1:9"),
-      ("COFFEE_INTERNAL_KEY", "internal-secret"),
-    ],
-  )
-  .await;
-  let (handle, banner) = connect(server.addr, Login::Keyless).await;
-  assert_eq!(banner.as_deref(), Some(BANNER));
-  let mut keyless = Terminal::open(&handle, 80, 24).await;
-  assert!(keyless.wait_raw("SIZE=", WAIT).await);
-  let raw = keyless.raw_text();
+  terminal.raw_text()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shop_route_hands_the_coffee_environment_to_the_session() {
+  let dir = temp_dir("shop-env");
+  let probe = probe_bin(&dir, "probe.sh", COFFEE_VARS);
+  let config = Config::shipped().command("coffee", &probe);
+  let server = config
+    .start(&[NO_API, ("COFFEE_INTERNAL_KEY", "internal-secret")])
+    .await;
+  let raw = probe_session(&server, "coffee", Login::Keyless).await;
   assert_eq!(
     field(&raw, "COFFEE_SSH_FINGERPRINT").as_deref(),
     Some("none")
@@ -210,23 +186,15 @@ async fn the_shop_config_hands_the_coffee_environment_to_the_session() {
     Some("internal-secret")
   );
   assert_eq!(field(&raw, "COFFEE_COLORS").as_deref(), Some("none"));
+  assert_eq!(field(&raw, "COFFEE_UI_GALLERY").as_deref(), Some("none"));
 
   let (login, fingerprint) = Login::new_key();
-  let (handle, _) = connect(server.addr, login).await;
-  let mut keyed = Terminal::open(&handle, 80, 24).await;
-  assert!(keyed.wait_raw("SIZE=", WAIT).await);
-  assert_eq!(
-    field(&keyed.raw_text(), "COFFEE_SSH_FINGERPRINT"),
-    Some(fingerprint)
-  );
+  let raw = probe_session(&server, "shop", login).await;
+  assert_eq!(field(&raw, "COFFEE_SSH_FINGERPRINT"), Some(fingerprint));
 
-  // The defaults when the gateway's environment says nothing; a forced colour depth.
-  let plain =
-    TestServer::start_with_env(&shop_config(&probe, ""), &[("COFFEE_COLORS", "16")]).await;
-  let (handle, _) = connect(plain.addr, Login::Keyless).await;
-  let mut terminal = Terminal::open(&handle, 80, 24).await;
-  assert!(terminal.wait_raw("SIZE=", WAIT).await);
-  let raw = terminal.raw_text();
+  // Nothing in the gateway's environment: the shipped defaults; a forced colour depth.
+  let plain = config.start(&[("COFFEE_COLORS", "16")]).await;
+  let raw = probe_session(&plain, "someone", Login::Keyless).await;
   assert_eq!(
     field(&raw, "COFFEE_API_URL").as_deref(),
     Some("http://127.0.0.1:3000")
@@ -237,26 +205,95 @@ async fn the_shop_config_hands_the_coffee_environment_to_the_session() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_shop_speaks_chinese_and_says_roast_tty() {
+async fn the_gallery_route_gets_neither_the_backend_nor_the_key() {
+  let dir = temp_dir("gallery-env");
+  let probe = probe_bin(&dir, "probe.sh", COFFEE_VARS);
+  // The shipped gallery route with its env table, only its program swapped for a probe.
+  let server = Config::shipped()
+    .command("gallery", &probe)
+    .start(&[
+      NO_API,
+      ("COFFEE_INTERNAL_KEY", "internal-secret"),
+      ("COFFEE_COLORS", "256"),
+    ])
+    .await;
+  let raw = probe_session(&server, "gallery", Login::Keyless).await;
+  assert_eq!(field(&raw, "COFFEE_UI_GALLERY").as_deref(), Some("1"));
+  assert_eq!(field(&raw, "COFFEE_INTERNAL_KEY").as_deref(), Some("none"));
+  assert_eq!(field(&raw, "COFFEE_API_URL").as_deref(), Some("none"));
+  assert_eq!(
+    field(&raw, "COFFEE_SSH_FINGERPRINT").as_deref(),
+    Some("none")
+  );
+  assert_eq!(
+    field(&raw, "COFFEE_CLIENT_IP").as_deref(),
+    Some("127.0.0.1")
+  );
+  assert_eq!(field(&raw, "COFFEE_COLORS").as_deref(), Some("256"));
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn user_names_pick_the_shop_or_the_gallery() {
+  let api = stub_backend().await;
+  let server = Config::shipped()
+    .start(&[("COFFEE_API_URL", api.as_str())])
+    .await;
+  for user in ["coffee", "shop", "nobody-in-particular"] {
+    let (handle, banner) = connect_as(server.addr, user, Login::Keyless).await;
+    assert!(banner.is_some_and(|b| b.contains("演示环境")), "{user}");
+    let mut terminal = Terminal::open(&handle, 160, 50).await;
+    assert!(
+      terminal
+        .wait_for(WAIT, |t| t.text().contains("登录 · SIGN IN"))
+        .await,
+      "{user}:\n{}",
+      terminal.text()
+    );
+    assert!(!terminal.text().contains("GALLERY"), "{user}");
+  }
+  let (handle, _) = connect_as(server.addr, "gallery", Login::Keyless).await;
+  let mut gallery = Terminal::open(&handle, 160, 50).await;
+  assert!(
+    gallery.wait_text("UI 组件库 GALLERY", WAIT).await,
+    "{}",
+    gallery.text()
+  );
+  assert!(!gallery.text().contains("登录 · SIGN IN"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shipped_texts_reach_the_client() {
   use tokio::io::AsyncReadExt;
   let dir = temp_dir("shop-text");
-  let server = shop(&crash_bin(&dir), "http://127.0.0.1:9", "max_sessions = 1").await;
+  let config = Config::shipped();
+  let crashing = config.clone().command("coffee", &crash_bin(&dir));
+  let server = crashing.start(&[NO_API]).await;
+
+  // The server id and the banner, with its demo notice.
   let mut socket = tokio::net::TcpStream::connect(server.addr).await.unwrap();
-  let mut id = [0u8; 19];
-  socket.read_exact(&mut id).await.unwrap();
-  assert_eq!(&id, b"SSH-2.0-ROAST_TTY\r\n");
+  let id = format!("{}\r\n", config.text("server.server_id"));
+  let mut seen = vec![0u8; id.len()];
+  socket.read_exact(&mut seen).await.unwrap();
+  assert_eq!(String::from_utf8_lossy(&seen), id);
   drop(socket);
 
-  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let (handle, banner) = connect(server.addr, Login::Keyless).await;
+  assert_eq!(banner, Some(config.text("server.banner")));
+  assert!(
+    config
+      .text("server.banner")
+      .contains("演示环境 · 不是真实商店")
+  );
   let mut terminal = Terminal::open(&handle, 80, 24).await;
   assert!(terminal.wait_closed(WAIT).await, "{}", terminal.raw_text());
-  let raw = terminal.raw_text();
-  assert!(raw.contains("出错了，会话已结束（代码 139）"), "{raw}");
+  let crashed = config.message("crashed", "code", "139");
   assert!(
-    terminal.text().contains("请重新连接"),
+    terminal.raw_text().contains(&crashed),
     "{}",
-    terminal.text()
+    terminal.raw_text()
   );
+  assert_eq!(terminal.exit_status, Some(139));
 
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let channel = handle.channel_open_session().await.unwrap();
@@ -264,33 +301,23 @@ async fn the_shop_speaks_chinese_and_says_roast_tty() {
   let mut nopty = Terminal::over(channel, 80, 24);
   assert!(nopty.wait_closed(WAIT).await);
   assert!(
-    nopty.raw_text().contains("需要一个终端：请用 `ssh -t`"),
+    nopty.raw_text().contains(&config.text("messages.no_pty")),
     "{}",
     nopty.raw_text()
   );
 
-  let probe = probe_bin(&dir, "probe.sh", &[]);
-  let full = shop(&probe, "http://127.0.0.1:9", "max_sessions = 1").await;
-  let (first, _) = connect(full.addr, Login::Keyless).await;
-  let mut first = Terminal::open(&first, 80, 24).await;
-  assert!(first.wait_raw("SIZE=", WAIT).await);
-  let (handle, banner) = connect(full.addr, Login::Keyless).await;
-  assert!(
-    banner
-      .as_deref()
-      .is_some_and(|b| b.starts_with(BANNER) && b.contains("当前在线会话已满（上限 1）")),
-    "{banner:?}"
-  );
-  let mut second = Terminal::open(&handle, 80, 24).await;
-  assert!(second.wait_closed(WAIT).await);
-  assert!(second.raw_text().contains("已满"), "{}", second.raw_text());
-
-  let missing = shop(&dir.join("no-such-program"), "http://127.0.0.1:9", "").await;
+  let missing = config
+    .clone()
+    .command("coffee", &dir.join("no-such-program"))
+    .start(&[NO_API])
+    .await;
   let (handle, _) = connect(missing.addr, Login::Keyless).await;
   let mut terminal = Terminal::open(&handle, 80, 24).await;
   assert!(terminal.wait_closed(WAIT).await);
   assert!(
-    terminal.raw_text().contains("暂时无法启动"),
+    terminal
+      .raw_text()
+      .contains(&config.text("messages.unavailable")),
     "{}",
     terminal.raw_text()
   );
@@ -298,19 +325,83 @@ async fn the_shop_speaks_chinese_and_says_roast_tty() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_idle_shop_session_says_so_in_chinese() {
-  let dir = temp_dir("shop-idle");
-  let server = shop(
-    &probe_bin(&dir, "probe.sh", &[]),
-    "http://127.0.0.1:9",
-    "idle_timeout = \"1s\"",
-  )
-  .await;
-  let (handle, _) = connect(server.addr, Login::Keyless).await;
+async fn the_shipped_limit_texts_reach_the_client() {
+  let dir = temp_dir("shop-limits");
+  let probe = probe_bin(&dir, "probe.sh", &[]);
+  let config = Config::shipped();
+
+  // In all: in the banner and on the refused shell.
+  let full = config
+    .clone()
+    .command("coffee", &probe)
+    .set("limits.max_sessions", 1)
+    .start(&[NO_API])
+    .await;
+  let (first, _) = connect(full.addr, Login::Keyless).await;
+  let mut first = Terminal::open(&first, 80, 24).await;
+  assert!(first.wait_raw("SIZE=", WAIT).await);
+  let text = config.message("full", "max", "1");
+  let (handle, banner) = connect(full.addr, Login::Keyless).await;
+  assert!(
+    banner
+      .as_deref()
+      .is_some_and(|b| b.starts_with(&config.text("server.banner")) && b.contains(&text)),
+    "{banner:?}"
+  );
+  let mut second = Terminal::open(&handle, 80, 24).await;
+  assert!(second.wait_closed(WAIT).await);
+  assert!(second.raw_text().contains(&text), "{}", second.raw_text());
+  drop(first);
+
+  // Per route: the shop is full, the gallery is not.
+  let route_full = config
+    .clone()
+    .command("coffee", &probe)
+    .set("routes.coffee.max_sessions", 1)
+    .start(&[NO_API])
+    .await;
+  let (first, _) = connect_as(route_full.addr, "coffee", Login::Keyless).await;
+  let mut first = Terminal::open(&first, 80, 24).await;
+  assert!(first.wait_raw("SIZE=", WAIT).await);
+  let (handle, _) = connect_as(route_full.addr, "shop", Login::Keyless).await;
+  let mut second = Terminal::open(&handle, 80, 24).await;
+  assert!(second.wait_closed(WAIT).await);
+  let text = config.message("full_route", "max", "1");
+  assert!(second.raw_text().contains(&text), "{}", second.raw_text());
+  assert_eq!(second.exit_status, Some(1));
+
+  // The session time limit.
+  let timed = config
+    .clone()
+    .command("coffee", &probe)
+    .set("limits.max_session_time", "1s")
+    .start(&[NO_API])
+    .await;
+  let (handle, _) = connect(timed.addr, Login::Keyless).await;
   let mut terminal = Terminal::open(&handle, 80, 24).await;
   assert!(terminal.wait_closed(WAIT).await);
   assert!(
-    terminal.raw_text().contains("ROAST/TTY 空闲超过 0 分钟"),
+    terminal
+      .raw_text()
+      .contains(&config.text("messages.time_limit")),
+    "{}",
+    terminal.raw_text()
+  );
+  assert_eq!(terminal.exit_status, Some(124));
+
+  // Idle.
+  let idle = config
+    .clone()
+    .command("coffee", &probe)
+    .set("limits.idle_timeout", "1s")
+    .start(&[NO_API])
+    .await;
+  let (handle, _) = connect(idle.addr, Login::Keyless).await;
+  let mut terminal = Terminal::open(&handle, 80, 24).await;
+  assert!(terminal.wait_closed(WAIT).await);
+  let text = config.message("idle", "minutes", "0");
+  assert!(
+    terminal.raw_text().contains(&text),
     "{}",
     terminal.raw_text()
   );
@@ -319,8 +410,54 @@ async fn an_idle_shop_session_says_so_in_chinese() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_shutdown_tells_the_shop_client_and_ends_coffee_tui() {
+  // A name of its own, so other tests' sessions running alongside are not counted.
+  let dir = temp_dir("shop-shutdown");
+  let bin = dir.join("coffee-tui-shutdown-test");
+  std::os::unix::fs::symlink(tui_bin(), &bin).unwrap();
+  let config = Config::shipped();
+  let server = config
+    .clone()
+    .command("coffee", &bin)
+    .start(&[NO_API])
+    .await;
+  let grace = Duration::from_secs(2);
+  assert_eq!(config.text("server.shutdown_grace"), "2s");
+  let before = children_named("coffee-tui-shutdown-test");
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let mut terminal = Terminal::open(&handle, 120, 40).await;
+  assert!(
+    terminal.wait_text("◆ROAST/TTY", WAIT).await,
+    "{}",
+    terminal.text()
+  );
+  let pids: Vec<u32> = children_named("coffee-tui-shutdown-test")
+    .into_iter()
+    .filter(|pid| !before.contains(pid))
+    .collect();
+  assert_eq!(pids.len(), 1, "{pids:?}");
+  let took = server.shutdown().await;
+  assert!(
+    took <= grace + Duration::from_millis(1300),
+    "the drain took {took:?}"
+  );
+  assert!(terminal.wait_closed(WAIT).await);
+  let raw = terminal.raw_text();
+  let text = config.text("messages.shutting_down");
+  // The terminal is put back (main screen, cursor shown) before the notice.
+  let reset = raw
+    .rfind("\x1b[?1049l\x1b[?25h")
+    .expect("no terminal reset");
+  let notice = raw.rfind(&text).expect("no shutting_down text");
+  assert!(reset < notice);
+  assert!(!alive(pids[0]), "coffee-tui {} still running", pids[0]);
+  drop(handle);
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_real_tui_shows_the_brand_and_the_demo_notice_at_160x50() {
-  let server = shop(&tui_bin(), "http://127.0.0.1:9", "").await;
+  let server = Config::shipped().start(&[NO_API]).await;
   let (handle, banner) = connect(server.addr, Login::Keyless).await;
   assert!(
     banner
@@ -380,7 +517,10 @@ async fn a_disconnect_ends_the_real_tui_within_two_seconds() {
   let dir = temp_dir("real-disconnect");
   let bin = dir.join("coffee-tui-disconnect-test");
   std::os::unix::fs::symlink(tui_bin(), &bin).unwrap();
-  let server = shop(&bin, "http://127.0.0.1:9", "").await;
+  let server = Config::shipped()
+    .command("coffee", &bin)
+    .start(&[NO_API])
+    .await;
   let before = children_named("coffee-tui-disconnect-test");
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let mut terminal = Terminal::open(&handle, 120, 40).await;
@@ -415,7 +555,7 @@ fn color_kinds(raw: &str) -> (bool, bool) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_truecolor_term_brand_gets_24_bit_colour_without_colorterm() {
-  let server = shop(&tui_bin(), "http://127.0.0.1:9", "").await;
+  let server = Config::shipped().start(&[NO_API]).await;
   // kitty's TERM survives SSH; COLORTERM does not (and is not sent here).
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let mut kitty = Terminal::open_as(&handle, "xterm-kitty", 120, 40, false).await;
@@ -442,7 +582,7 @@ async fn a_truecolor_term_brand_gets_24_bit_colour_without_colorterm() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_terminal_that_reports_rgb_gets_24_bit_colour() {
-  let server = shop(&tui_bin(), "http://127.0.0.1:9", "").await;
+  let server = Config::shipped().start(&[NO_API]).await;
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let mut terminal = Terminal::open_as(&handle, "xterm-256color", 120, 40, true).await;
   assert!(
@@ -458,7 +598,9 @@ async fn a_terminal_that_reports_rgb_gets_24_bit_colour() {
 #[tokio::test(flavor = "multi_thread")]
 async fn products_from_the_backend_show_at_160x50() {
   let api = stub_backend().await;
-  let server = shop(&tui_bin(), &api, "").await;
+  let server = Config::shipped()
+    .start(&[("COFFEE_API_URL", api.as_str())])
+    .await;
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let mut terminal = Terminal::open(&handle, 160, 50).await;
   // A new connection opens on the login page with the focus in 用户名 (K1): `Esc` leaves
@@ -501,7 +643,9 @@ async fn products_from_the_backend_show_at_160x50() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_small_terminal_shows_the_too_small_notice_at_60x20() {
   let api = stub_backend().await;
-  let server = shop(&tui_bin(), &api, "").await;
+  let server = Config::shipped()
+    .start(&[("COFFEE_API_URL", api.as_str())])
+    .await;
   let (handle, _) = connect(server.addr, Login::Keyless).await;
   let mut terminal = Terminal::open(&handle, 60, 20).await;
   assert!(
@@ -532,7 +676,6 @@ async fn the_stub_backend_serves_the_contract_fixtures() {
   }
 }
 
-/// One process's resident memory (KiB) and CPU time (seconds), from `ps`.
 fn usage(pid: u32) -> Option<(u64, f64)> {
   let output = std::process::Command::new("ps")
     .args(["-o", "rss=,time=", "-p", &pid.to_string()])
@@ -590,12 +733,13 @@ async fn measure_twenty_sessions() {
     Some((addr, pid)) => (addr.parse().unwrap(), pid.parse().unwrap()),
     None => {
       let bin: PathBuf = std::env::var("COFFEE_TUI_BIN").map_or_else(|_| tui_bin(), Into::into);
-      let server = shop(
-        &bin,
-        "http://127.0.0.1:9",
-        "max_sessions = 64\nmax_sessions_per_ip = 64\nconnections_per_minute = 0",
-      )
-      .await;
+      let server = Config::shipped()
+        .command("coffee", &bin)
+        .set("limits.max_sessions", 64)
+        .set("limits.max_sessions_per_ip", 64)
+        .set("limits.connections_per_minute", 0)
+        .start(&[NO_API])
+        .await;
       let addr = server.addr;
       _server = server;
       (addr, std::process::id())
