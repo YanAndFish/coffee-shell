@@ -3960,10 +3960,24 @@ dependencies = [
  "rand 0.10.4",
  "russh",
  "rustix",
+ "serde",
  "serde_json",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
+ "tty-gateway-testkit",
+]
+
+[[package]]
+name = "tty-gateway-testkit"
+version = "0.1.0"
+dependencies = [
+ "rand 0.10.4",
+ "russh",
+ "rustix",
+ "tokio",
+ "tty-gateway",
  "vt100",
 ]
 

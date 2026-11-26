@@ -1,23 +1,27 @@
-//! `tty-gateway`: the ROAST/TTY SSH front end.
+//! `tty-gateway`: an SSH front end for terminal programs.
 //!
-//! Accepts any SSH client without a password: any public key is taken (its SHA256
-//! fingerprint goes to the session), and a client without one logs in through
-//! keyboard-interactive with zero prompts. Each session gets its own `coffee-tui` child
-//! on a real PTY, with the backend's URL and the session's details in its environment;
-//! the child goes when the client does. See `docs/adr/0001-ssh-session-model.md`.
+//! One port; the SSH user name picks a route (a configured user, else the default
+//! route), and each session starts that route's program on its own PTY, with an
+//! environment the route spells out. Any SSH client logs in without a password: any
+//! public key is taken (its SHA256 fingerprint is `${fingerprint}`), and a client without
+//! one logs in through keyboard-interactive with zero prompts. The program goes when the
+//! client does. The configuration is a TOML file: see [`config`].
 
 pub mod config;
 pub mod hostkey;
 pub mod limits;
 pub mod server;
+pub mod session;
+pub mod tasks;
+pub mod upstream;
 
-pub use config::Config;
-pub use server::{BANNER, serve};
+pub use config::{ConfigError, Snapshot, load, load_str};
+pub use server::serve;
 
-/// Logs to stderr, one line per event with its fields; `COFFEE_SSH_LOG` (or
-/// `RUST_LOG`) filters, `info` by default.
+/// Logs to stderr, one line per event with its fields; `TTY_GATEWAY_LOG` (or
+/// `RUST_LOG`) filters, `info,russh=warn` by default.
 pub fn init_logging() {
-  let filter = std::env::var("COFFEE_SSH_LOG")
+  let filter = std::env::var("TTY_GATEWAY_LOG")
     .or_else(|_| std::env::var("RUST_LOG"))
     .unwrap_or_else(|_| "info,russh=warn".into());
   let _ = tracing_subscriber::fmt()

@@ -5,6 +5,7 @@ members = [
   "crates/coffee-api",
   "crates/coffee-tui",
   "crates/tty-gateway",
+  "crates/tty-gateway-testkit",
   "crates/tty-host"
 ]
 # `nsh` writes the sources of the app's runners and hosts under `apps/tui/.nsh/`

@@ -1,59 +1,57 @@
-//! The SSH server: passwordless logins, one `coffee-tui` child per session on a PTY.
+//! The SSH server: passwordless logins; the user name picks a route, and each session
+//! starts that route's upstream on a PTY.
 
 use std::{
+  collections::HashMap,
   future::Future,
   io,
   net::SocketAddr,
-  os::unix::process::ExitStatusExt,
-  process::ExitStatus,
   sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
   },
   time::{Duration, Instant},
 };
 
-use bytes::Bytes;
 use russh::{
   Channel, ChannelId, MethodKind, MethodSet, Pty, Sig,
   keys::{HashAlg, PrivateKey},
   server::{self, Auth, ChannelOpenHandle, Handle, Msg, Response, Session, VerifiedPublicKey},
 };
-use tokio::{
-  io::{AsyncReadExt, AsyncWriteExt},
-  net::TcpListener,
-  sync::{mpsc, oneshot},
-  task::JoinHandle,
-};
+use tokio::{net::TcpListener, sync::watch};
 
 use crate::{
-  config::Config,
-  limits::{Gate, Limits, Slot},
+  config::{Route, SessionVars, Snapshot},
+  limits::{Caps, Gate, Limits, Refusal},
+  session::{
+    Alive, Clock, Hangup, Link, SessionTask, disconnect, link, run_session, tell_and_close,
+  },
+  tasks::{self, Tracker},
 };
 
-/// The notice every client sees before logging in (SSH auth banner).
-pub const BANNER: &str = "\n  ◆ROAST/TTY 终端咖啡馆\n  演示环境 · 不是真实商店 · 不收款、不发货 · 请勿使用真实密码、地址或电话\n\n";
-
-/// How long a session's child has to leave after SIGHUP before it is killed.
-const KILL_GRACE: Duration = Duration::from_millis(1000);
 /// Keepalives detect a client that vanished without closing its connection.
 const KEEPALIVE: Duration = Duration::from_secs(30);
-/// Tries at starting a session's program, and the pause between them.
-const SPAWN_ATTEMPTS: u32 = 3;
-const SPAWN_RETRY: Duration = Duration::from_millis(150);
-/// Undoes what a session program that died may have left on the client's terminal: kitty
-/// keys, mouse, paste and focus reports, alternate scroll, a synchronized update, the
-/// alternate screen, a hidden cursor, colours.
-const TERMINAL_RESET: &str = "\x1b[<u\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1004l\x1b[?1007l\x1b[?2026l\x1b[?1049l\x1b[?25h\x1b[0m";
+/// Client environment variables kept per session, at most.
+const MAX_CLIENT_ENV: usize = 16;
+/// What every session gets from the gateway's own environment.
+const INHERITED_ENV: [&str; 5] = ["PATH", "HOME", "TMPDIR", "USER", "LOGNAME"];
+/// A shutdown takes at most `shutdown_grace` and this; sockets still open this long
+/// before its end are closed hard.
+const DRAIN_EXTRA: Duration = Duration::from_secs(1);
+const HARD_CLOSE_BEFORE_END: Duration = Duration::from_millis(300);
 
-/// What the server shares between connections.
+/// What the server shares between connections, for as long as it runs.
 struct Shared {
-  config: Config,
   limits: Arc<Limits>,
   gate: Arc<Gate>,
   next_id: AtomicU64,
   connections: AtomicUsize,
-  started: Instant,
+  clock: Clock,
+  /// `true` once the server shuts down.
+  shutdown: watch::Sender<bool>,
+  /// A second handle on every open connection's socket, to close it hard at the end of
+  /// a shutdown.
+  sockets: Mutex<HashMap<u64, std::net::TcpStream>>,
 }
 
 /// How far a connection got: the login watchdog reads it.
@@ -62,48 +60,59 @@ struct Progress {
   authenticated: AtomicBool,
   /// A shell was asked for (and started or refused with a message).
   settled: AtomicBool,
+  /// A session task runs for this connection.
+  session: Arc<AtomicBool>,
 }
 
-/// Runs the SSH server on `listener` until `shutdown` resolves.
-pub async fn serve(
-  listener: TcpListener,
-  config: Config,
-  host_key: PrivateKey,
-  shutdown: impl Future<Output = ()>,
-) -> io::Result<()> {
-  let russh_config = Arc::new(server::Config {
-    server_id: russh::SshId::Standard("SSH-2.0-ROAST_TTY".into()),
+/// The russh settings for one snapshot.
+fn russh_config(snapshot: &Snapshot, host_key: &PrivateKey) -> Arc<server::Config> {
+  Arc::new(server::Config {
+    server_id: russh::SshId::Standard(snapshot.server.server_id.clone().into()),
     methods: MethodSet::from(&[MethodKind::PublicKey, MethodKind::KeyboardInteractive][..]),
     // Nothing is secret here: the first `none` probe is answered at once, and no
     // other attempt is ever rejected.
     auth_rejection_time: Duration::from_millis(100),
     auth_rejection_time_initial: Some(Duration::ZERO),
-    keys: vec![host_key],
+    keys: vec![host_key.clone()],
     inactivity_timeout: None,
     keepalive_interval: Some(KEEPALIVE),
     keepalive_max: 3,
+    // Only honoured by `run_on_socket`: `serve` sets it on each socket itself.
     nodelay: true,
     ..Default::default()
-  });
+  })
+}
+
+/// Runs the SSH server on `listener` until `shutdown` resolves. Each connection takes
+/// the snapshot in `snapshots` when it is accepted and keeps it to its end.
+///
+/// Then it drains, within the current `server.shutdown_grace` and a second: no new
+/// connections; every session tells its client, hangs up its program and kills it
+/// after the grace; connections without a session are dropped; sockets still open at the
+/// end are closed hard; and it returns once every task is done (or the time is up).
+pub async fn serve(
+  listener: TcpListener,
+  host_key: PrivateKey,
+  snapshots: watch::Receiver<Arc<Snapshot>>,
+  shutdown: impl Future<Output = ()>,
+) -> io::Result<()> {
+  let (down, _) = watch::channel(false);
   let shared = Arc::new(Shared {
-    limits: Limits::new(config.max_sessions, config.max_sessions_per_ip),
-    // Twice the sessions: room for the extra ones to hear why they are refused.
-    gate: Gate::new(
-      config.max_sessions_per_ip.saturating_mul(2),
-      config.connections_per_minute,
-    ),
-    config,
+    limits: Limits::new(),
+    gate: Gate::new(),
     next_id: AtomicU64::new(1),
     connections: AtomicUsize::new(0),
-    started: Instant::now(),
+    clock: Clock(Instant::now()),
+    shutdown: down,
+    sockets: Mutex::new(HashMap::new()),
   });
-  // Connections beyond this are dropped before the handshake: refused sessions still
-  // get a polite message, but only up to a point.
-  let max_connections = shared.config.max_sessions * 2 + 16;
+  let (tracker, mut tasks) = tasks::tracker();
+  // The russh settings of the snapshot last seen, rebuilt when it changes.
+  let mut current: Option<(Arc<Snapshot>, Arc<server::Config>)> = None;
   tokio::pin!(shutdown);
   loop {
     let (socket, peer) = tokio::select! {
-      () = &mut shutdown => return Ok(()),
+      () = &mut shutdown => break,
       accepted = listener.accept() => match accepted {
         Ok(accepted) => accepted,
         Err(error) => {
@@ -113,13 +122,36 @@ pub async fn serve(
         }
       },
     };
+    let snapshot = snapshots.borrow().clone();
+    let config = match &current {
+      Some((seen, config)) if Arc::ptr_eq(seen, &snapshot) => config.clone(),
+      _ => {
+        let config = russh_config(&snapshot, &host_key);
+        current = Some((snapshot.clone(), config.clone()));
+        config
+      }
+    };
+    let limits = snapshot.limits;
     let open = shared.connections.fetch_add(1, Ordering::AcqRel) + 1;
-    let counted = Counted(shared.clone());
+    let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
+    let counted = Counted {
+      shared: shared.clone(),
+      id,
+    };
+    // Connections beyond this are dropped before the handshake: refused sessions still
+    // get a polite message, but only up to a point.
+    let max_connections = limits.max_sessions.saturating_mul(2).saturating_add(16);
     if open > max_connections {
       tracing::warn!(peer = %peer, open, "too many connections; dropped");
       continue;
     }
-    let ticket = match shared.gate.admit(peer.ip(), Instant::now()) {
+    // Twice the sessions: room for the extra ones to hear why they are refused.
+    let ticket = match shared.gate.admit(
+      peer.ip(),
+      Instant::now(),
+      limits.max_sessions_per_ip.saturating_mul(2),
+      limits.connections_per_minute,
+    ) {
       Ok(ticket) => ticket,
       Err((turned, again)) => {
         if !again {
@@ -128,62 +160,148 @@ pub async fn serve(
         continue;
       }
     };
-    let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
+    // Keystrokes go out at once (`Config.nodelay` is not applied by `run_stream`).
+    let _ = socket.set_nodelay(true);
+    let socket = match keep_handle(socket) {
+      Ok((socket, kept)) => {
+        lock(&shared.sockets).insert(id, kept);
+        socket
+      }
+      Err(error) => {
+        tracing::warn!(%error, "cannot keep a handle on the socket; dropped");
+        continue;
+      }
+    };
     let progress = Arc::new(Progress::default());
-    let handler = Connection::new(shared.clone(), id, peer, progress.clone());
-    let config = russh_config.clone();
     // From accept to a running session: handshake, login and the shell request. A client
     // that stalls anywhere in between (even before its SSH version line) is cut off.
-    let deadline = tokio::time::Instant::now() + shared.config.auth_timeout;
-    tokio::spawn(async move {
+    let deadline = tokio::time::Instant::now() + limits.auth_timeout;
+    let handler = Connection::new(
+      shared.clone(),
+      snapshot,
+      id,
+      peer,
+      progress.clone(),
+      tracker.clone(),
+    );
+    let mut down = shared.shutdown.subscribe();
+    tasks::spawn("connection", id, &tracker, async move {
       let _counted = counted;
       let _ticket = ticket;
-      let session = match tokio::time::timeout_at(
-        deadline,
-        server::run_stream(config, socket, handler),
-      )
-      .await
-      {
-        Ok(Ok(session)) => session,
-        Ok(Err(error)) => {
-          tracing::debug!(conn = id, %error, "handshake failed");
-          return;
+      let session = tokio::select! {
+        started = tokio::time::timeout_at(deadline, server::run_stream(config, socket, handler)) => {
+          match started {
+            Ok(Ok(session)) => session,
+            Ok(Err(error)) => {
+              tracing::debug!(conn = id, %error, "handshake failed");
+              return;
+            }
+            Err(_) => {
+              tracing::info!(conn = id, "handshake timed out");
+              return;
+            }
+          }
         }
-        Err(_) => {
-          tracing::info!(conn = id, "handshake timed out");
-          return;
-        }
+        () = shut(&mut down) => return,
       };
       let handle = session.handle();
+      let watched = handle.clone();
+      let watched_progress = progress.clone();
       let watchdog = tokio::spawn(async move {
         tokio::time::sleep_until(deadline).await;
-        if progress.settled.load(Ordering::Acquire) {
+        if watched_progress.settled.load(Ordering::Acquire) {
           return;
         }
-        let why = if progress.authenticated.load(Ordering::Acquire) {
+        let why = if watched_progress.authenticated.load(Ordering::Acquire) {
           "no session started in time"
         } else {
           "login timed out"
         };
         tracing::info!(conn = id, "{why}");
-        let _ = handle
-          .disconnect(russh::Disconnect::ByApplication, why.into(), String::new())
-          .await;
+        disconnect(&watched, why).await;
       });
-      if let Err(error) = session.await {
-        tracing::debug!(conn = id, %error, "connection ended with an error");
+      tokio::pin!(session);
+      tokio::select! {
+        ended = &mut session => {
+          if let Err(error) = ended {
+            tracing::debug!(conn = id, %error, "connection ended with an error");
+          }
+        }
+        () = shut(&mut down) => {
+          if progress.session.load(Ordering::Acquire) {
+            // The session tells its client and ends the connection; the hard close at
+            // the end of the drain bounds this.
+            let _ = (&mut session).await;
+          } else {
+            disconnect(&handle, "shutting down").await;
+          }
+        }
       }
       watchdog.abort();
     });
   }
+
+  // The drain.
+  let started = Instant::now();
+  let grace = snapshots.borrow().server.shutdown_grace;
+  let end = started + grace + DRAIN_EXTRA;
+  drop(listener);
+  drop(tracker);
+  shared.shutdown.send_replace(true);
+  let open = shared.connections.load(Ordering::Acquire);
+  tracing::info!(connections = open, "draining");
+  let hard_close = end - HARD_CLOSE_BEFORE_END;
+  let mut done = tasks
+    .wait(hard_close.saturating_duration_since(Instant::now()))
+    .await;
+  if !done {
+    let sockets: Vec<std::net::TcpStream> = lock(&shared.sockets).drain().map(|(_, s)| s).collect();
+    tracing::info!(sockets = sockets.len(), "closing what is still open");
+    for socket in sockets {
+      let _ = socket.shutdown(std::net::Shutdown::Both);
+    }
+    done = tasks
+      .wait(end.saturating_duration_since(Instant::now()))
+      .await;
+  }
+  tracing::info!(
+    done,
+    millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    "stopped"
+  );
+  Ok(())
 }
 
-/// One open TCP connection, counted until it ends.
-struct Counted(Arc<Shared>);
+/// Splits off a second handle on `socket` (same connection), for a hard close later.
+fn keep_handle(
+  socket: tokio::net::TcpStream,
+) -> io::Result<(tokio::net::TcpStream, std::net::TcpStream)> {
+  let socket = socket.into_std()?;
+  let kept = socket.try_clone()?;
+  Ok((tokio::net::TcpStream::from_std(socket)?, kept))
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+  mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Resolves once the server shuts down; never if it is gone without one.
+async fn shut(down: &mut watch::Receiver<bool>) {
+  if down.wait_for(|down| *down).await.is_err() {
+    std::future::pending::<()>().await;
+  }
+}
+
+/// One open TCP connection, counted (and its kept socket handle held) until it ends.
+struct Counted {
+  shared: Arc<Shared>,
+  id: u64,
+}
 
 impl Drop for Counted {
   fn drop(&mut self) {
-    self.0.connections.fetch_sub(1, Ordering::AcqRel);
+    lock(&self.shared.sockets).remove(&self.id);
+    self.shared.connections.fetch_sub(1, Ordering::AcqRel);
   }
 }
 
@@ -195,46 +313,57 @@ struct PtyRequest {
   rows: u16,
 }
 
-/// What a session task gets from its connection.
-enum Msg2Child {
-  Input(Vec<u8>),
-  Resize { cols: u16, rows: u16 },
-}
-
 /// One SSH connection (russh calls it a session).
 struct Connection {
   shared: Arc<Shared>,
+  snapshot: Arc<Snapshot>,
   id: u64,
   peer: SocketAddr,
   connected: Instant,
   progress: Arc<Progress>,
+  tracker: Tracker,
+  /// The user name of the accepted login, as the client sent it (logged with `?`).
+  user: Option<String>,
+  /// The route that login picked.
+  route: Option<Arc<Route>>,
   fingerprint: Option<String>,
-  method: &'static str,
   channel: Option<ChannelId>,
   pty: Option<PtyRequest>,
   env: Vec<(String, String)>,
   started: bool,
-  to_child: Option<mpsc::Sender<Msg2Child>>,
+  link: Option<Link>,
+  overflowed: bool,
   last_input: Arc<AtomicU64>,
 }
 
 impl Connection {
-  fn new(shared: Arc<Shared>, id: u64, peer: SocketAddr, progress: Arc<Progress>) -> Self {
+  fn new(
+    shared: Arc<Shared>,
+    snapshot: Arc<Snapshot>,
+    id: u64,
+    peer: SocketAddr,
+    progress: Arc<Progress>,
+    tracker: Tracker,
+  ) -> Self {
     tracing::info!(conn = id, peer = %peer, "connected");
-    let last_input = Arc::new(AtomicU64::new(shared.millis()));
+    let last_input = Arc::new(AtomicU64::new(shared.clock.millis()));
     Self {
       shared,
+      snapshot,
       id,
       peer,
       connected: Instant::now(),
       progress,
+      tracker,
+      user: None,
+      route: None,
       fingerprint: None,
-      method: "none",
       channel: None,
       pty: None,
       env: Vec::new(),
       started: false,
-      to_child: None,
+      link: None,
+      overflowed: false,
       last_input,
     }
   }
@@ -242,31 +371,55 @@ impl Connection {
   fn touch(&self) {
     self
       .last_input
-      .store(self.shared.millis(), Ordering::Relaxed);
+      .store(self.shared.clock.millis(), Ordering::Relaxed);
   }
 
-  fn accept(&mut self, method: &'static str) -> Auth {
-    self.method = method;
+  fn caps(&self) -> Caps {
+    Caps {
+      max_sessions: self.snapshot.limits.max_sessions,
+      max_sessions_per_ip: self.snapshot.limits.max_sessions_per_ip,
+    }
+  }
+
+  /// The route of this connection: the login's (the default one before any).
+  fn route(&self) -> Arc<Route> {
+    self
+      .route
+      .clone()
+      .unwrap_or_else(|| self.snapshot.default_route().clone())
+  }
+
+  /// Accepts the login of `user` by `method` and binds its route.
+  fn accept(&mut self, user: &str, method: &'static str) -> Auth {
+    let route = self.snapshot.route_for(user).clone();
     self.progress.authenticated.store(true, Ordering::Release);
     tracing::info!(
       conn = self.id,
       method,
+      ?user,
+      route = %route.name,
       fingerprint = self.fingerprint.as_deref().unwrap_or("-"),
       "authenticated"
     );
+    self.user = Some(user.to_owned());
+    self.route = Some(route);
     Auth::Accept
   }
 
-  /// Tells the client `message` on the channel, then ends it with `status`, on a task
-  /// of its own: a handler callback must not wait on the session loop it runs in.
-  fn refuse(handle: Handle, channel: ChannelId, message: String, status: u32) {
-    tokio::spawn(async move { tell_and_close(&handle, channel, &message, status).await });
+  fn vars(&self, route: &Route) -> SessionVars {
+    SessionVars {
+      user: self.user.as_deref().and_then(SessionVars::sanitize_user),
+      route: route.name.clone(),
+      fingerprint: self.fingerprint.clone(),
+      client_ip: Some(self.peer.ip()),
+    }
   }
 
-  fn child_env(&self, pty: &PtyRequest) -> Vec<(String, String)> {
-    let config = &self.shared.config;
+  /// The session's whole environment: a few variables of the gateway's own, `TERM`,
+  /// `LANG` and what the client sent that the route accepts, then the route's entries.
+  fn session_env(&self, route: &Route, pty: &PtyRequest) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = Vec::new();
-    for name in ["PATH", "HOME", "TMPDIR", "USER", "LOGNAME"] {
+    for name in INHERITED_ENV {
       if let Ok(value) = std::env::var(name) {
         env.push((name.into(), value));
       }
@@ -278,114 +431,69 @@ impl Connection {
     };
     let mut lang = None;
     for (name, value) in &self.env {
+      if !client_may_set(route, name) {
+        continue;
+      }
       match name.as_str() {
         "LANG" if utf8(value) => lang = Some(value.clone()),
         "LANG" => {}
-        _ => env.push((name.clone(), value.clone())),
+        _ => {
+          env.retain(|(existing, _)| existing != name);
+          env.push((name.clone(), value.clone()));
+        }
       }
     }
     env.push(("LANG".into(), lang.unwrap_or_else(|| "C.UTF-8".into())));
-    env.push(("COFFEE_API_URL".into(), config.api_url.clone()));
-    if let Some(key) = &config.internal_key {
-      env.push(("COFFEE_INTERNAL_KEY".into(), key.clone()));
-    }
-    if let Some(fingerprint) = &self.fingerprint {
-      env.push(("COFFEE_SSH_FINGERPRINT".into(), fingerprint.clone()));
-    }
-    env.push(("COFFEE_CLIENT_IP".into(), self.peer.ip().to_string()));
-    if let Some(colors) = &config.colors {
-      env.push(("COFFEE_COLORS".into(), colors.clone()));
+    let vars = self.vars(route);
+    for (name, template) in &route.env {
+      if let Some(value) = template.render(&vars) {
+        env.retain(|(existing, _)| existing != name);
+        env.push((name.clone(), value));
+      }
     }
     env
   }
 
-  async fn start(&mut self, channel: ChannelId, handle: Handle) {
+  /// Hands the shell request to a session task of its own and returns at once: the
+  /// place, the program's start and its retries all happen there. Input that arrives
+  /// meanwhile is queued on the link.
+  fn start(&mut self, channel: ChannelId, handle: Handle) {
+    let route = self.route();
     let Some(pty) = self.pty.clone() else {
-      tracing::info!(conn = self.id, "shell without a pty refused");
-      Self::refuse(
-        handle,
-        channel,
-        "ROAST/TTY 需要一个终端：请用 `ssh -t`，不要加 -T。".into(),
-        1,
-      );
+      tracing::info!(conn = self.id, route = %route.name, "shell without a pty refused");
+      let message = route.messages.no_pty.clone();
+      tasks::spawn("refusal", self.id, &self.tracker, async move {
+        tell_and_close(&handle, channel, &message, 1).await;
+      });
       return;
     };
-    // The place is taken only now: a connection that is still logging in holds none.
-    let slot = match self.shared.limits.acquire(self.peer.ip()) {
-      Ok(slot) => slot,
-      Err(refusal) => {
-        tracing::warn!(
-          conn = self.id,
-          refused = refusal.reason(),
-          "session refused"
-        );
-        Self::refuse(handle, channel, refusal.message(), 1);
-        return;
-      }
-    };
-    let env = self.child_env(&pty);
-    // A start can fail for a moment (no process or PTY to spare under load, the program
-    // being replaced): try again shortly before giving up on the session.
-    let mut attempt = 1;
-    let (child, pty_master) = loop {
-      match spawn_child(&self.shared.config, &pty, env.clone()) {
-        Ok(spawned) => break spawned,
-        Err(error) if attempt < SPAWN_ATTEMPTS => {
-          tracing::warn!(
-            conn = self.id,
-            attempt,
-            %error,
-            "could not start the session program; trying again"
-          );
-          tokio::time::sleep(SPAWN_RETRY).await;
-          attempt += 1;
-        }
-        Err(error) => {
-          tracing::error!(
-            conn = self.id,
-            bin = %self.shared.config.tui_bin.display(),
-            attempt,
-            %error,
-            "could not start the session program"
-          );
-          Self::refuse(
-            handle,
-            channel,
-            "ROAST/TTY 暂时无法启动，请稍后再试。".into(),
-            1,
-          );
-          return;
-        }
-      }
-    };
-    let pid = child.id().unwrap_or_default();
     tracing::info!(
       conn = self.id,
-      pid,
+      user = ?self.user.as_deref().unwrap_or(""),
+      route = %route.name,
       term = %pty.term,
       size = format!("{}x{}", pty.cols, pty.rows),
-      active = self.shared.limits.active(),
       "session started"
     );
-    let (to_child, from_connection) = mpsc::channel(64);
-    self.to_child = Some(to_child);
-    tokio::spawn(run_session(SessionTask {
+    let (link, link_end) = link(pty.cols, pty.rows);
+    self.link = Some(link);
+    let task = SessionTask {
       conn: self.id,
-      child,
-      pty: pty_master,
-      from_connection,
+      env: self.session_env(&route, &pty),
+      route,
+      link: link_end,
       handle,
       channel,
       last_input: self.last_input.clone(),
-      shared: self.shared.clone(),
-      _slot: slot,
-    }));
-  }
-}
-
-impl Shared {
-  fn millis(&self) -> u64 {
-    u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+      clock: self.shared.clock,
+      limits: self.shared.limits.clone(),
+      ip: self.peer.ip(),
+      caps: self.caps(),
+      shutdown: self.shared.shutdown.subscribe(),
+      shutdown_grace: self.snapshot.server.shutdown_grace,
+      alive: Alive::new(self.progress.session.clone()),
+    };
+    tasks::spawn("session", self.id, &self.tracker, run_session(task));
   }
 }
 
@@ -399,247 +507,19 @@ impl Drop for Connection {
   }
 }
 
-/// Starts the session program on a new PTY of `pty`'s size, as its session leader.
-fn spawn_child(
-  config: &Config,
-  pty: &PtyRequest,
-  env: Vec<(String, String)>,
-) -> io::Result<(tokio::process::Child, pty_process::Pty)> {
-  let (master, slave) = pty_process::open().map_err(io::Error::other)?;
-  master
-    .resize(pty_process::Size::new(pty.rows, pty.cols))
-    .map_err(io::Error::other)?;
-  let child = pty_process::Command::new(&config.tui_bin)
-    .env_clear()
-    .envs(env)
-    .current_dir(std::env::temp_dir())
-    .kill_on_drop(true)
-    .spawn(slave)
-    .map_err(io::Error::other)?;
-  Ok((child, master))
+/// Whether a client variable may be passed on: accepted by the route, and neither one
+/// the gateway sets itself nor one of the route's own entries (which a client must never
+/// be able to forge, even when the entry is absent for this session).
+fn client_may_set(route: &Route, name: &str) -> bool {
+  route.accept_env.iter().any(|pattern| pattern.matches(name))
+    && !INHERITED_ENV.contains(&name)
+    && name != "TERM"
+    && !route.env.iter().any(|(own, _)| own == name)
 }
 
-struct SessionTask {
-  conn: u64,
-  child: tokio::process::Child,
-  pty: pty_process::Pty,
-  from_connection: mpsc::Receiver<Msg2Child>,
-  handle: Handle,
-  channel: ChannelId,
-  last_input: Arc<AtomicU64>,
-  shared: Arc<Shared>,
-  _slot: Slot,
-}
-
-/// How a session ended.
-enum End {
-  Exited(io::Result<ExitStatus>),
-  Disconnected,
-  Idle,
-}
-
-/// Pumps the PTY to the channel and the channel to the PTY until the child exits or
-/// the client goes; then stops the child (SIGHUP to its process group, SIGKILL after
-/// [`KILL_GRACE`]) and closes the channel with the child's exit status.
-async fn run_session(task: SessionTask) {
-  let SessionTask {
-    conn,
-    mut child,
-    pty,
-    mut from_connection,
-    handle,
-    channel,
-    last_input,
-    shared,
-    _slot,
-  } = task;
-  let started = Instant::now();
-  let pid = child.id();
-  let (mut reader, mut writer) = pty.into_split();
-
-  // The idle clock runs from the program's first output: the time a client takes to
-  // connect, and the program to start, never counts against the session.
-  let shown = Arc::new(AtomicBool::new(false));
-  let output = handle.clone();
-  let (first_output, clock, idle_since) = (shown.clone(), shared.clone(), last_input.clone());
-  let mut pump: JoinHandle<()> = tokio::spawn(async move {
-    let mut buffer = vec![0u8; 32 * 1024];
-    loop {
-      match reader.read(&mut buffer).await {
-        Ok(0) | Err(_) => break,
-        Ok(read) => {
-          if !first_output.load(Ordering::Relaxed) {
-            idle_since.store(clock.millis(), Ordering::Relaxed);
-            first_output.store(true, Ordering::Release);
-          }
-          if output
-            .data(channel, Bytes::copy_from_slice(&buffer[..read]))
-            .await
-            .is_err()
-          {
-            break;
-          }
-        }
-      }
-    }
-  });
-
-  // Input and resizes go to the PTY on their own task, so a child that stops reading
-  // can never keep a disconnect from being noticed.
-  let (gone_tx, mut gone) = oneshot::channel::<()>();
-  let feeder = tokio::spawn(async move {
-    while let Some(message) = from_connection.recv().await {
-      match message {
-        Msg2Child::Input(bytes) => {
-          if writer.write_all(&bytes).await.is_err() {
-            break;
-          }
-        }
-        Msg2Child::Resize { cols, rows } => {
-          let _ = writer.resize(pty_process::Size::new(rows, cols));
-        }
-      }
-    }
-    let _ = gone_tx.send(());
-  });
-
-  let idle = shared.config.idle_timeout;
-  // How long ago the last input (or the first output) was, once there was output.
-  let quiet = || {
-    shown.load(Ordering::Acquire).then(|| {
-      let since = shared
-        .millis()
-        .saturating_sub(last_input.load(Ordering::Relaxed));
-      Duration::from_millis(since)
-    })
-  };
-  let end = loop {
-    let check = match (idle, quiet()) {
-      (Some(idle), Some(quiet)) => idle.saturating_sub(quiet),
-      // Nothing shown yet: look again after a full period.
-      (Some(idle), None) => idle,
-      (None, _) => Duration::from_secs(3600),
-    };
-    tokio::select! {
-      status = child.wait() => break End::Exited(status),
-      _ = &mut gone => break End::Disconnected,
-      () = tokio::time::sleep(check) => {
-        if let (Some(idle), Some(quiet)) = (idle, quiet()) && quiet >= idle {
-          break End::Idle;
-        }
-      }
-    }
-  };
-
-  match end {
-    End::Exited(status) => {
-      feeder.abort();
-      // The last frame (the restored screen) may still be in the PTY.
-      if tokio::time::timeout(Duration::from_millis(500), &mut pump)
-        .await
-        .is_err()
-      {
-        pump.abort();
-      }
-      let code = match &status {
-        Ok(status) => exit_code(*status),
-        Err(_) => 255,
-      };
-      let seconds = started.elapsed().as_secs();
-      if code == 0 {
-        tracing::info!(conn, ?pid, code, seconds, "session ended: program exited");
-      } else {
-        // It crashed or gave up: it may have left the client's terminal in its modes,
-        // and a bare close would leave the user guessing.
-        tracing::warn!(conn, ?pid, code, seconds, "session ended: program failed");
-        let notice = format!(
-          "{TERMINAL_RESET}\r\nROAST/TTY 出错了，会话已结束（代码 {code}）。请重新连接；如果一直这样，请稍后再试。\r\n"
-        );
-        let _ = handle.data(channel, Bytes::from(notice.into_bytes())).await;
-      }
-      let _ = handle.exit_status_request(channel, code).await;
-      let _ = handle.eof(channel).await;
-      let _ = handle.close(channel).await;
-    }
-    End::Disconnected => {
-      feeder.abort();
-      let how = stop(&mut child, pid).await;
-      pump.abort();
-      tracing::info!(
-        conn,
-        ?pid,
-        how,
-        seconds = started.elapsed().as_secs(),
-        "session ended: client left"
-      );
-    }
-    End::Idle => {
-      feeder.abort();
-      let how = stop(&mut child, pid).await;
-      let _ = tokio::time::timeout(Duration::from_millis(300), &mut pump).await;
-      pump.abort();
-      let minutes = idle.map_or(0, |idle| idle.as_secs() / 60);
-      tracing::info!(conn, ?pid, how, "session ended: idle");
-      tell_and_close(
-        &handle,
-        channel,
-        &format!("ROAST/TTY 空闲超过 {minutes} 分钟，连接已关闭。"),
-        124,
-      )
-      .await;
-      let _ = handle
-        .disconnect(
-          russh::Disconnect::ByApplication,
-          "idle".into(),
-          String::new(),
-        )
-        .await;
-    }
-  }
-}
-
-/// Writes `message` on the channel, then ends it with `status`.
-async fn tell_and_close(handle: &Handle, channel: ChannelId, message: &str, status: u32) {
-  let text = format!("\r\n{message}\r\n");
-  let _ = handle.data(channel, Bytes::from(text.into_bytes())).await;
-  let _ = handle.exit_status_request(channel, status).await;
-  let _ = handle.eof(channel).await;
-  let _ = handle.close(channel).await;
-}
-
-/// SIGHUP to the child's process group (it is a session leader on its own PTY), then
-/// SIGKILL if it is still there after [`KILL_GRACE`].
-async fn stop(child: &mut tokio::process::Child, pid: Option<u32>) -> &'static str {
-  let group = pid
-    .and_then(|pid| i32::try_from(pid).ok())
-    .and_then(rustix::process::Pid::from_raw);
-  if let Some(group) = group {
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::HUP);
-  }
-  if tokio::time::timeout(KILL_GRACE, child.wait()).await.is_ok() {
-    return "hangup";
-  }
-  if let Some(group) = group {
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-  }
-  let _ = child.start_kill();
-  let _ = child.wait().await;
-  "killed"
-}
-
-/// The exit status the client sees: the code, or 128 + the signal.
-fn exit_code(status: ExitStatus) -> u32 {
-  match (status.code(), status.signal()) {
-    (Some(code), _) => u32::try_from(code).unwrap_or(255),
-    (None, Some(signal)) => 128 + u32::try_from(signal).unwrap_or(0),
-    (None, None) => 255,
-  }
-}
-
-/// An environment variable a client may set: the locale and the colour hint.
-fn allowed_env(name: &str, value: &str) -> bool {
-  let name_ok = name == "LANG" || name == "COLORTERM" || name.starts_with("LC_");
-  name_ok
+/// The shape of a client variable the gateway takes at all.
+fn plain_env(name: &str, value: &str) -> bool {
+  !name.is_empty()
     && name.len() <= 32
     && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
     && value.len() <= 128
@@ -670,35 +550,41 @@ impl server::Handler for Connection {
   type Error = russh::Error;
 
   async fn authentication_banner(&mut self) -> Result<Option<String>, Self::Error> {
-    let mut banner = BANNER.to_owned();
-    if let Err(refusal) = self.shared.limits.check(self.peer.ip()) {
+    // Before any user name: only the global banner and caps are known.
+    let mut banner = self.snapshot.server.banner.clone();
+    if let Err(refusal) = self.shared.limits.check(self.peer.ip(), self.caps()) {
       tracing::info!(
         conn = self.id,
         refused = refusal.reason(),
         "over the limit at login"
       );
-      banner.push_str(&format!("  {}\n\n", refusal.message()));
+      let messages = &self.snapshot.messages;
+      let message = match refusal {
+        Refusal::PerIp { max } => messages.full_per_ip(max),
+        Refusal::Full { max } | Refusal::Route { max } => messages.full(max),
+      };
+      banner.push_str(&format!("  {message}\n\n"));
     }
-    Ok(Some(banner))
+    Ok((!banner.is_empty()).then_some(banner))
   }
 
   async fn auth_publickey(
     &mut self,
-    _user: &str,
+    user: &str,
     key: VerifiedPublicKey<'_>,
   ) -> Result<Auth, Self::Error> {
     self.fingerprint = Some(key.public_key.fingerprint(HashAlg::Sha256).to_string());
-    Ok(self.accept("publickey"))
+    Ok(self.accept(user, "publickey"))
   }
 
   async fn auth_keyboard_interactive<'a>(
     &'a mut self,
-    _user: &str,
+    user: &str,
     _submethods: &str,
     _response: Option<Response<'a>>,
   ) -> Result<Auth, Self::Error> {
     // Zero prompts: the client logs in without asking its user anything.
-    Ok(self.accept("keyboard-interactive"))
+    Ok(self.accept(user, "keyboard-interactive"))
   }
 
   async fn channel_open_session(
@@ -748,8 +634,13 @@ impl server::Handler for Connection {
     variable_value: &str,
     session: &mut Session,
   ) -> Result<(), Self::Error> {
-    if self.started || !allowed_env(variable_name, variable_value) || self.env.len() >= 16 {
-      tracing::debug!(conn = self.id, name = variable_name, "env refused");
+    let route = self.route();
+    if self.started
+      || !plain_env(variable_name, variable_value)
+      || !client_may_set(&route, variable_name)
+      || self.env.len() >= MAX_CLIENT_ENV
+    {
+      tracing::debug!(conn = self.id, name = ?variable_name, "env refused");
       return session.channel_failure(channel);
     }
     self
@@ -769,7 +660,7 @@ impl server::Handler for Connection {
     self.started = true;
     self.progress.settled.store(true, Ordering::Release);
     session.channel_success(channel)?;
-    self.start(channel, session.handle()).await;
+    self.start(channel, session.handle());
     Ok(())
   }
 
@@ -789,7 +680,7 @@ impl server::Handler for Connection {
     name: &str,
     session: &mut Session,
   ) -> Result<(), Self::Error> {
-    tracing::info!(conn = self.id, subsystem = name, "subsystem refused");
+    tracing::info!(conn = self.id, subsystem = ?name, "subsystem refused");
     session.channel_failure(channel)
   }
 
@@ -841,8 +732,8 @@ impl server::Handler for Connection {
       pty.rows = rows;
     }
     self.touch();
-    if let Some(to_child) = &self.to_child {
-      let _ = to_child.send(Msg2Child::Resize { cols, rows }).await;
+    if let Some(link) = &self.link {
+      link.resize(cols, rows);
     }
     Ok(())
   }
@@ -857,8 +748,24 @@ impl server::Handler for Connection {
       return Ok(());
     }
     self.touch();
-    if let Some(to_child) = &self.to_child {
-      let _ = to_child.send(Msg2Child::Input(data.to_vec())).await;
+    if let Some(link) = &self.link
+      && !link.input(data)
+      && !std::mem::replace(&mut self.overflowed, true)
+    {
+      tracing::warn!(conn = self.id, "input over the budget; ending the session");
+    }
+    Ok(())
+  }
+
+  async fn channel_eof(
+    &mut self,
+    channel: ChannelId,
+    _session: &mut Session,
+  ) -> Result<(), Self::Error> {
+    if self.channel == Some(channel)
+      && let Some(link) = &self.link
+    {
+      link.hang_up(Hangup::Eof);
     }
     Ok(())
   }
@@ -868,9 +775,10 @@ impl server::Handler for Connection {
     channel: ChannelId,
     _session: &mut Session,
   ) -> Result<(), Self::Error> {
-    if self.channel == Some(channel) {
-      // Dropping the sender tells the session task the client is gone.
-      self.to_child = None;
+    if self.channel == Some(channel)
+      && let Some(link) = &self.link
+    {
+      link.hang_up(Hangup::Closed);
     }
     Ok(())
   }
@@ -888,16 +796,44 @@ impl server::Handler for Connection {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::config::load_str;
+
+  fn route(toml: &str) -> Arc<Route> {
+    let (snapshot, _) = load_str(toml, |_| None, None).unwrap();
+    snapshot.default_route().clone()
+  }
 
   #[test]
-  fn only_locale_and_colour_variables_pass() {
-    assert!(allowed_env("LANG", "zh_CN.UTF-8"));
-    assert!(allowed_env("LC_ALL", "en_US.UTF-8"));
-    assert!(allowed_env("COLORTERM", "truecolor"));
-    assert!(!allowed_env("LD_PRELOAD", "/tmp/x.so"));
-    assert!(!allowed_env("COFFEE_SSH_FINGERPRINT", "SHA256:forged"));
-    assert!(!allowed_env("PATH", "/tmp"));
-    assert!(!allowed_env("LANG", "$(reboot)"));
+  fn only_accepted_plain_variables_pass() {
+    let app = route(
+      r#"
+[routes.app]
+command = ["/bin/true"]
+env = { APP_FINGERPRINT = "${fingerprint}" }
+"#,
+    );
+    let ok = |name: &str, value: &str| plain_env(name, value) && client_may_set(&app, name);
+    assert!(ok("LANG", "zh_CN.UTF-8"));
+    assert!(ok("LC_ALL", "en_US.UTF-8"));
+    assert!(ok("COLORTERM", "truecolor"));
+    assert!(!ok("LD_PRELOAD", "/tmp/x.so"));
+    assert!(!ok("APP_FINGERPRINT", "SHA256:forged"));
+    assert!(!ok("PATH", "/tmp"));
+    assert!(!ok("LANG", "$(reboot)"));
+
+    // Even a route that accepts everything keeps its own entries and the gateway's.
+    let open = route(
+      r#"
+[routes.app]
+command = ["/bin/true"]
+accept_env = ["*"]
+env = { APP_FINGERPRINT = "${fingerprint}" }
+"#,
+    );
+    assert!(client_may_set(&open, "ANYTHING"));
+    assert!(!client_may_set(&open, "APP_FINGERPRINT"));
+    assert!(!client_may_set(&open, "PATH"));
+    assert!(!client_may_set(&open, "TERM"));
   }
 
   #[test]
@@ -912,12 +848,5 @@ mod tests {
     assert_eq!(clamp_size(0), 1);
     assert_eq!(clamp_size(160), 160);
     assert_eq!(clamp_size(100_000), 1000);
-  }
-
-  #[test]
-  fn exit_codes_follow_the_shell_convention() {
-    assert_eq!(exit_code(ExitStatus::from_raw(0)), 0);
-    assert_eq!(exit_code(ExitStatus::from_raw(3 << 8)), 3);
-    assert_eq!(exit_code(ExitStatus::from_raw(9)), 137);
   }
 }

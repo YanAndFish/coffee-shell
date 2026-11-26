@@ -1,12 +1,12 @@
-//! What the end-to-end tests share: a server on an ephemeral port, a russh client with
-//! a `vt100` screen, the real `coffee-tui`, a size-reporting stand-in child, and a stub
-//! backend serving the contract fixtures.
+//! What tests of `tty-gateway` (and of the programs behind it) share: an in-process
+//! server on an ephemeral port, a russh client with a `vt100` screen, and stand-in
+//! session programs.
 
 use std::{
   net::SocketAddr,
   path::{Path, PathBuf},
   process::Command,
-  sync::{Arc, Mutex, OnceLock},
+  sync::{Arc, Mutex},
   time::{Duration, Instant},
 };
 
@@ -16,11 +16,11 @@ use russh::{
   keys::{Algorithm, PrivateKey, PrivateKeyWithHashAlg, PublicKeyOrCertificate, ssh_key},
 };
 use tokio::{
-  io::{AsyncReadExt, AsyncWriteExt},
   net::TcpListener,
-  sync::oneshot,
+  sync::{oneshot, watch},
+  task::JoinHandle,
 };
-use tty_gateway::{Config, serve};
+use tty_gateway::{ConfigError, Snapshot, load_str, serve};
 
 /// A fresh, empty directory for one test.
 pub fn temp_dir(name: &str) -> PathBuf {
@@ -35,81 +35,59 @@ pub fn temp_dir(name: &str) -> PathBuf {
   dir
 }
 
-/// The real `coffee-tui`, built once per test run with the workspace's cargo.
-pub fn tui_bin() -> PathBuf {
-  static BIN: OnceLock<PathBuf> = OnceLock::new();
-  BIN
-    .get_or_init(|| {
-      let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-      let mut build = Command::new(cargo);
-      // Without what `cargo test` sets for this test binary: some build scripts rerun
-      // when those change (`CARGO_MANIFEST_DIR`, `CARGO_PKG_NAME`, ...), which relinked
-      // coffee-tui on every switch between `cargo build` and `cargo test`, and under a
-      // test run alongside killed the sessions of the other (macOS kills a program whose
-      // binary is rewritten under it; the exec in between finds no file).
-      for (name, _) in std::env::vars_os() {
-        let name = name.to_string_lossy();
-        if name.starts_with("CARGO_PKG_")
-          || name.starts_with("CARGO_MANIFEST_")
-          || name.starts_with("CARGO_BIN_")
-          || [
-            "CARGO_CRATE_NAME",
-            "CARGO_PRIMARY_PACKAGE",
-            "CARGO_TARGET_TMPDIR",
-            "CARGO_RUSTC_CURRENT_DIR",
-            "OUT_DIR",
-          ]
-          .contains(&name.as_ref())
-        {
-          build.env_remove(name.as_ref());
-        }
-      }
-      let output = build
-        .args([
-          "build",
-          "-p",
-          "coffee-tui",
-          "--bin",
-          "coffee-tui",
-          "--message-format=json-render-diagnostics",
-        ])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("cargo build coffee-tui");
-      assert!(
-        output.status.success(),
-        "building coffee-tui failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-      );
-      String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|message| message["target"]["name"] == "coffee-tui")
-        .find_map(|message| message["executable"].as_str().map(PathBuf::from))
-        .expect("cargo reported no coffee-tui executable")
-    })
-    .clone()
+/// `text` as a TOML basic string (quoted and escaped).
+pub fn quote(text: &str) -> String {
+  let mut out = String::from("\"");
+  for c in text.chars() {
+    match c {
+      '"' => out.push_str("\\\""),
+      '\\' => out.push_str("\\\\"),
+      '\n' => out.push_str("\\n"),
+      '\r' => out.push_str("\\r"),
+      '\t' => out.push_str("\\t"),
+      c if c.is_control() => out.push_str(&format!("\\u{:04X}", u32::from(c))),
+      c => out.push(c),
+    }
+  }
+  out.push('"');
+  out
 }
 
-/// A stand-in session program: prints its pid, the session's environment and its
-/// terminal size, and its size again on every SIGWINCH.
-pub fn probe_bin(dir: &Path) -> PathBuf {
-  let path = dir.join("probe.sh");
-  std::fs::write(
-    &path,
-    r#"#!/bin/sh
-echo "PID=$$"
-echo "FP=${COFFEE_SSH_FINGERPRINT:-none}"
-echo "IP=${COFFEE_CLIENT_IP:-none} API=${COFFEE_API_URL:-none} KEY=${COFFEE_INTERNAL_KEY:-none}"
-echo "TERM=${TERM:-none} LANG=${LANG:-none} COLORTERM=${COLORTERM:-none}"
-trap 'echo "SIZE=$(stty size)"' WINCH
-echo "SIZE=$(stty size)"
-while :; do sleep 0.05; done
-"#,
-  )
-  .unwrap();
+/// A path as a TOML string.
+pub fn quote_path(path: &Path) -> String {
+  quote(&path.to_string_lossy())
+}
+
+fn write_script(path: &Path, text: &str) {
   use std::os::unix::fs::PermissionsExt;
-  std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+  std::fs::write(path, text).unwrap();
+  std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A stand-in session program `dir/name`: prints `PROBE=<name>`, its pid, `NAME=value`
+/// (or `NAME=none`) for each of `vars`, and its terminal size, then its size again on
+/// every SIGWINCH. Each on a line of its own (see [`field`]).
+pub fn probe_bin(dir: &Path, name: &str, vars: &[&str]) -> PathBuf {
+  let path = dir.join(name);
+  let mut script = format!("#!/bin/sh\necho \"PROBE={name}\"\necho \"PID=$$\"\n");
+  for var in vars {
+    assert!(
+      var.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+      "{var}"
+    );
+    script.push_str(&format!("echo \"{var}=${{{var}:-none}}\"\n"));
+  }
+  script.push_str(
+    "trap 'echo \"SIZE=$(stty size)\"' WINCH\necho \"SIZE=$(stty size)\"\nwhile :; do sleep 0.05; done\n",
+  );
+  write_script(&path, &script);
+  path
+}
+
+/// An executable `/bin/sh` script `dir/name` with `body` after the `#!` line.
+pub fn script_bin(dir: &Path, name: &str, body: &str) -> PathBuf {
+  let path = dir.join(name);
+  write_script(&path, &format!("#!/bin/sh\n{body}"));
   path
 }
 
@@ -117,52 +95,104 @@ while :; do sleep 0.05; done
 /// program would.
 pub fn crash_bin(dir: &Path) -> PathBuf {
   let path = dir.join("crash.sh");
-  std::fs::write(
+  write_script(
     &path,
     "#!/bin/sh\necho \"PID=$$\"\nsleep 0.2\nkill -SEGV $$\n",
-  )
-  .unwrap();
-  use std::os::unix::fs::PermissionsExt;
-  std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+  );
   path
 }
 
-/// A server running on 127.0.0.1 with `tui_bin` as the session program.
+/// A server running in this process on 127.0.0.1 (an ephemeral port) with a host key
+/// of its own; its configuration is TOML text, with `server.listen` and
+/// `server.host_key` overridden.
 pub struct TestServer {
   pub addr: SocketAddr,
-  stop: Option<oneshot::Sender<()>>,
   pub dir: PathBuf,
+  env: Vec<(String, String)>,
+  snapshots: watch::Sender<Arc<Snapshot>>,
+  stop: Option<oneshot::Sender<()>>,
+  task: Option<JoinHandle<()>>,
 }
 
 impl TestServer {
-  pub async fn start(tui_bin: PathBuf, tune: impl FnOnce(&mut Config)) -> Self {
-    // The server's log on stderr (uncaptured) when asked for, e.g. COFFEE_SSH_LOG=info.
-    if std::env::var_os("COFFEE_SSH_LOG").is_some() {
+  /// Starts a server on `toml`, with an empty gateway environment for `${env:…}`.
+  pub async fn start(toml: &str) -> Self {
+    Self::start_with_env(toml, &[]).await
+  }
+
+  /// Starts a server on `toml`; `env` is the gateway's environment for `${env:…}`.
+  pub async fn start_with_env(toml: &str, env: &[(&str, &str)]) -> Self {
+    // The server's log on stderr (uncaptured) when asked for, e.g. TTY_GATEWAY_LOG=info.
+    if std::env::var_os("TTY_GATEWAY_LOG").is_some() {
       tty_gateway::init_logging();
     }
     let dir = temp_dir("server");
-    let mut config = Config::from_vars(|_| None, None).unwrap();
-    config.addr = "127.0.0.1:0".parse().unwrap();
-    config.host_key = dir.join("host_key");
-    config.tui_bin = tui_bin;
-    config.api_url = "http://127.0.0.1:9".into();
-    tune(&mut config);
-    let (key, _) = tty_gateway::hostkey::load_or_generate(&config.host_key).unwrap();
-    let listener = TcpListener::bind(config.addr).await.unwrap();
+    let mut env: Vec<(String, String)> = env
+      .iter()
+      .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+      .collect();
+    env.push(("TTY_GATEWAY_ADDR".into(), "127.0.0.1:0".into()));
+    env.push((
+      "TTY_GATEWAY_HOST_KEY".into(),
+      dir.join("host_key").to_string_lossy().into_owned(),
+    ));
+    let snapshot = load(toml, &env).unwrap_or_else(|error| panic!("bad test config: {error}"));
+    let (key, _) = tty_gateway::hostkey::load_or_generate(&snapshot.server.host_key).unwrap();
+    let listener = TcpListener::bind(snapshot.server.listen).await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let (snapshots, receiver) = watch::channel(Arc::new(snapshot));
     let (stop, stopped) = oneshot::channel();
-    tokio::spawn(async move {
-      let _ = serve(listener, config, key, async {
+    let task = tokio::spawn(async move {
+      let _ = serve(listener, key, receiver, async {
         let _ = stopped.await;
       })
       .await;
     });
     Self {
       addr,
-      stop: Some(stop),
       dir,
+      env,
+      snapshots,
+      stop: Some(stop),
+      task: Some(task),
     }
   }
+
+  /// Puts `toml` in force for new connections (as a reload would); open ones keep
+  /// theirs. A configuration that does not load changes nothing.
+  pub fn reload(&self, toml: &str) -> Result<(), ConfigError> {
+    let snapshot = load(toml, &self.env)?;
+    self.snapshots.send_replace(Arc::new(snapshot));
+    Ok(())
+  }
+
+  /// Shuts the server down as a SIGTERM would (the whole drain) and waits for `serve`
+  /// to return, at most 10 s; how long it took (10 s if it did not return).
+  pub async fn shutdown(mut self) -> Duration {
+    let started = Instant::now();
+    if let Some(stop) = self.stop.take() {
+      let _ = stop.send(());
+    }
+    if let Some(task) = self.task.take()
+      && tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .is_err()
+    {
+      return Duration::from_secs(10);
+    }
+    started.elapsed()
+  }
+}
+
+fn load(toml: &str, env: &[(String, String)]) -> Result<Snapshot, ConfigError> {
+  let lookup = |name: &str| {
+    env
+      .iter()
+      .rev()
+      .find(|(key, _)| key == name)
+      .map(|(_, value)| value.clone())
+  };
+  load_str(toml, lookup, None).map(|(snapshot, _)| snapshot)
 }
 
 impl Drop for TestServer {
@@ -205,6 +235,7 @@ pub enum Login {
 }
 
 impl Login {
+  /// A new ed25519 key, and its `SHA256:…` fingerprint.
   pub fn new_key() -> (Self, String) {
     let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
     let fingerprint = key
@@ -215,8 +246,18 @@ impl Login {
   }
 }
 
-/// Connects and logs in; returns the handle and the banner. Panics if a prompt is asked.
+/// [`connect_as`] the user `guest`.
 pub async fn connect(addr: SocketAddr, login: Login) -> (Handle<Client>, Option<String>) {
+  connect_as(addr, "guest", login).await
+}
+
+/// Connects and logs in as `user`; returns the handle and the banner. Panics if a prompt
+/// is asked or the login is refused.
+pub async fn connect_as(
+  addr: SocketAddr,
+  user: &str,
+  login: Login,
+) -> (Handle<Client>, Option<String>) {
   let banner = Arc::new(Mutex::new(None));
   let config = Arc::new(client::Config::default());
   let mut handle = client::connect(
@@ -231,7 +272,7 @@ pub async fn connect(addr: SocketAddr, login: Login) -> (Handle<Client>, Option<
   match login {
     Login::Keyless => {
       let reply = handle
-        .authenticate_keyboard_interactive_start("guest", None)
+        .authenticate_keyboard_interactive_start(user, None)
         .await
         .expect("keyboard-interactive");
       match reply {
@@ -244,7 +285,7 @@ pub async fn connect(addr: SocketAddr, login: Login) -> (Handle<Client>, Option<
     }
     Login::Key(key) => {
       let result = handle
-        .authenticate_publickey("guest", PrivateKeyWithHashAlg::new(Arc::new(*key), None))
+        .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(*key), None))
         .await
         .expect("publickey");
       assert!(result.success(), "public key refused");
@@ -271,7 +312,7 @@ pub struct Terminal {
 
 /// DA1, which every terminal answers.
 const DA1: &[u8] = b"\x1b[c";
-/// XTGETTCAP, as the host sends it.
+/// XTGETTCAP, as a terminal host sends it.
 const XTGETTCAP: &[u8] = b"\x1bP+q";
 
 impl Terminal {
@@ -289,6 +330,18 @@ impl Terminal {
     rows: u16,
     rgb: bool,
   ) -> Self {
+    Self::open_with_env(handle, term, cols, rows, rgb, &[]).await
+  }
+
+  /// [`Terminal::open_as`], sending `env` (env requests) before the shell request.
+  pub async fn open_with_env(
+    handle: &Handle<Client>,
+    term: &str,
+    cols: u16,
+    rows: u16,
+    rgb: bool,
+    env: &[(&str, &str)],
+  ) -> Self {
     let channel = handle
       .channel_open_session()
       .await
@@ -297,6 +350,9 @@ impl Terminal {
       .request_pty(true, term, cols.into(), rows.into(), 0, 0, &[])
       .await
       .unwrap();
+    for (name, value) in env {
+      channel.set_env(false, *name, *value).await.unwrap();
+    }
     channel.request_shell(true).await.unwrap();
     let mut terminal = Self::over(channel, cols, rows);
     terminal.answers_rgb = rgb;
@@ -437,7 +493,7 @@ fn nonzero(value: u16) -> std::num::NonZero<u16> {
   std::num::NonZero::new(value).expect("a terminal is at least 1×1")
 }
 
-/// The value after `KEY=` on a line of the raw output.
+/// The value after `KEY=` on a line of the raw output (the last such line).
 pub fn field(raw: &str, key: &str) -> Option<String> {
   raw
     .lines()
@@ -473,45 +529,23 @@ pub fn alive(pid: u32) -> bool {
   output.status.success() && !stat.trim().is_empty() && !stat.trim().starts_with('Z')
 }
 
-/// A tiny HTTP server answering `GET /v1/products` and `/v1/health` with the contract
-/// fixtures; returns its base URL.
-pub async fn stub_backend() -> String {
-  let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/contract/fixtures/v1");
-  let products = std::fs::read(fixtures.join("products.json")).unwrap();
-  let health = std::fs::read(fixtures.join("health.json")).unwrap();
-  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-  let addr = listener.local_addr().unwrap();
-  tokio::spawn(async move {
-    loop {
-      let Ok((mut socket, _)) = listener.accept().await else {
-        return;
-      };
-      let (products, health) = (products.clone(), health.clone());
-      tokio::spawn(async move {
-        let mut request = Vec::new();
-        let mut chunk = [0u8; 1024];
-        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
-          match socket.read(&mut chunk).await {
-            Ok(0) | Err(_) => return,
-            Ok(read) => request.extend_from_slice(&chunk[..read]),
-          }
-        }
-        let line = String::from_utf8_lossy(&request);
-        let path = line.split_whitespace().nth(1).unwrap_or("/");
-        let (status, body) = match path.split('?').next().unwrap_or("/") {
-          "/v1/products" => ("200 OK", products),
-          "/v1/health" => ("200 OK", health),
-          _ => ("404 Not Found", br#"{"error":"not_found"}"#.to_vec()),
-        };
-        let head = format!(
-          "HTTP/1.1 {status}\r\ncontent-type: application/json; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-          body.len()
-        );
-        let _ = socket.write_all(head.as_bytes()).await;
-        let _ = socket.write_all(&body).await;
-        let _ = socket.shutdown().await;
-      });
-    }
-  });
-  format!("http://{addr}")
+/// The pids of this process's children whose command line contains `name` (an
+/// in-process server's session programs are its children).
+pub fn children_named(name: &str) -> Vec<u32> {
+  let output = Command::new("ps")
+    .args(["-A", "-o", "pid=,ppid=,stat=,command="])
+    .output()
+    .unwrap();
+  let me = std::process::id();
+  String::from_utf8_lossy(&output.stdout)
+    .lines()
+    .filter_map(|line| {
+      let mut parts = line.split_whitespace();
+      let pid: u32 = parts.next()?.parse().ok()?;
+      let ppid: u32 = parts.next()?.parse().ok()?;
+      let stat = parts.next()?;
+      let command: Vec<&str> = parts.collect();
+      (ppid == me && !stat.starts_with('Z') && command.join(" ").contains(name)).then_some(pid)
+    })
+    .collect()
 }
