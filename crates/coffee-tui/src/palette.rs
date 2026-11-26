@@ -1,6 +1,6 @@
 //! The palette pin: the design's exact colours in place of the terminal's theme.
 //!
-//! nsh 0.6.1 draws an app's colours as the terminal's ANSI meanings
+//! nsh (0.6.1 and 0.7.1) draws an app's colours as the terminal's ANSI meanings
 //! (`nsh_platform_tui`'s `palette.rs`): a saturated colour becomes the accent of its
 //! hue band (`Yellow` for amber, `Green` for mint, `Red` for coral, `Cyan`, `Blue`,
 //! `Magenta`), near-neutral text the default foreground (`Reset`), secondary text `Reset` +
@@ -26,6 +26,11 @@
 //! | text `Reset` + `DIM` | `muted-foreground`, without `DIM` | kept | kept |
 //! | text in a channel, plain or marked | its token (`INKS`), unmarked | its 16-colour role, unmarked | unmarked; `DIM` when marked |
 //! | nsh's own focus mark (plain `Blue`) | `primary`; a reversed focus band becomes a `selection` band | `Yellow` | kept |
+//!
+//! Since nsh 0.7, at 24-bit colour nsh repaints every ANSI `Blue` it drew (its own accent, and
+//! our `Blue` channel's carriers alike) in its brand indigo ([`NSH_BRAND_ACCENT`]) before the
+//! frame reaches the host. The pin first reads that indigo as the `Blue` it stands for
+//! ([`Pin::unbrand`]), so the table above holds unchanged.
 //!
 //! At 24-bit colour the values are exact; at 256 colours each is the nearest entry of the
 //! xterm cube and gray ramp (indices 16–255, which terminal themes leave alone). Every other
@@ -126,10 +131,28 @@ pub fn parse_hex(text: &str) -> Option<Rgb> {
   Some([channel(0)?, channel(2)?, channel(4)?])
 }
 
-/// The share of white over black nsh 0.6.1 gives a hovered control without surfaces
+/// The share of white over black nsh (0.6.1, unchanged in 0.7.1) gives a hovered control without surfaces
 /// (`palette::HOVER_SHARE`), and a pressed one (`PRESS_SHARE`).
 const HOVER_SHARE: f32 = 0.10;
 const PRESS_SHARE: f32 = 0.18;
+
+/// The indigo nsh (0.7) paints its ANSI `Blue` accent in at 24-bit colour, for a dark and a
+/// light page (`nsh_platform_tui`'s `palette::BRAND_ACCENT`), and the text it puts on a fill of
+/// it (`palette::brand_accent`). No token or carrier of the app is either colour (carriers
+/// are xterm cube entries, tokens browns), so each stands for `Blue` alone.
+pub const NSH_BRAND_ACCENT: [(Rgb, Rgb); 2] = [
+  ([0x8f, 0x9b, 0xff], [0x11, 0x11, 0x1b]),
+  ([0x4f, 0x46, 0xe5], [0xff, 0xff, 0xff]),
+];
+
+/// Whether `color` is nsh's true-colour brand accent; with the text colour it sets on it.
+fn brand_accent(color: Color) -> Option<Color> {
+  NSH_BRAND_ACCENT
+    .iter()
+    .find_map(|&([r, g, b], [fr, fg, fb])| {
+      (color == Color::Rgb(r, g, b)).then_some(Color::Rgb(fr, fg, fb))
+    })
+}
 
 /// The ANSI meaning of a foreground nsh drew: which channel it is.
 fn channel(color: Color, dim: bool) -> Option<Channel> {
@@ -270,7 +293,27 @@ impl Pin {
     }
   }
 
+  /// Undoes nsh's true-colour brand accent: its indigo is the `Blue` nsh drew (a fill of
+  /// it with the text nsh set on it: a `Blue` fill under the default text, as without it).
+  fn unbrand(cell: &mut Cell) {
+    if let Some(on) = brand_accent(cell.bg) {
+      cell.bg = Color::Blue;
+      if cell.fg == on {
+        cell.fg = Color::Reset;
+      }
+    }
+    if brand_accent(cell.fg).is_some() {
+      cell.fg = Color::Blue;
+    }
+    if brand_accent(cell.underline_color).is_some() {
+      cell.underline_color = Color::Blue;
+    }
+  }
+
   fn exact_cell(&self, cell: &mut Cell) {
+    if self.depth == ColorDepth::TrueColor {
+      Self::unbrand(cell);
+    }
     let marked = cell.modifier.contains(Modifier::ITALIC);
     // nsh's focus band (a focused field's row: reversed in its blue accent) reads as a
     // second primary button; the design's focus is the field's heavy amber frame, so the
@@ -424,7 +467,7 @@ impl FrameFilter for Pin {
   }
 }
 
-/// The accent nsh 0.6.1 reads a saturated colour as (its `HUE_BANDS`: hue upper bounds in
+/// The accent nsh (0.6.1 and 0.7.1) reads a saturated colour as (its `HUE_BANDS`: hue upper bounds in
 /// degrees).
 pub fn hue_band(rgb: Rgb) -> Color {
   const BANDS: [(f32, Color); 6] = [
@@ -680,6 +723,33 @@ mod tests {
     );
     assert_eq!((band.fg, band.bg), (rgb(0xece4d6), rgb(0x30271a)));
     assert_eq!(band.modifier, Modifier::UNDERLINED);
+  }
+
+  #[test]
+  fn nsh_brand_indigo_is_read_as_its_blue() {
+    let pin = pin(ColorDepth::TrueColor);
+    let (indigo, on) = (rgb(0x8f9bff), rgb(0x11111b));
+    // `line-soft` rides on marked blue: nsh 0.7 paints it indigo at 24-bit colour.
+    let line = pinned(&pin, indigo, Color::Reset, Modifier::ITALIC);
+    assert_eq!(line.fg, exact(palette().ink("line-soft").unwrap()));
+    let mark = pinned(&pin, indigo, Color::Reset, Modifier::BOLD);
+    assert_eq!(mark.fg, rgb(0xf0b45a));
+    let band = pinned(&pin, indigo, Color::Reset, Modifier::REVERSED);
+    assert_eq!((band.fg, band.bg), (rgb(0xece4d6), rgb(0x30271a)));
+    // An accent fill and nsh's text on it: the primary fill under the dark ink.
+    let chip = pinned(&pin, on, indigo, Modifier::empty());
+    assert_eq!((chip.fg, chip.bg), (rgb(0x1a140d), rgb(0xf0b45a)));
+    // At 256 colours nsh keeps ANSI blue: the same colour is just a colour there.
+    let other = pinned(&pin_256(), indigo, Color::Reset, Modifier::empty());
+    assert_eq!(other.fg, indigo);
+  }
+
+  fn exact([r, g, b]: Rgb) -> Color {
+    Color::Rgb(r, g, b)
+  }
+
+  fn pin_256() -> Pin {
+    pin(ColorDepth::Ansi256)
   }
 
   #[test]
