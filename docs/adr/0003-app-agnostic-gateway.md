@@ -135,7 +135,8 @@ apply it`）：换监听地址或主机密钥需要重启（主机密钥变了�
 
 **决定**：第一个 SIGTERM / SIGINT 时（日志 `shutting down`、`draining connections=…`）：停止 accept，广播停机；
 已有会话的连接由会话自己收尾：先发终端复位（与崩溃提示前的相同），再发 `shutting_down` 文案，向程序的进程组发
-SIGHUP，`server.shutdown_grace`（默认 2 秒）后仍在则 SIGKILL，以**程序自己的退出状态**关闭通道并 `disconnect`；
+SIGHUP，`server.shutdown_grace`（默认 2 秒）后仍在则 SIGKILL，以**状态 143**（128 + SIGTERM，与程序自己退出
+区分开；沿用 PR #4 在 `coffee-sshd` 上定下的约定）关闭通道并 `disconnect`；
 还在登录的连接直接 `disconnect`。到 grace + 0.7 秒仍未结束的连接强关 socket；整个过程以 grace + 1 秒为界，最后
 记 `stopped done=… millis=…`（`done=false` 表示有任务没在界限内结束），进程以 0 退出。
 

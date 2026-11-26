@@ -109,8 +109,8 @@ Do not use a real password anywhere. Tick each line:
         under `[server]`), SIGHUP again: `reload failed: the running configuration stays`, and `demo@` still opens
         the gallery. `git checkout deploy/gateway.toml`, SIGHUP once more.
 15. [ ] Graceful stop: with a session open, `pkill -TERM -x tty-gateway`. The client's terminal is reset (no
-        alternate screen, cursor shown), it shows `ROAST/TTY 服务器正在关闭，请稍后重新连接。` and `ssh` exits within
-        3 s (`server.shutdown_grace` 2 s + 1 s); the log ends with `stopped done=true millis=…`; no `coffee-tui` is
+        alternate screen, cursor shown), it shows `ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。` and `ssh` exits with
+        status 143 within 3 s (`server.shutdown_grace` 2 s + 1 s); the log ends with `stopped done=true millis=…`; no `coffee-tui` is
         left. `pnpm dev` notices its gateway is gone and stops the backend too.
 16. [ ] If `pnpm dev` still runs, stop it with Ctrl+C. `pgrep -fl "dev.mjs|tty-gateway|coffee-tui|src/main.ts"`
         prints nothing; `lsof -nP -iTCP:3000 -iTCP:2222 -sTCP:LISTEN` too. `rm .data/acceptance.db`.

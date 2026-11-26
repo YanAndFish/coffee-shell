@@ -280,6 +280,14 @@ nsh 默认“有选区则复制，否则立即退出”。经 SSH 时 raw 模式
   粘贴/焦点报告、结束同步更新、离开备用屏、显示光标、复位颜色），再显示
   “ROAST/TTY 出错了，会话已结束（代码 N）。请重新连接；如果一直这样，请稍后再试。”，以该代码关闭通道，
   日志 `warn`。正常退出（0）不提示。
+- 网关停止（SIGTERM / Ctrl+C）：不再接受新连接；网关总是先发一次上面的终端复位（程序可能被信号直接杀死、
+  什么都没恢复），再显示“ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。”，然后让每个会话的程序退出，
+  以状态 143 关闭通道并断开连接；还在登录的连接直接断开。此前进程直接退出，客户端停在备用屏里。
+  信号、时限与文案的来源现在由 [ADR 0003](0003-app-agnostic-gateway.md) 第 4 节规定（进程组收 SIGHUP，
+  `server.shutdown_grace` 后 SIGKILL，全程至多 grace + 1 秒；文案是 `deploy/gateway.toml` 的 `shutting_down`）。
+  `crates/tty-gateway/tests/lifecycle.rs` 的 `a_shutdown_tells_every_client_and_takes_every_program_down`（程序不做
+  任何恢复）和 `crates/coffee-tui/tests/ssh.rs` 的 `a_shutdown_tells_the_shop_client_and_ends_coffee_tui`（真实
+  `coffee-tui`）固定了这一点。
 
 ### 空闲计时的缺陷（第二阶段修复）
 

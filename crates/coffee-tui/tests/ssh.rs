@@ -450,6 +450,7 @@ async fn a_shutdown_tells_the_shop_client_and_ends_coffee_tui() {
     .expect("no terminal reset");
   let notice = raw.rfind(&text).expect("no shutting_down text");
   assert!(reset < notice);
+  assert_eq!(terminal.exit_status, Some(143));
   assert!(!alive(pids[0]), "coffee-tui {} still running", pids[0]);
   drop(handle);
   let _ = std::fs::remove_dir_all(dir);

@@ -36,6 +36,9 @@ use crate::{
 pub const KILL_GRACE: Duration = Duration::from_millis(1000);
 /// Client input queued for a program that does not read it, at most.
 pub const INPUT_BUDGET: usize = 1024 * 1024;
+/// The exit status of a session the server ended by shutting down (128 + SIGTERM): a client
+/// can tell it from its program leaving on its own.
+pub const SHUTDOWN_STATUS: u32 = 143;
 /// How long one call on the connection's handle may take on the way out.
 pub const HANDLE_TIMEOUT: Duration = Duration::from_millis(250);
 /// Tries at starting a session's upstream, and the pause between them.
@@ -507,8 +510,7 @@ pub async fn run_session(task: SessionTask) {
         seconds = seconds(),
         "session ended: shutting down"
       );
-      let code = running.wait().await.unwrap_or(255);
-      close(&handle, channel, code).await;
+      close(&handle, channel, SHUTDOWN_STATUS).await;
       disconnect(&handle, "shutting down").await;
     }
   }

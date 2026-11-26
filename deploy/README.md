@@ -43,9 +43,12 @@ docker compose -f deploy/compose.yaml logs -f gateway     # sessions (user, rout
 images built beforehand) starts the pair with a throwaway key and checks the SSH banner, that the backend is not
 published and refuses calls without the key, that a key-less stock `ssh` session shows the products from the backend
 (not the built-in sample data), that a stock `ssh` session with a throwaway key registers, adds a bag, saves an
-address, checks out and gets a receipt (`scripts/e2e/run.py --gateway 127.0.0.1:2222 smoke`; its text screenshots
+address, checks out and gets a receipt (`scripts/e2e/run.py --gateway 127.0.0.1:<port> smoke`; its text screenshots
 go to `.data/e2e-smoke/`), that the sessions' `coffee-tui` are gone after the clients leave, and that a restarted
-backend migrates and seeds nothing twice. Then it removes everything. It needs `python3` and `ssh` on the host.
+backend migrates and seeds nothing twice. It runs as a Compose project of its own (`roast-tty-smoke-<pid>`, or
+`COFFEE_SMOKE_PROJECT`) on a free port (or `COFFEE_SMOKE_PORT`), so a deployment on the same machine (project
+`roast-tty`, port 2222) keeps its containers and volumes; at the end it removes everything of its own project. It
+needs `python3` and `ssh` on the host.
 
 ## Build the images alone
 
@@ -114,7 +117,8 @@ reset and `crashed`); idle or `max_session_time` (124, with `idle` / `time_limit
 program's process group gets SIGHUP, then SIGKILL after 1 s; the client sends EOF (`ssh -tt … </dev/null`): the same,
 then up to 0.3 s of the last output and the channel closes with the program's own status (0 for `coffee-tui`, which
 leaves cleanly on SIGHUP; 129 or 137 for a program the signal kills); input the program does not read, past a 1 MiB
-budget: the connection is closed. Every call on the client's connection on the way out has a 250 ms timeout, so a
+budget: the connection is closed; the gateway stops (143, with a terminal reset and `shutting_down`, see
+**Stopping** below). Every call on the client's connection on the way out has a 250 ms timeout, so a
 client that stopped reading holds nothing up.
 
 A session's environment starts empty: `PATH`, `HOME`, `TMPDIR`, `USER` and `LOGNAME` from the gateway, the
@@ -174,8 +178,8 @@ logged (`… changed: restart to apply it`) and need a restart. Limit counters s
 
 **Stopping**: `docker compose stop` sends SIGTERM (SIGINT does the same). The gateway logs `shutting down` and
 `draining`, stops accepting, and for every session resets the client's terminal, shows `shutting_down`, sends
-SIGHUP to the program's process group and SIGKILL after `server.shutdown_grace` (2 s); the channel closes with the
-program's own status. Connections still open near the end (grace + 0.7 s) are closed hard; the whole drain is
+SIGHUP to the program's process group and SIGKILL after `server.shutdown_grace` (2 s); the channel closes with
+status 143. Connections still open near the end (grace + 0.7 s) are closed hard; the whole drain is
 bounded by grace + 1 s and ends with `stopped done=… millis=…`. That is well inside Docker's 10 s before SIGKILL;
 keep `shutdown_grace` below about 8 s. A **second** SIGTERM/SIGINT during the drain exits at once with status 1
 (`second signal: exiting now`) and may leave session programs running (orphaned): send one signal and wait.

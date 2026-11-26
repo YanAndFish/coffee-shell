@@ -1,14 +1,14 @@
 import type { TestDatabase } from './helpers.ts'
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createPrisma } from '../src/db.ts'
 import { SERVER_ROOT, sqlitePath } from '../src/env.ts'
-import { catalogIsEmpty, databaseProblem, missingDatabase } from '../src/startup.ts'
+import { catalogIsEmpty, databaseProblem, MIGRATIONS_DIR, migrationsIn, missingDatabase } from '../src/startup.ts'
 import { createTestDatabase } from './helpers.ts'
 
 /** A child that holds an exclusive lock on the file in argv[1] until its stdin closes. */
@@ -50,6 +50,35 @@ describe('the database checks before listening', () => {
     finally {
       await prisma.$disconnect()
     }
+  })
+
+  it('a database without this version\'s later migrations says which (it has a catalogue but no accounts)', async () => {
+    const partial = await createTestDatabase()
+    try {
+      const [first, ...later] = migrationsIn(MIGRATIONS_DIR)
+      expect(first).toMatch(/_init$/)
+      expect(later.length).toBeGreaterThan(0)
+      // As if only the first migration had been deployed (an older image's database).
+      for (const name of later)
+        await partial.prisma.$executeRaw`DELETE FROM _prisma_migrations WHERE migration_name = ${name}`
+      const problem = await databaseProblem(partial.prisma, partial.url)
+      expect(problem).toMatch(/test\.db lacks .*accounts_cart_orders.*: run `pnpm --filter @coffee\/server db:migrate`/)
+      expect(await partial.prisma.product.count()).toBeGreaterThan(0)
+    }
+    finally {
+      await partial.cleanup()
+    }
+  }, 60_000)
+
+  it('a migration newer than the database, or one that failed half way, is missing', async () => {
+    const migrations = join(dir, 'migrations')
+    for (const name of [
+      ...migrationsIn(MIGRATIONS_DIR),
+      '20991231000000_later',
+    ])
+      mkdirSync(join(migrations, name), { recursive: true })
+    expect(await databaseProblem(db.prisma, db.url, migrations)).toMatch(/lacks 20991231000000_later \(/)
+    expect(await databaseProblem(db.prisma, db.url, join(dir, 'nowhere'))).toMatch(/the migrations .*nowhere cannot be read/)
   })
 
   it('a ready database passes, with its catalogue', async () => {

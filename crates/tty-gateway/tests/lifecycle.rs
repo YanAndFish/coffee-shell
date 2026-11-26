@@ -123,8 +123,15 @@ async fn a_shutdown_tells_every_client_and_takes_every_program_down() {
       "{}",
       terminal.raw_text()
     );
-    // The terminal is put back before the notice.
-    assert!(terminal.raw_text().contains("\x1b[?1049l\x1b[?25h"));
+    // The terminal is put back before the notice, whatever the program did on its way
+    // out (this one is a shell script: a hang-up kills it and it restores nothing).
+    let raw = terminal.raw_text();
+    let reset = raw
+      .rfind("\x1b[?1049l\x1b[?25h\x1b[0m")
+      .expect("no terminal reset");
+    let notice = raw.rfind("The server is shutting down").expect("no notice");
+    assert!(reset < notice, "{raw}");
+    assert_eq!(terminal.exit_status, Some(143));
   }
   assert!(
     gone_within(&pids, Duration::from_millis(500)).await,

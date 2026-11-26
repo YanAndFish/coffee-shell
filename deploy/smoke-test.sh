@@ -14,14 +14,26 @@
 # address, checks out and gets its receipt (scripts/e2e/run.py's `smoke` flow; its screens
 # land in .data/e2e-smoke/); the sessions' coffee-tui are gone after the clients leave; a
 # restarted backend starts again on the same database without migrating or seeding twice.
-# Everything (containers, networks, volumes) is removed at the end. Needs python3 and ssh.
+#
+# It runs as a Compose project of its own (`roast-tty-smoke-<pid>`, or COFFEE_SMOKE_PROJECT)
+# on a free port (or COFFEE_SMOKE_PORT), never as the deployment's `roast-tty` on 2222: a
+# deployment on the same machine keeps its containers, its database and its host key.
+# Everything of the test's own project (containers, networks, volumes) is removed at the
+# end. Needs python3 and ssh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-compose=(docker compose -f deploy/compose.yaml)
-port=${COFFEE_SSH_PORT:-2222}
+project=${COFFEE_SMOKE_PROJECT:-roast-tty-smoke-$$}
+if [ "$project" = roast-tty ]; then
+  echo "COFFEE_SMOKE_PROJECT=roast-tty is the deployment's project: the cleanup would delete its volumes" >&2
+  exit 2
+fi
+compose=(docker compose -p "$project" -f deploy/compose.yaml)
+port=${COFFEE_SMOKE_PORT:-$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}
+# Both reach compose.yaml; they beat a deploy/.env and the shell's own settings.
+COFFEE_SSH_PORT=$port
 COFFEE_INTERNAL_KEY=$(openssl rand -hex 32)
-export COFFEE_INTERNAL_KEY
+export COFFEE_SSH_PORT COFFEE_INTERNAL_KEY
 screen=$(mktemp)
 
 step() { printf '\n== %s\n' "$*"; }
@@ -37,7 +49,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step "start (backend healthy, then the gateway)"
+step "start project $project on port $port (backend healthy, then the gateway)"
 # shellcheck disable=SC2086 # COMPOSE_UP_ARGS is a list of flags
 "${compose[@]}" up -d ${COMPOSE_UP_ARGS:---no-build} --wait --wait-timeout 180
 "${compose[@]}" ps

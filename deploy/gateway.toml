@@ -40,7 +40,7 @@ time_limit = "ROAST/TTY 会话已到时长上限，连接已关闭。"
 full = "ROAST/TTY 当前在线会话已满（上限 {max}），请稍后再试。"
 full_per_ip = "ROAST/TTY 来自你的地址的会话已达上限（{max} 个），请先关闭其他会话。"
 full_route = "ROAST/TTY 这项服务的会话已满（上限 {max}），请稍后再试。"
-shutting_down = "ROAST/TTY 服务器正在关闭，请稍后重新连接。"
+shutting_down = "ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。"
 
 # The shop: `coffee@`, `shop@` and every name no other route lists.
 [routes.coffee]
