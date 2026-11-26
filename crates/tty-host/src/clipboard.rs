@@ -1,8 +1,8 @@
 //! The clipboard over the terminal (OSC 52): what the app copies reaches the clipboard
 //! of the machine the terminal (or the SSH client) runs on, never the server's.
 //!
-//! Adapted from `nsh-tui-host` 0.6.1 (`clipboard.rs`, Apache-2.0), without its fallback
-//! to the local desktop clipboard: on a server that would be the wrong machine's.
+//! Adapted from `nsh-tui-host` 0.6.1 (`clipboard.rs`, Apache-2.0; unchanged in 0.7.1), without
+//! its fallback to the local desktop clipboard: on a server that would be the wrong machine's.
 
 use std::{
   io::{self, Write},

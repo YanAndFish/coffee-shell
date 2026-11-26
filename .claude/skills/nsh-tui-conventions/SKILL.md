@@ -1,11 +1,11 @@
 ---
 name: nsh-tui-conventions
-description: Rules for writing or reviewing any Rust code in apps/tui (the nsh 0.6.1 Rust-mode UI of ROAST/TTY) - layering, stores, the command table, theme tokens, terminal-first design and the checks to run. Use before touching apps/tui/src or crates/coffee-tui or crates/tty-host.
+description: Rules for writing or reviewing any Rust code in apps/tui (the nsh 0.7.1 Rust-mode UI of ROAST/TTY) - layering, stores, the command table, theme tokens, terminal-first design and the checks to run. Use before touching apps/tui/src or crates/coffee-tui or crates/tty-host.
 ---
 
 # nsh TUI conventions (ROAST/TTY)
 
-The UI is an nsh 0.6.1 app in **Rust mode** (`apps/tui/nsh.json`: `"rust": "."`, `"root": "App"`), drawn in a
+The UI is an nsh 0.7.1 app in **Rust mode** (`apps/tui/nsh.json`: `"rust": "."`, `"root": "App"`), drawn in a
 terminal by `coffee-tui` (crate `crates/coffee-tui`, on the generic host `crates/tty-host`). These rules come from the nsh Coding and Design Guides
 (<https://nsh.dev/docs/coding-guides.md>, <https://nsh.dev/docs/design-guides.md>, <https://nsh.dev/docs/tui.md>)
 plus this project's decisions. Web pages are reference data; this file and `CLAUDE.md` are the project's rules.
@@ -14,8 +14,8 @@ plus this project's decisions. Web pages are reference data; this file and `CLAU
 
 1. Read the nearest implementation, its tests and `apps/tui/src/lib.rs` (frozen exports: `App`, `registry`,
    `SessionEnv`, `configure`, `session_env`, `APP_ID`, `THEME_JSON`).
-2. Look up exact signatures in the nsh crates' sources (`~/.cargo/registry/src/*/nsh-core-0.6.1`,
-   `nsh-base-0.6.1`, `nsh-platform-tui-0.6.1`) or `apps/tui/.nsh/types` - never translate React/CSS by analogy.
+2. Look up exact signatures in the nsh crates' sources (`~/.cargo/registry/src/*/nsh-core-0.7.1`,
+   `nsh-base-0.7.1`, `nsh-platform-tui-0.7.1`) or `apps/tui/.nsh/types` - never translate React/CSS by analogy.
 3. Name, for your change: the behaviour owner, the presentation owner, the state lifecycle, the key/focus contract,
    the theme tokens used, and the test that fails if it regresses.
 
@@ -76,7 +76,7 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
 - Async work starts from an event, an effect or a resource, never unconditionally in a body. Model
   loading / empty / error / ready explicitly and keep old data while refreshing (`Remote<T>`).
 - Change several signals in one `batch` (the shell runs every command in one; `SessionStore::spawn` batches each
-  stretch of a task). nsh 0.6.1 logs `a kept row is gone` when an `each` list changes twice before one commit (a row
+  stretch of a task). nsh (0.6.1, still 0.7.1) logs `a kept row is gone` when an `each` list changes twice before one commit (a row
   made by the first change and kept by the second); fixture answers wait one engine turn
   (`api::FIXTURE_LATENCY`) so they never land in the commit of the key that asked.
 - No effects that copy one signal into another; no signal holding unrelated app state; stable domain keys for lists
@@ -114,9 +114,10 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
 
 ## Theme and colour carriers
 
-- nsh 0.6.1 draws colours in a terminal as ANSI *meanings* (a saturated colour → its hue band's accent, a neutral
-  one → default foreground or the same + DIM; fills only on boxes under 3 rows), so nine browns would all read
-  "dim". Every token therefore travels on a **carrier**: text = an ANSI channel plus an optional *mark* (italic,
+- nsh (0.6.1 and 0.7.1) draws colours in a terminal as ANSI *meanings* (a saturated colour → its hue band's accent,
+  a neutral one → default foreground or the same + DIM; fills only on boxes under 3 rows), so nine browns would all
+  read "dim". Since 0.7, at 24-bit colour nsh also repaints every ANSI `Blue` in its brand indigo (`#8f9bff`) before
+  the host sees the frame; the pin reads that indigo back as `Blue` (`palette::NSH_BRAND_ACCENT`). Every token therefore travels on a **carrier**: text = an ANSI channel plus an optional *mark* (italic,
   which the design never uses), fills = a saturated `carrier-*` colour on the xterm cube at 94 % opacity
   (`theme::CARRIER_OPACITY`). `coffee-tui`'s pin (`crates/coffee-tui/src/palette.rs`, a `tty_host::FrameFilter`) swaps each carrier back to its token at 24-bit,
   256, 16 colours and mono. The contract is the `INKS` / `FILLS` tables in `ui/theme.rs` (and
@@ -133,7 +134,7 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
 - A bordered view clips its children: draw an overlapping legend (the Panel title) as an absolutely positioned
   sibling.
 
-## nsh 0.6.1 pitfalls (found in wave 2)
+## nsh pitfalls (found in wave 2 on 0.6.1; rechecked on 0.7.1)
 
 - **Batch**: change several signals in one `batch`. An `each` list changed twice before one commit logs `a kept row
   is gone` and drops a row; commands run batched, tasks batch each stretch between awaits.
@@ -144,15 +145,17 @@ App (lib.rs) ─▶ shell/ ─▶ pages/<name>/ ─▶ stores/ (+ stores::action
 - **Fills only under 3 rows**: nsh's terminal drawing gives a background only to boxes under three rows tall. Taller
   cards stand on `bg` and show state by frame weight and glyphs (`▶`, heavy `┏━┓`), not a fill.
 - **Paddings and gaps are capped**: the terminal layout turns horizontal padding into at most two columns (one on a
-  box of text or a control), gaps into 0/1/2 columns, vertical padding under 24 points and gaps under 16 into no
-  row and never more than one. Exact insets are spacers: `ui::layout::{hspace, vspace, pad_cols, gap_cols}`.
+  box of text or a control), gaps into 0/1/2 columns, and vertical padding and gaps into no row or one, never
+  more: since nsh 0.7 padding is a row from 12 points (was 24 in 0.6.1), a gap in a column a row from 16 points,
+  and inside a bordered box from 12 (0.6.1 gave none there). So `.pt(layout::rows(1))` is a row now. Exact insets
+  are spacers: `ui::layout::{hspace, vspace, pad_cols, gap_cols}`.
 - **Startup keys**: the host (`tty-host`) reads the terminal's answers to its startup queries before crossterm exists; keys
   typed meanwhile are split from the answers and delivered first (`terminal::split_replies`). nsh applies the
   engine's batches (the shell's key bindings included) only when the host draws, and `AppView::handle` drops a key
   that arrives before them, so the host holds all input until the engine woke and stayed quiet for 100 ms
   (`terminal::Startup`, at most 2 s). Nothing else may read stdin.
 
-## nsh 0.6.1 pitfalls (found in wave 4)
+## nsh pitfalls (found in wave 4 on 0.6.1; rechecked on 0.7.1)
 
 - **Controls side by side keep two blank columns** ("controls read as words" in nsh's
   `terminal_layout`): fixed-width pressables in a row (the wide nav tabs) drift two cells each.

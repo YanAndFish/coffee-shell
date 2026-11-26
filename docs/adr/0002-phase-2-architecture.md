@@ -70,6 +70,11 @@ xterm 色立方上的 `carrier-*` 颜色），`coffee-host` 在每帧渲染后�
 载体 + 钉色让设计稿的颜色在真彩终端上逐位准确，又不丢掉 16 色与单色下的可读性（状态始终是字形 + 属性，
 不只靠颜色）。代价：新颜色必须先在载体表里有一行；nsh 升级若改了映射，`crates/coffee-host/tests/pin_render.rs` 会失败。
 
+> **注（升级到 nsh 0.7.1 时复核）**：映射本身没变（色相带、默认前景 / + DIM、3 行以下才画底色、无表面时悬停 / 按下
+> 带取白在黑上的 0.10 / 0.18）。新增一步：真彩下 nsh 在交给宿主之前把它画的所有 ANSI `Blue`（它自己的焦点标记，
+> 也包括我们 `Blue` 通道的载体）改成品牌靛蓝 `#8f9bff`，`Blue` 底上的字改成 `#11111b`。钉色先把这两个值读回
+> `Blue`（`crates/coffee-tui/src/palette.rs` 的 `NSH_BRAND_ACCENT`），载体表与 `pin_render.rs` 的期望颜色不变。
+
 ## 5. 夹具传输：没有后端也能开发界面
 
 **决定**：`COFFEE_API_URL=fixture:<场景>`（或存储键 `coffee.transport`）让 `coffee-tui` 不连网络，
@@ -114,4 +119,4 @@ vitest 不收这些文件（`vitest.config.ts`）。
 - 安全边界在内部密钥：泄露它等于可以伪造任意公钥指纹（记住我）与客户端地址（限流）。它只在 sshd 与后端
   的环境里，从不记日志（`scripts/e2e` 每个流程都检查）。
 - 颜色、夹具、每画面一测与端到端驱动都假定 nsh 0.6.1 的行为；升级 nsh 时先跑 `pin_render.rs`、
-  `pnpm test:tui` 与 `pnpm test:e2e:real`。
+  `pnpm test:tui` 与 `pnpm test:e2e:real`（升级到 0.7.1 时照此做过，见第 4 节的注）。

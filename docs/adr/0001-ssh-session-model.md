@@ -169,7 +169,7 @@ CPU）。同一台机器（Apple M1，8 核，macOS 27.2），release `coffee-ss
 
   OpenSSH 默认不转发 `COLORTERM`（macOS 自带配置只 `SendEnv LANG LC_*`），而 `TERM` 原样到达，所以第 4 条
   让 kitty、Ghostty、foot、Alacritty、WezTerm、rio 用原版 `ssh` 也是真彩（同 nsh-tui-host 0.6.1 的
-  `truecolor_brand`；`TERM_PROGRAM` 等经 SSH 到不了，只对本地运行有用）。
+  `truecolor_brand`，0.7.1 未变；`TERM_PROGRAM` 等经 SSH 到不了，只对本地运行有用）。
   第 5 条只在“回答能改变结果”时才问：在已有的启动查询里、DA1 之前加两个 `XTGETTCAP` 请求
   （`DCS + q 524742 ST` 问 `RGB`、`DCS + q 5463 ST` 问 `Tc`，分开发，因为 xterm 遇到第一个不认识的名字就
   停）。终端按序回答，答复先于 DA1 到达，所以**不增加等待**（DA1 一到即结束，上限仍是 1.5 秒）；只有

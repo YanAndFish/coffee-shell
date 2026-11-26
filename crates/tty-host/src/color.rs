@@ -95,7 +95,7 @@ impl Choice {
 }
 
 /// Whether `term` (lower case) or a local terminal's own variables name a terminal known
-/// to draw 24-bit colour (as nsh-tui-host 0.6.1's `truecolor_brand` reads them).
+/// to draw 24-bit colour (as nsh-tui-host's `truecolor_brand` reads them, unchanged from 0.6.1 to 0.7.1).
 pub fn brand(term: &str, var: &impl Fn(&str) -> Option<String>) -> bool {
   const IN_TERM: [&str; 6] = ["kitty", "ghostty", "alacritty", "foot", "wezterm", "rio"];
   const PROGRAMS: [&str; 7] = [

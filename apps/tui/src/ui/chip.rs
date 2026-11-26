@@ -14,7 +14,7 @@
 //! `disabled` and struck through, its note says `缺货`, and presses skip it. The source's
 //! `.t-filter` list is [`super::toggle::radio`].
 //!
-//! A chip's box is exactly [`chip_width`] cells: nsh 0.6.1 lays out the bare row of its
+//! A chip's box is exactly [`chip_width`] cells: nsh (0.6.1, still 0.7.1) lays out the bare row of its
 //! pieces one cell wider than it draws, which doubled the one-cell gap between options.
 
 use nsh_core::prelude::*;

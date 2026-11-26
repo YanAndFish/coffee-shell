@@ -1,4 +1,4 @@
-//! The palette pin over what nsh 0.6.1 really draws: probe components in the app's theme,
+//! The palette pin over what nsh (0.7.1) really draws: probe components in the app's theme,
 //! rendered headless at each colour depth, then pinned as `coffee-tui` pins it.
 //!
 //! [`Swatches`] draws the theme's own colours the way nsh sees them; [`Tokens`] draws every

@@ -2,7 +2,11 @@
 //!
 //! Adapted from nsh's own development host (`nsh-tui-host` 0.6.1, Apache-2.0:
 //! `terminal.rs`, `terminal/unix.rs`, `shutdown.rs`), with `rustix` and `signal-hook` in
-//! place of raw `libc` calls so this crate needs no `unsafe`:
+//! place of raw `libc` calls so this crate needs no `unsafe`. Compared with 0.7.1: its only
+//! change there is the kitty graphics query (`ESC _ G … a=q`) and the cell size in pixels
+//! (`CSI 16 t`, else `TIOCGWINSZ`), which feed nsh 0.7's pictures; the shop draws none, so
+//! the startup query leaves them out (two fewer questions to every SSH client) and nsh
+//! would draw a picture as half blocks (`Graphics::Blocks`, the default).
 //!
 //! - SIGHUP, SIGTERM and SIGINT set a flag; the run loop sees it within one poll and
 //!   leaves, restoring the terminal ([`Shutdown`]).

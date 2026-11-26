@@ -11,7 +11,7 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
 ## 1. Find the spec
 
 - Terminal spec of every component: `docs/design/components.md`, including the table **实现与规格的差异** at its end
-  (what nsh 0.6.1 cannot draw and what `ui/` does instead). Tokens: `docs/design/tokens.md`, including **终端载体**.
+  (what nsh cannot draw and what `ui/` does instead). Tokens: `docs/design/tokens.md`, including **终端载体**.
 - Source: `docs/design/raw/design-system/components/<Name>/README.md` and `components/bundle.css` (class prefix
   `t-`). Screens that use it: `docs/design/screens/*.md` (160×50 and 80×24 mocks with exact cells).
 - Look at the gallery first: it shows every component in every state.
@@ -55,7 +55,7 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
   `KeyOptions { when: When::Always, .. }`.
 - A dialog is an overlay with a `DialogFocus` ring (the focus trap); its keys stay in the command table.
 
-## 4. Write it — the nsh 0.6.1 terminal rules that bite
+## 4. Write it — the nsh 0.7.1 terminal rules that bite
 
 1. `apps/tui/src/ui/<name>.rs` (snake_case file), a plain `fn` returning `View`/`AnyElement` or a builder implementing
    `IntoElement` (`Button`). `#[component]` only for a root (`UiGallery`). Rustdoc: purpose, the drawing in a `text`
@@ -65,8 +65,8 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
    `FILLS`, in `docs/design/tokens.md`, and a case in `crates/coffee-tui/tests/pin_render.rs`.
 3. **Frames**: nsh draws only thin borders and only on boxes it deems cards; use `frame()` (glyph frames) for anything
    else, with a known height when you have one.
-4. **Spacing**: horizontal padding is at most 2 columns (one on a box of text), vertical padding under 24 pt and gaps
-   under 16 pt are 0 rows, gaps inside framed boxes are 0: use `hspace(n)` / `vspace(n)` for exact cells, `gap_cols(1|2)`
+4. **Spacing**: horizontal padding is at most 2 columns (one on a box of text), vertical padding under 12 pt and gaps
+   under 16 pt (12 pt inside a framed box) are 0 rows, and none is more than 1 row: use `hspace(n)` / `vspace(n)` for exact cells, `gap_cols(1|2)`
    for row gaps. An explicit height only counts on an empty box (or one whose children are all absolute).
 5. **Fills** are drawn only on boxes under 3 rows. Never put a saturated fill on a pressable view (nsh paints its text
    in the fill's accent): put the fill on a child.

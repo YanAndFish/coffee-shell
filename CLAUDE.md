@@ -1,7 +1,7 @@
 # ROAST/TTY 终端咖啡馆 — notes for coding agents
 
 A **demo** coffee-bean shop you reach with `ssh -p 2222 localhost`: no SSH password, no payment, nothing ships. A
-Rust TUI built with [nsh](https://nsh.dev) 0.6.1 (Rust mode) runs one process per SSH session and talks to a local
+Rust TUI built with [nsh](https://nsh.dev) 0.7.1 (Rust mode) runs one process per SSH session and talks to a local
 Node backend. Accounts are in-app (user name + password); an SSH key only “remembers” a login. The UI must say it is
 a demo at all times.
 
@@ -103,7 +103,7 @@ commands, view, dialogs }` in `pages::PAGES`. A screen worker edits only its pag
 
 | Tool                                   | Version                                      | Why                                                     |
 | -------------------------------------- | -------------------------------------------- | ------------------------------------------------------- |
-| nsh CLI + crates                       | 0.6.1 (`=0.6.1` in `Cargo.toml`)             | API moves fast; CLI and crates must match               |
+| nsh CLI + crates                       | 0.7.1 (`=0.7.1` in `Cargo.toml`)             | API moves fast; CLI and crates must match               |
 | Rust                                   | 1.99.1 (`rust-toolchain.toml`), edition 2024 |                                                         |
 | Node / pnpm                            | 26 / 12.9.1                                  | Node 26 runs the TS sources directly (type stripping)   |
 | TypeScript                             | 6.0.3                                        | TS 7 breaks typescript-eslint 8                         |

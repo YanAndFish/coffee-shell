@@ -1,4 +1,4 @@
-//! `tty-host`: runs an nsh 0.6.1 Rust-mode root in the terminal this process was started
+//! `tty-host`: runs an nsh 0.7.1 Rust-mode root in the terminal this process was started
 //! in.
 //!
 //! One process serves one terminal: locally any terminal, behind an SSH gateway the PTY of

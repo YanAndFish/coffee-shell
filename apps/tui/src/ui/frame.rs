@@ -7,7 +7,7 @@
 //! ╰───────────╯   ┗━━━━━━━━━━━━━┛   ╚═════════════════╝   ╰╌╌╌╌╌╌╌╌╌╯
 //! ```
 //!
-//! nsh 0.6.1 draws a view's border itself only as a thin single line, only where its
+//! nsh (0.6.1, 0.7.1) draws a view's border itself only as a thin single line, only where its
 //! terminal layout gives the border a cell (never on a small box), and only in a tone nsh
 //! can tell apart. These frames are text instead, so they take any style (heavy for focus,
 //! double for dialogs, dashed for the "add" card), any tone, and a legend inline. The

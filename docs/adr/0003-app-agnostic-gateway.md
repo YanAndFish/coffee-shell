@@ -29,7 +29,7 @@ ADR 0001 的会话模型、认证方式与度量结论不变，变的是名字�
 | ---------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `crates/tty-gateway`（原 `coffee-sshd`） | lib + bin `tty-gateway`   | SSH 网关，不含任何咖啡馆知识                                                                         |
 | `crates/tty-gateway-testkit`（新）       | lib（仅 dev 依赖）        | russh 测试客户端 + `vt100` 终端 + 进程内 `TestServer` + 探针程序                                     |
-| `crates/tty-host`（新）                  | lib                       | 通用 nsh 0.6.1 终端宿主：`terminal.rs`、`color.rs`、`clipboard.rs`、`interrupt.rs` 与运行循环        |
+| `crates/tty-host`（新）                  | lib                       | 通用 nsh 终端宿主（现 0.7.1）：`terminal.rs`、`color.rs`、`clipboard.rs`、`interrupt.rs` 与运行循环  |
 | `crates/coffee-tui`（原 `coffee-host`）  | bin `coffee-tui` + 小 lib | 咖啡馆入口：`session_env_from_process`、画廊开关、`Root`、`coffee_app::configure`、钉色 `palette.rs` |
 
 咖啡馆的网关配置是 `deploy/gateway.toml`，`pnpm dev`、Docker 镜像与 `scripts/e2e` 共用这一份。

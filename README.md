@@ -2,7 +2,7 @@
 
 A coffee-bean shop you reach over SSH: `ssh -p 2222 localhost`, no SSH password. Inside, a full-screen terminal UI
 lets you browse eight beans, choose weight, grind and pack, fill a cart, keep an address book, check out and see
-your orders. It is a Rust TUI built with [nsh](https://nsh.dev) 0.6.1 (Rust mode), one process per SSH session behind
+your orders. It is a Rust TUI built with [nsh](https://nsh.dev) 0.7.1 (Rust mode), one process per SSH session behind
 an application-agnostic Rust SSH gateway (`tty-gateway`), talking to a Node backend (Koa + Prisma + SQLite).
 
 > **Demo only.** This is not a real shop: nothing is sold, charged or shipped, and orders complete without payment.
@@ -144,9 +144,9 @@ pnpm --filter @coffee/server db:seed                                    # add mi
 pnpm --filter @coffee/contract generate                                 # regenerate openapi.json and fixtures
 ```
 
-The nsh CLI 0.6.1 with its `tui` component is needed only for `check:tui` / `test:tui`: `brew install
+The nsh CLI 0.7.1 with its `tui` component is needed only for `check:tui` / `test:tui`: `brew install
 longbridge/tap/nsh` (macOS) or the installer from [nsh.dev](https://nsh.dev/docs/installation.md) with
-`NSH_VERSION=v0.6.1`, then `nsh component add tui`.
+`NSH_VERSION=v0.7.1`, then `nsh component add tui`.
 
 ## The gateway: a reverse proxy for terminal programs
 

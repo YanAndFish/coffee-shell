@@ -54,7 +54,7 @@
 
 ### 终端载体（carrier）
 
-nsh 0.6.1 在终端里不画颜色值，只画 ANSI 含义：饱和色变成所在色相带的强调色（`Yellow` 琥珀、`Green` 薄荷、`Red` 珊瑚、`Cyan`、`Blue`、`Magenta`），中性色变成默认前景或“默认前景 + DIM”，底色只在 3 行以下的盒子上画（饱和不透明色画准确 RGB / 256 色索引，中性色画标准灰）。九种棕色在它那里都是“暗淡”。所以每个 token 经由一个能穿过这套映射的**载体**送到终端，`coffee-tui` 的钉色（`crates/coffee-tui/src/palette.rs`，`tty-host` 的帧过滤器）再在每种色深下换回 token。载体表在 `apps/tui/src/ui/theme.rs`（`INKS`、`FILLS`），钉色从它和 `theme.json` 构建自己，两边只有这一处约定。
+nsh（0.6.1 与 0.7.1）在终端里不画颜色值，只画 ANSI 含义：饱和色变成所在色相带的强调色（`Yellow` 琥珀、`Green` 薄荷、`Red` 珊瑚、`Cyan`、`Blue`、`Magenta`），中性色变成默认前景或“默认前景 + DIM”，底色只在 3 行以下的盒子上画（饱和不透明色画准确 RGB / 256 色索引，中性色画标准灰）。九种棕色在它那里都是“暗淡”。0.7 起真彩下它还把画出的 ANSI `Blue` 一律改成品牌靛蓝 `#8f9bff`，钉色先把靛蓝读回 `Blue`。所以每个 token 经由一个能穿过这套映射的**载体**送到终端，`coffee-tui` 的钉色（`crates/coffee-tui/src/palette.rs`，`tty-host` 的帧过滤器）再在每种色深下换回 token。载体表在 `apps/tui/src/ui/theme.rs`（`INKS`、`FILLS`），钉色从它和 `theme.json` 构建自己，两边只有这一处约定。
 
 - **文字 / 线条**：一个通道（nsh 给出的 ANSI 含义）+ 可选的**标记**——斜体属性（设计里从不用斜体）。钉色去掉标记，所以终端里不会出现斜体；单色下颜色全无，但属性还在，带标记的就加暗淡。
 - **底色**：一个饱和、正好落在 xterm 色立方上的 `carrier-*` 颜色，以 94% 不透明度画（`theme::CARRIER_OPACITY`：足以让 nsh 原样画出它，又不会被当作文字的底或主按钮的填充），nsh 原样画出（真彩是 RGB，256 色是该立方格），钉色换回 token。
