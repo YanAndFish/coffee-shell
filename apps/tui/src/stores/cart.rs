@@ -167,7 +167,7 @@ pub struct CartStore {
   checkout: Signal<Option<CheckoutStep>>,
   attempt: Signal<(u64, Option<String>)>,
   receipt: Signal<Option<Order>>,
-  steps: Signal<Vec<(String, i16)>>,
+  steps: Signal<Vec<(String, i8)>>,
   stepping: Signal<bool>,
 }
 
@@ -504,16 +504,12 @@ impl CartStore {
   }
 
   /// `←` `→`: line `sku`'s quantity ±1. Steps go one request at a time: a step pressed
-  /// while one is out waits for its answer and adds up with the others pressed meanwhile,
-  /// then goes from the quantity the server answered (two quick `→` on 1 make 3). A failed
-  /// request drops the steps still waiting (they counted on it).
+  /// while one is out waits for its answer, then goes from the quantity the server answered
+  /// (two quick `→` on 1 make 3). Each press is its own step, clamped to 1 … the line's
+  /// most, in the order pressed (`→ → ←` on 8 of 9 ends on 8); one that changes nothing
+  /// sends nothing. A failed request drops the steps still waiting (they counted on it).
   pub async fn step_quantity(self, sku: String, delta: i8) -> Result<(), ApiFailure> {
-    self.steps.update(
-      |steps| match steps.iter_mut().find(|(waiting, _)| *waiting == sku) {
-        Some((_, sum)) => *sum += i16::from(delta),
-        None => steps.push((sku, i16::from(delta))),
-      },
-    );
+    self.steps.update(|steps| steps.push((sku, delta)));
     if self.stepping.get_untracked() {
       // The step under way sends it.
       return Ok(());
@@ -527,8 +523,8 @@ impl CartStore {
       let Some((_, line)) = self.line(&sku) else {
         continue;
       };
-      let next = (i16::from(line.quantity) + delta).clamp(1, i16::from(MAX_LINE_QUANTITY));
-      let next = u8::try_from(next).unwrap_or(MAX_LINE_QUANTITY);
+      let most = line.max_quantity.clamp(1, MAX_LINE_QUANTITY);
+      let next = line.quantity.saturating_add_signed(delta).clamp(1, most);
       if next == line.quantity {
         continue;
       }
@@ -841,6 +837,13 @@ mod tests {
     serde_json::to_string(&cart).unwrap()
   }
 
+  /// Reloads the member cart with the pink line at `quantity`.
+  fn cart_with_quantity(script: &Script, cart: CartStore, quantity: u8) {
+    let mut load = Stepped::start(cart.fetch());
+    script.answer(0, 200, member_cart(PINK, quantity, 100));
+    assert!(load.poll().is_some());
+  }
+
   fn sign_in_scripted(script: &Script, session: SessionStore, cart: CartStore) {
     session.signed_in(serde_json::from_str(LOGIN).unwrap());
     let mut load = Stepped::start(cart.fetch());
@@ -1061,6 +1064,21 @@ mod tests {
       assert!(first.finish().unwrap_err().is_network());
       assert!(script.calls().is_empty());
       assert_eq!(cart.cursor_line().map(|l| l.quantity), Some(3));
+      // At the line's most (9): `→` out, then `→` `←` pressed. Each press clamps on its own:
+      // the second `→` changes nothing, the `←` goes back to 8.
+      cart_with_quantity(&script, cart, 8);
+      let mut first = Stepped::start(cart.step_quantity(PINK.into(), 1));
+      now_or_never(cart.step_quantity(PINK.into(), 1)).unwrap();
+      now_or_never(cart.step_quantity(PINK.into(), -1)).unwrap();
+      assert_eq!(script.body(0)["quantity"], 9);
+      script.answer(0, 200, member_cart(PINK, 9, 900));
+      assert!(first.poll().is_none(), "the `←` goes out");
+      assert_eq!(script.body(0)["quantity"], 8);
+      script.answer(0, 200, member_cart(PINK, 8, 800));
+      first.finish().unwrap();
+      assert!(script.calls().is_empty());
+      assert_eq!(cart.cursor_line().map(|l| l.quantity), Some(8));
+      cart_with_quantity(&script, cart, 3);
       // `→` then `←` before the answer: nothing more to send.
       let mut first = Stepped::start(cart.step_quantity(PINK.into(), 1));
       now_or_never(cart.step_quantity(PINK.into(), -1)).unwrap();

@@ -664,12 +664,10 @@ async fn run_session(task: SessionTask) {
     }
     End::Stopping => {
       feeder.abort();
-      // SIGTERM: the program restores the client's terminal and leaves (coffee-host does
-      // on SIGHUP, SIGTERM and SIGINT); its last output, that restore, is still in the PTY.
+      // SIGTERM: coffee-host restores the client's terminal and leaves (it does on SIGHUP,
+      // SIGTERM and SIGINT); its last output, that restore, is still in the PTY.
       let how = stop(&mut child, pid, rustix::process::Signal::TERM).await;
-      let drained = tokio::time::timeout(Duration::from_millis(500), &mut pump)
-        .await
-        .is_ok();
+      let _ = tokio::time::timeout(Duration::from_millis(500), &mut pump).await;
       pump.abort();
       tracing::info!(
         conn,
@@ -678,14 +676,11 @@ async fn run_session(task: SessionTask) {
         seconds = started.elapsed().as_secs(),
         "session ended: server stopping"
       );
-      if how == "killed" || !drained {
-        // Its own restore may be missing: undo what it may have left.
-        let _ = handle
-          .data(channel, Bytes::from_static(TERMINAL_RESET.as_bytes()))
-          .await;
-      }
+      // Whatever the program did on its way out (restored, died on the signal, was
+      // killed, said nothing in time), the notice goes on a restored screen.
+      let notice = format!("{TERMINAL_RESET}\r\n{STOPPING_NOTICE}");
       // The connection task disconnects once this task is done.
-      tell_and_close(&handle, channel, STOPPING_NOTICE, 143).await;
+      tell_and_close(&handle, channel, &notice, 143).await;
     }
   }
 }

@@ -247,6 +247,34 @@ async fn a_stopping_server_restores_the_client_terminal_before_it_closes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_program_that_dies_on_sigterm_without_cleanup_still_leaves_a_restored_screen() {
+  // The probe is a shell loop: SIGTERM kills it at once, and it restores nothing.
+  let dir = temp_dir("stop-no-cleanup");
+  let mut server = TestServer::start(probe_bin(&dir), |_| {}).await;
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let mut terminal = Terminal::open(&handle, 80, 24).await;
+  assert!(terminal.wait_raw("SIZE=24 80", WAIT).await);
+  let shown = terminal.raw.len();
+  let served = server.stop();
+  assert!(terminal.wait_closed(Duration::from_secs(5)).await);
+  let after = String::from_utf8_lossy(&terminal.raw[shown..]).into_owned();
+  let reset = after
+    .find("\x1b[?1049l\x1b[?25h\x1b[0m")
+    .unwrap_or_else(|| panic!("no terminal reset: {after:?}"));
+  let told = after
+    .find("服务正在停止")
+    .unwrap_or_else(|| panic!("no notice: {after:?}"));
+  assert!(reset < told, "{after:?}");
+  assert_eq!(terminal.exit_status, Some(143));
+  tokio::time::timeout(Duration::from_secs(5), served)
+    .await
+    .expect("serve returns once the connections are gone")
+    .unwrap();
+  drop(handle);
+  let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn exec_sftp_and_forwarding_are_refused() {
   let dir = temp_dir("refused");
   let server = TestServer::start(probe_bin(&dir), |_| {}).await;

@@ -264,10 +264,11 @@ nsh 默认“有选区则复制，否则立即退出”。经 SSH 时 raw 模式
   “ROAST/TTY 出错了，会话已结束（代码 N）。请重新连接；如果一直这样，请稍后再试。”，以该代码关闭通道，
   日志 `warn`。正常退出（0）不提示。
 - 网关停止（SIGTERM / Ctrl+C）：不再接受新连接；每个会话的程序收到 SIGTERM，自己恢复客户端终端（离开
-  备用屏等）后退出（1 秒内不退则 SIGKILL，并补发上面的终端复位），它最后的输出先发完，再显示
-  “ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。”，以状态 143 关闭通道，然后断开连接；还在登录的
-  连接直接断开。全部连接结束（至多约 3.5 秒）后进程退出。此前进程直接退出，客户端停在备用屏里。e2e
-  `a_stopping_server_restores_the_client_terminal_before_it_closes` 固定了这一点。
+  备用屏等）后退出（1 秒内不退则 SIGKILL），它最后的输出先发完；然后 sshd 总是再发一次上面的终端复位
+  （程序可能被信号直接杀死、什么都没恢复），再显示“ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。”，
+  以状态 143 关闭通道，然后断开连接；还在登录的连接直接断开。全部连接结束（至多约 3.5 秒）后进程退出。
+  此前进程直接退出，客户端停在备用屏里。e2e `a_stopping_server_restores_the_client_terminal_before_it_closes`
+  和 `a_program_that_dies_on_sigterm_without_cleanup_still_leaves_a_restored_screen` 固定了这一点。
 
 ### 空闲计时的缺陷（第二阶段修复）
 
