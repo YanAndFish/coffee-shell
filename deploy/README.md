@@ -72,11 +72,14 @@ docker run --rm -v roast-tty-db:/data -e COFFEE_INTERNAL_KEY=… roast-tty-serve
 
 ## Gateway settings (the config file)
 
-`tty-gateway --config <file>` reads one TOML file; the image holds `deploy/gateway.toml` and points
-`TTY_GATEWAY_CONFIG` at it. The gateway knows nothing about the shop: the shop is that file (its banner, its Chinese
-messages, its routes and their environment). `tty-gateway --check --config <file>` checks a file and prints its
-routes (environment names only, never values); exit status 1 means the file is broken, a missing program is only a
-warning. Unknown keys are errors. Durations are `"500ms"`, `"30s"`, `"15m"`, `"2h"` or `"0"`.
+`tty-gateway --config <file>` reads one TOML file; the image holds `deploy/gateway.toml` at
+`/etc/tty-gateway/gateway.toml` and sets `TTY_GATEWAY_CONFIG` to it. The gateway knows nothing about the shop: the
+shop is that file (its banner, its Chinese messages, its routes and their environment). `tty-gateway --check --config
+<file>` checks a file and prints its routes (environment names only, never values); exit status 1 means the file is
+broken (the message names the key), a missing program is only a warning. CI runs `--check` on the built binary and in
+the image (`docker run --rm roast-tty-ssh --check`). Unknown keys are errors. Durations are `"500ms"`, `"30s"`,
+`"15m"`, `"2h"` or `"0"`. Relative paths (`host_key`, a `command` with a `/`, `cwd`) resolve against the gateway's
+working directory when the file is read.
 
 | Key                                            | Default                         | Meaning                                                                                        |
 | ---------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -91,7 +94,7 @@ warning. Unknown keys are errors. Durations are `"500ms"`, `"30s"`, `"15m"`, `"2
 | `limits.connections_per_minute`                | `30`                            | new connections per client address per minute, in bursts of as many (`0`: off)                 |
 | `limits.auth_timeout`                          | `30s`                           | from accept to a running session (handshake, login, shell request); at least `1s`              |
 | `limits.idle_timeout`                          | `15m`                           | no input, from the session's first output, before it closes (`0`: never; status 124)           |
-| `limits.max_session_time`                      | `0` (never)                     | a session's longest life, input or not (status 124)                                            |
+| `limits.max_session_time`                      | `0` (never)                     | a session's longest life from its start; typing does not extend it (status 124)                |
 | `messages.*`                                   | neutral English                 | what clients are told (below)                                                                  |
 | `routes.NAME.users`                            | `[NAME]`                        | the SSH user names of this route (exact; one name in one route only)                           |
 | `routes.NAME.command`                          | required                        | the program and its arguments; a bare name is looked for next to `tty-gateway`, then on `PATH` |
@@ -106,11 +109,21 @@ The messages: `no_pty` (a shell without a PTY), `unavailable` (the program canno
 non-zero exit status), `idle` (`{minutes}`), `time_limit`, `full`, `full_per_ip`, `full_route` (`{max}`: the cap
 reached) and `shutting_down`.
 
+How a session ends, and its exit status: the program exits (its own status; a non-zero one also gets a terminal
+reset and `crashed`); idle or `max_session_time` (124, with `idle` / `time_limit`); the client disconnects: the
+program's process group gets SIGHUP, then SIGKILL after 1 s; the client sends EOF (`ssh -tt … </dev/null`): the same,
+then up to 0.3 s of the last output and the channel closes with the program's own status (0 for `coffee-tui`, which
+leaves cleanly on SIGHUP; 129 or 137 for a program the signal kills); input the program does not read, past a 1 MiB
+budget: the connection is closed. Every call on the client's connection on the way out has a 250 ms timeout, so a
+client that stopped reading holds nothing up.
+
 A session's environment starts empty: `PATH`, `HOME`, `TMPDIR`, `USER` and `LOGNAME` from the gateway, the
 client's `TERM` (an odd value becomes `xterm-256color`), `LANG` (the client's if it is UTF-8, else `C.UTF-8`), what the
-client sent that `accept_env` allows, then the route's `env`. Its values take `${user}` (only a plain name of
-`A-Z a-z 0-9 . _ @ + -`, at most 64), `${route}`, `${fingerprint}` (`SHA256:…`, only after a verified key),
-`${client_ip}`, `${env:NAME}` and `${env:NAME:-default}` (the gateway's environment when the file is read). An entry
+client sent that `accept_env` allows (at most 16 variables, plain names and values), then the route's `env`. A client
+can never set `PATH`, `HOME`, `TMPDIR`, `USER`, `LOGNAME`, `TERM` or a name the route's `env` lists (even when that
+entry is left out for this session). The `env` values take `${user}` (only a plain name of `A-Z a-z 0-9 . _ @ + -`,
+at most 64), `${route}`, `${fingerprint}` (`SHA256:…`, only after a verified key), `${client_ip}`, `${env:NAME}` and
+`${env:NAME:-default}` (the gateway's environment when the file is read; an empty value counts as unset). An entry
 whose variable has no value is left out, so a secret given to the gateway reaches only the routes that name it.
 
 The gateway itself reads only these variables:
@@ -127,7 +140,7 @@ The shop's routes in `deploy/gateway.toml`:
 | Route     | Users                               | Session environment (besides `TERM`, `LANG`, …)                                                                             |
 | --------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `coffee`  | `coffee`, `shop`; the default route | `COFFEE_API_URL`, `COFFEE_INTERNAL_KEY`, `COFFEE_COLORS` (from the gateway's), `COFFEE_SSH_FINGERPRINT`, `COFFEE_CLIENT_IP` |
-| `gallery` | `gallery`                           | `COFFEE_UI_GALLERY=1`, `COFFEE_CLIENT_IP`; no internal key                                                                  |
+| `gallery` | `gallery`                           | `COFFEE_UI_GALLERY=1`, `COFFEE_CLIENT_IP`, `COFFEE_COLORS`; no backend URL, no internal key                                 |
 
 Both run `coffee-tui` (next to `tty-gateway` in the image). So compose still passes the app's settings to the
 gateway's environment, and the route hands them on:
@@ -136,11 +149,11 @@ gateway's environment, and the route hands them on:
 | --------------------- | --------------------- | ---------------------------------------------------------------------------- |
 | `COFFEE_API_URL`      | `http://backend:3000` | the backend, for every shop session                                          |
 | `COFFEE_INTERNAL_KEY` | required              | the same key as the backend's; only the `coffee` route gets it; never logged |
-| `COFFEE_COLORS`       | empty (left out)      | force `truecolor` / `256` / `16` / `mono` for every shop session             |
+| `COFFEE_COLORS`       | empty (left out)      | force `truecolor` / `256` / `16` / `mono` for every session (both routes)    |
 | `COFFEE_SSH_PORT`     | `2222`                | the published port on the host                                               |
 
 **Your own configuration**: copy `deploy/gateway.toml`, change what you need (limits, messages, another route) and
-mount it over the image's file, or anywhere with `TTY_GATEWAY_CONFIG` pointing at it:
+mount it read-only over `/etc/tty-gateway/gateway.toml`, or anywhere with `TTY_GATEWAY_CONFIG` pointing at it:
 
 ```yaml
 gateway:
@@ -154,20 +167,25 @@ Check it first: `docker compose -f deploy/compose.yaml run --rm --no-deps gatewa
 `tty-gateway --check --config my-gateway.toml` locally.
 
 **Reload** without dropping anyone: `docker compose -f deploy/compose.yaml kill -s HUP gateway`. The file is read and
-checked again; new connections use it, running sessions keep the configuration they started with, and a broken file
-is logged and ignored (the old configuration stays). `listen` and `host_key` changes are logged and need a restart.
+checked again; new connections use it, running sessions keep the configuration they started with. The log says
+`reloaded config=… changes=routes added … · removed … · changed … · also changed …` (names of routes and tables
+only), or `reload failed: the running configuration stays` with the error. `listen` and `host_key` changes are
+logged (`… changed: restart to apply it`) and need a restart. Limit counters survive a reload.
 
-**Stopping**: `docker compose stop` sends SIGTERM. The gateway stops accepting, tells every session `shutting_down`,
-hangs up each program (SIGHUP to its process group), kills what is left after `server.shutdown_grace` (2 s) and
-closes the connections: at most the grace plus one second, well inside Docker's 10 s before SIGKILL. Keep
-`shutdown_grace` below that if you raise it.
+**Stopping**: `docker compose stop` sends SIGTERM (SIGINT does the same). The gateway logs `shutting down` and
+`draining`, stops accepting, and for every session resets the client's terminal, shows `shutting_down`, sends
+SIGHUP to the program's process group and SIGKILL after `server.shutdown_grace` (2 s); the channel closes with the
+program's own status. Connections still open near the end (grace + 0.7 s) are closed hard; the whole drain is
+bounded by grace + 1 s and ends with `stopped done=… millis=…`. That is well inside Docker's 10 s before SIGKILL;
+keep `shutdown_grace` below about 8 s. A **second** SIGTERM/SIGINT during the drain exits at once with status 1
+(`second signal: exiting now`) and may leave session programs running (orphaned): send one signal and wait.
 
 Connections over the per-address limits are closed before the SSH handshake (logged once per burst, with the
 address). A session refused for the session limits still sees why, in the banner and on the channel.
 
 What the gateway logs at `info`: connections (peer address), logins (method, user name, route and, for keys, the
-SHA256 fingerprint, by design), sessions (user, route, pid, `TERM`, size, how they ended), refusals, reloads and the
-shutdown. Never the internal key, environment values or anything typed.
+SHA256 fingerprint, by design), sessions (user, route, pid, `TERM`, size, how and after how long they ended),
+refusals, reloads and the shutdown. Never the internal key, environment values or anything typed.
 
 Colours: the shop's routes accept only `LANG`, `LC_*` and `COLORTERM` from a client, and OpenSSH sends `COLORTERM` only when
 asked (`ssh -o SendEnv=COLORTERM`). Sessions still get 24-bit colour from a truecolor terminal brand in `TERM` (kitty,
