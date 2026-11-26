@@ -500,6 +500,8 @@ fn modifiers(keys: KeyModifiers) -> Modifiers {
     alt: keys.contains(KeyModifiers::ALT),
     shift: keys.contains(KeyModifiers::SHIFT),
     cmd: keys.contains(KeyModifiers::SUPER),
+    // A terminal does not say whether a character came from AltGr (as nsh-tui-host).
+    alt_graph: false,
   }
 }
 
