@@ -28,7 +28,7 @@ use tokio::{
 
 use crate::{
   config::Config,
-  limits::{Gate, Limits, Slot},
+  limits::{Caps, Gate, Limits, Refusal, Slot},
 };
 
 /// The notice every client sees before logging in (SSH auth banner).
@@ -86,12 +86,8 @@ pub async fn serve(
     ..Default::default()
   });
   let shared = Arc::new(Shared {
-    limits: Limits::new(config.max_sessions, config.max_sessions_per_ip),
-    // Twice the sessions: room for the extra ones to hear why they are refused.
-    gate: Gate::new(
-      config.max_sessions_per_ip.saturating_mul(2),
-      config.connections_per_minute,
-    ),
+    limits: Limits::new(),
+    gate: Gate::new(),
     config,
     next_id: AtomicU64::new(1),
     connections: AtomicUsize::new(0),
@@ -119,7 +115,13 @@ pub async fn serve(
       tracing::warn!(peer = %peer, open, "too many connections; dropped");
       continue;
     }
-    let ticket = match shared.gate.admit(peer.ip(), Instant::now()) {
+    // Twice the sessions: room for the extra ones to hear why they are refused.
+    let ticket = match shared.gate.admit(
+      peer.ip(),
+      Instant::now(),
+      shared.config.max_sessions_per_ip.saturating_mul(2),
+      shared.config.connections_per_minute.unwrap_or(0),
+    ) {
       Ok(ticket) => ticket,
       Err((turned, again)) => {
         if !again {
@@ -311,7 +313,11 @@ impl Connection {
       return;
     };
     // The place is taken only now: a connection that is still logging in holds none.
-    let slot = match self.shared.limits.acquire(self.peer.ip()) {
+    let slot = match self
+      .shared
+      .limits
+      .acquire(self.peer.ip(), "coffee", self.shared.caps(), None)
+    {
       Ok(slot) => slot,
       Err(refusal) => {
         tracing::warn!(
@@ -319,7 +325,7 @@ impl Connection {
           refused = refusal.reason(),
           "session refused"
         );
-        Self::refuse(handle, channel, refusal.message(), 1);
+        Self::refuse(handle, channel, refusal_message(refusal), 1);
         return;
       }
     };
@@ -383,7 +389,26 @@ impl Connection {
   }
 }
 
+/// What the client is told when its session is refused.
+fn refusal_message(refusal: Refusal) -> String {
+  match refusal {
+    Refusal::Full { max } | Refusal::Route { max } => {
+      format!("ROAST/TTY 当前在线会话已满（上限 {max}），请稍后再试。")
+    }
+    Refusal::PerIp { max } => {
+      format!("ROAST/TTY 来自你的地址的会话已达上限（{max} 个），请先关闭其他会话。")
+    }
+  }
+}
+
 impl Shared {
+  fn caps(&self) -> Caps {
+    Caps {
+      max_sessions: self.config.max_sessions,
+      max_sessions_per_ip: self.config.max_sessions_per_ip,
+    }
+  }
+
   fn millis(&self) -> u64 {
     u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
   }
@@ -671,13 +696,13 @@ impl server::Handler for Connection {
 
   async fn authentication_banner(&mut self) -> Result<Option<String>, Self::Error> {
     let mut banner = BANNER.to_owned();
-    if let Err(refusal) = self.shared.limits.check(self.peer.ip()) {
+    if let Err(refusal) = self.shared.limits.check(self.peer.ip(), self.shared.caps()) {
       tracing::info!(
         conn = self.id,
         refused = refusal.reason(),
         "over the limit at login"
       );
-      banner.push_str(&format!("  {}\n\n", refusal.message()));
+      banner.push_str(&format!("  {}\n\n", refusal_message(refusal)));
     }
     Ok(Some(banner))
   }
