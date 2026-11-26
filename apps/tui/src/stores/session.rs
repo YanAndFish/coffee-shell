@@ -565,6 +565,12 @@ impl SessionStore {
     self.expired.get()
   }
 
+  /// Whether a store saw the member session end, untracked: for a flow deciding whether
+  /// to go on (the shell's expiry flow may not have run yet).
+  pub fn expired_untracked(&self) -> bool {
+    self.expired.get_untracked()
+  }
+
   // --- Where to go after login ------------------------------------------------------
 
   /// The route to show after login (tracked): the cart, when checkout sent a guest here.
