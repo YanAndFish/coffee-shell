@@ -97,11 +97,17 @@ pub fn session_env() -> Option<&'static SessionEnv> {
 
 /// The root component: provides the layout and the stores, then the shell (header, page
 /// stack, status bar, too-small guard). A host mounts it with `Root::of::<App>()`.
+///
+/// The shell is the content of the app's one window: since nsh 0.7 a Rust root on a desktop
+/// shows only what it puts in a `window()` (the headless `nsh test` runs open the app as a
+/// Linux desktop), while in a terminal a window's content is simply the screen.
 #[component]
 pub fn App() -> impl IntoElement {
   ui::Layout::provide();
   stores::Stores::provide();
-  shell::shell()
+  nsh_core::element::desktop::window()
+    .id("main")
+    .content(shell::shell)
 }
 
 #[cfg(test)]
