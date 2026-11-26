@@ -1,10 +1,18 @@
 //! `tty-gateway --config <file> [--check]`: passwordless SSH, one program per session,
 //! chosen by the SSH user name. See `tty_gateway::config` for the file.
 
-use std::{path::PathBuf, process::ExitCode, sync::Arc};
+use std::{
+  path::{Path, PathBuf},
+  process::ExitCode,
+  sync::Arc,
+  time::Duration,
+};
 
-use tokio::signal::unix::{SignalKind, signal};
-use tty_gateway::{hostkey, init_logging, load, serve};
+use tokio::{
+  signal::unix::{SignalKind, signal},
+  sync::{oneshot, watch},
+};
+use tty_gateway::{Snapshot, hostkey, init_logging, load, serve};
 
 const USAGE: &str = "\
 usage: tty-gateway --config <file> [--check]
@@ -101,6 +109,7 @@ fn main() -> ExitCode {
     };
   }
   init_logging();
+  install_panic_hook();
   let (snapshot, warnings) = match loaded {
     Ok(loaded) => loaded,
     Err(error) => {
@@ -121,10 +130,29 @@ fn main() -> ExitCode {
       return ExitCode::FAILURE;
     }
   };
-  runtime.block_on(run(config, snapshot))
+  let exe_dir = exe_dir.map(Path::to_owned);
+  let code = runtime.block_on(run(config, exe_dir, snapshot));
+  // Whatever is left (nothing, after a drain) is not waited for.
+  runtime.shutdown_timeout(Duration::from_millis(100));
+  code
 }
 
-async fn run(config: PathBuf, snapshot: tty_gateway::Snapshot) -> ExitCode {
+/// Panics go to the log (with where they happened) like everything else; the task that
+/// panicked ends, the others go on.
+fn install_panic_hook() {
+  std::panic::set_hook(Box::new(|info| {
+    let payload = info.payload();
+    let message = payload
+      .downcast_ref::<&str>()
+      .map(|text| (*text).to_owned())
+      .or_else(|| payload.downcast_ref::<String>().cloned())
+      .unwrap_or_default();
+    let location = info.location().map(ToString::to_string).unwrap_or_default();
+    tracing::error!(%location, %message, "panic");
+  }));
+}
+
+async fn run(config: PathBuf, exe_dir: Option<PathBuf>, snapshot: Snapshot) -> ExitCode {
   let server = &snapshot.server;
   let (key, generated) = match hostkey::load_or_generate(&server.host_key) {
     Ok(key) => key,
@@ -161,19 +189,49 @@ async fn run(config: PathBuf, snapshot: tty_gateway::Snapshot) -> ExitCode {
     max_sessions_per_ip = snapshot.limits.max_sessions_per_ip,
     "listening"
   );
-  // SIGHUP reloads come later; for now the first snapshot stays.
-  let (_snapshots, receiver) = tokio::sync::watch::channel(Arc::new(snapshot));
-  let shutdown = async {
-    let mut term = signal(SignalKind::terminate()).ok();
-    tokio::select! {
-      _ = tokio::signal::ctrl_c() => {}
-      () = async {
-        match term.as_mut() {
-          Some(term) => { term.recv().await; }
-          None => std::future::pending::<()>().await,
+  let (listen, host_key) = (server.listen, server.host_key.clone());
+  let (snapshots, receiver) = watch::channel(Arc::new(snapshot));
+
+  // SIGHUP: read the file again; new connections get it, open ones keep theirs.
+  match signal(SignalKind::hangup()) {
+    Ok(mut hangups) => {
+      tokio::spawn(async move {
+        while hangups.recv().await.is_some() {
+          reload(&config, exe_dir.as_deref(), &snapshots, listen, &host_key);
         }
-      } => {}
+      });
     }
+    Err(error) => tracing::warn!(%error, "no SIGHUP handler: reloads are off"),
+  }
+
+  // SIGTERM or SIGINT: drain; a second one during the drain: out at once.
+  let (first, first_seen) = oneshot::channel::<()>();
+  match (
+    signal(SignalKind::terminate()),
+    signal(SignalKind::interrupt()),
+  ) {
+    (Ok(mut term), Ok(mut int)) => {
+      tokio::spawn(async move {
+        tokio::select! {
+          _ = term.recv() => {}
+          _ = int.recv() => {}
+        }
+        let _ = first.send(());
+        tokio::select! {
+          _ = term.recv() => {}
+          _ = int.recv() => {}
+        }
+        tracing::warn!("second signal: exiting now");
+        std::process::exit(1);
+      });
+    }
+    (Err(error), _) | (_, Err(error)) => {
+      tracing::error!(%error, "cannot handle SIGTERM/SIGINT");
+      return ExitCode::FAILURE;
+    }
+  }
+  let shutdown = async {
+    let _ = first_seen.await;
     tracing::info!("shutting down");
   };
   match serve(listener, key, receiver, shutdown).await {
@@ -181,6 +239,43 @@ async fn run(config: PathBuf, snapshot: tty_gateway::Snapshot) -> ExitCode {
     Err(error) => {
       tracing::error!(%error, "server stopped");
       ExitCode::FAILURE
+    }
+  }
+}
+
+/// One SIGHUP: the new configuration in force for new connections, or the old one kept.
+fn reload(
+  config: &Path,
+  exe_dir: Option<&Path>,
+  snapshots: &watch::Sender<Arc<Snapshot>>,
+  listen: std::net::SocketAddr,
+  host_key: &Path,
+) {
+  match load(config, |name| std::env::var(name).ok(), exe_dir) {
+    Ok((next, warnings)) => {
+      for warning in &warnings {
+        tracing::warn!("{warning}");
+      }
+      if next.server.listen != listen {
+        tracing::warn!(
+          running = %listen,
+          configured = %next.server.listen,
+          "server.listen changed: restart to apply it"
+        );
+      }
+      if next.server.host_key != host_key {
+        tracing::warn!(
+          running = %host_key.display(),
+          configured = %next.server.host_key.display(),
+          "server.host_key changed: restart to apply it"
+        );
+      }
+      let changes = snapshots.borrow().changes(&next);
+      snapshots.send_replace(Arc::new(next));
+      tracing::info!(config = %config.display(), %changes, "reloaded");
+    }
+    Err(error) => {
+      tracing::error!(%error, "reload failed: the running configuration stays");
     }
   }
 }

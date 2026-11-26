@@ -145,7 +145,7 @@ impl Messages {
 }
 
 /// `[routes.NAME]`: who lands here and what they get.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Route {
   pub name: String,
   pub users: Vec<String>,
@@ -410,6 +410,67 @@ impl Snapshot {
   /// The route used for user names no route lists.
   pub fn default_route(&self) -> &Arc<Route> {
     &self.routes[self.default_route]
+  }
+
+  /// One line on what `next` changes against `self`, for the reload log: routes added,
+  /// removed and changed, and which other tables changed (names only, never values).
+  pub fn changes(&self, next: &Snapshot) -> String {
+    let names = |snapshot: &Snapshot| -> Vec<String> {
+      snapshot
+        .routes
+        .iter()
+        .map(|route| route.name.clone())
+        .collect()
+    };
+    let (before, after) = (names(self), names(next));
+    let find = |snapshot: &Snapshot, name: &str| {
+      snapshot
+        .routes
+        .iter()
+        .find(|route| route.name == name)
+        .cloned()
+    };
+    let added: Vec<&str> = after
+      .iter()
+      .filter(|name| !before.contains(name))
+      .map(String::as_str)
+      .collect();
+    let removed: Vec<&str> = before
+      .iter()
+      .filter(|name| !after.contains(name))
+      .map(String::as_str)
+      .collect();
+    let changed: Vec<&str> = after
+      .iter()
+      .filter(
+        |name| matches!((find(self, name), find(next, name)), (Some(old), Some(new)) if old != new),
+      )
+      .map(String::as_str)
+      .collect();
+    let list = |names: &[&str]| {
+      if names.is_empty() {
+        "-".to_owned()
+      } else {
+        names.join(",")
+      }
+    };
+    let mut other = Vec::new();
+    if self.server != next.server {
+      other.push("server");
+    }
+    if self.limits != next.limits {
+      other.push("limits");
+    }
+    if self.messages != next.messages {
+      other.push("messages");
+    }
+    format!(
+      "routes added {} · removed {} · changed {} · also changed {}",
+      list(&added),
+      list(&removed),
+      list(&changed),
+      list(&other)
+    )
   }
 
   /// A summary for `--check`: no environment values, only names.
@@ -1231,6 +1292,39 @@ command = ["/bin/cat"]
       let error = load_err(text);
       assert!(error.contains(key), "{text:?}: {error}");
     }
+  }
+
+  #[test]
+  fn changes_name_routes_and_tables_but_no_values() {
+    let env = vars(&[("SECRET", "one")]);
+    let before = load_str(
+      "[routes.a]\ncommand = [\"/bin/true\"]\n[routes.b]\ncommand = [\"/bin/true\"]\nenv = { K = \"${env:SECRET}\" }\n[server]\ndefault_route = \"a\"\n",
+      env,
+      None,
+    )
+    .unwrap()
+    .0;
+    let after = load_str(
+      "[limits]\nmax_sessions = 3\n[routes.a]\ncommand = [\"/bin/true\"]\n[routes.b]\ncommand = [\"/bin/true\"]\nenv = { K = \"${env:SECRET}\" }\n[routes.c]\ncommand = [\"/bin/true\"]\n[server]\ndefault_route = \"a\"\n",
+      vars(&[("SECRET", "two")]),
+      None,
+    )
+    .unwrap()
+    .0;
+    let changes = before.changes(&after);
+    assert_eq!(
+      changes,
+      "routes added c · removed - · changed b · also changed limits"
+    );
+    assert_eq!(
+      after.changes(&before),
+      "routes added - · removed c · changed b · also changed limits"
+    );
+    assert!(!changes.contains("one") && !changes.contains("two"));
+    assert_eq!(
+      before.changes(&before),
+      "routes added - · removed - · changed - · also changed -"
+    );
   }
 
   #[test]
