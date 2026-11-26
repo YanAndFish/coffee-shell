@@ -78,8 +78,8 @@ shop is that file (its banner, its Chinese messages, its routes and their enviro
 <file>` checks a file and prints its routes (environment names only, never values); exit status 1 means the file is
 broken (the message names the key), a missing program is only a warning. CI runs `--check` on the built binary and in
 the image (`docker run --rm roast-tty-ssh --check`). Unknown keys are errors. Durations are `"500ms"`, `"30s"`,
-`"15m"`, `"2h"` or `"0"`. Relative paths (`host_key`, a `command` with a `/`, `cwd`) resolve against the gateway's
-working directory when the file is read.
+`"15m"`, `"2h"` or `"0"`. Relative paths (a `command` with a `/`, `cwd`) resolve against the gateway's
+working directory when the file is read; a relative `host_key` is relative to it too.
 
 | Key                                            | Default                         | Meaning                                                                                        |
 | ---------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------- |
