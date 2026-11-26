@@ -252,7 +252,7 @@ pub async fn run_session(task: SessionTask) {
     Err(refusal) => {
       tracing::warn!(
         conn,
-        route = route_name,
+        route = %route_name,
         refused = refusal.reason(),
         "session refused"
       );
@@ -280,7 +280,7 @@ pub async fn run_session(task: SessionTask) {
       Err(error) if attempt < SPAWN_ATTEMPTS => {
         tracing::warn!(
           conn,
-          route = route_name,
+          route = %route_name,
           attempt,
           %error,
           "could not start the session program; trying again"
@@ -295,7 +295,7 @@ pub async fn run_session(task: SessionTask) {
       Err(error) => {
         tracing::error!(
           conn,
-          route = route_name,
+          route = %route_name,
           upstream = %route.upstream.describe(),
           attempt,
           %error,
@@ -310,7 +310,7 @@ pub async fn run_session(task: SessionTask) {
   let pid = running.pid();
   tracing::info!(
     conn,
-    route = route_name,
+    route = %route_name,
     pid = pid.unwrap_or_default(),
     active = limits.active(),
     "session program started"
@@ -406,7 +406,7 @@ pub async fn run_session(task: SessionTask) {
       if code == 0 {
         tracing::info!(
           conn,
-          route = route_name,
+          route = %route_name,
           ?pid,
           code,
           seconds = seconds(),
@@ -417,7 +417,7 @@ pub async fn run_session(task: SessionTask) {
         // and a bare close would leave the user guessing.
         tracing::warn!(
           conn,
-          route = route_name,
+          route = %route_name,
           ?pid,
           code,
           seconds = seconds(),
@@ -440,7 +440,7 @@ pub async fn run_session(task: SessionTask) {
         Hangup::Closed => {
           tracing::info!(
             conn,
-            route = route_name,
+            route = %route_name,
             ?pid,
             how,
             seconds = seconds(),
@@ -450,7 +450,7 @@ pub async fn run_session(task: SessionTask) {
         Hangup::Eof => {
           tracing::info!(
             conn,
-            route = route_name,
+            route = %route_name,
             ?pid,
             how,
             seconds = seconds(),
@@ -462,7 +462,7 @@ pub async fn run_session(task: SessionTask) {
         Hangup::Overflow => {
           tracing::warn!(
             conn,
-            route = route_name,
+            route = %route_name,
             ?pid,
             how,
             budget = INPUT_BUDGET,
@@ -478,12 +478,12 @@ pub async fn run_session(task: SessionTask) {
       pump.abort();
       let message = if matches!(end, End::Idle) {
         let minutes = idle.map_or(0, |idle| idle.as_secs() / 60);
-        tracing::info!(conn, route = route_name, ?pid, how, "session ended: idle");
+        tracing::info!(conn, route = %route_name, ?pid, how, "session ended: idle");
         route.messages.idle(minutes)
       } else {
         tracing::info!(
           conn,
-          route = route_name,
+          route = %route_name,
           ?pid,
           how,
           seconds = seconds(),
@@ -501,7 +501,7 @@ pub async fn run_session(task: SessionTask) {
       let how = running.stop(shutdown_grace).await;
       tracing::info!(
         conn,
-        route = route_name,
+        route = %route_name,
         ?pid,
         how,
         seconds = seconds(),

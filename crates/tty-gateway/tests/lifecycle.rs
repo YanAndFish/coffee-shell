@@ -234,6 +234,32 @@ impl Drop for Gateway {
   }
 }
 
+/// Every log line names the route the same way, `route=<name>` unquoted (operators and
+/// scripts/e2e grep for it), on the connection's lines and the session task's alike.
+#[tokio::test(flavor = "multi_thread")]
+async fn log_lines_name_the_route_unquoted() {
+  let dir = temp_dir("log-route");
+  let missing = dir.join("no-such-program");
+  let config = dir.join("gateway.toml");
+  std::fs::write(&config, app(&missing, "x")).unwrap();
+  let gateway = Gateway::start(&config, &dir);
+  let (handle, _) = connect(gateway.addr, Login::Keyless).await;
+  let mut terminal = Terminal::open(&handle, 80, 24).await;
+  assert!(terminal.wait_closed(WAIT).await);
+  for needle in [
+    "session started",
+    "could not start the session program; trying again",
+  ] {
+    let line = gateway.wait_log(needle, 0);
+    assert!(line.contains(" route=app"), "{line}");
+  }
+  let line = gateway.wait_log("ERROR could not start the session program", 0);
+  assert!(line.contains(" route=app "), "{line}");
+  assert!(!line.contains("route=\"app\""), "{line}");
+  assert!(line.contains(&missing.display().to_string()), "{line}");
+  let _ = std::fs::remove_dir_all(dir);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_binary_reloads_on_sighup_and_drains_on_sigterm() {
   use rustix::process::Signal;
