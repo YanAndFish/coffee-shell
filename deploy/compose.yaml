@@ -39,16 +39,18 @@ services:
     environment:
       COFFEE_API_URL: http://backend:3000
       COFFEE_INTERNAL_KEY: ${COFFEE_INTERNAL_KEY:?set COFFEE_INTERNAL_KEY (e.g. openssl rand -base64 32)}
-      # Optional; empty means the gateway's default (deploy/README.md).
+      # Optional; empty means the colour depth each client's terminal reports (deploy/README.md).
       COFFEE_COLORS: ${COFFEE_COLORS:-}
-      COFFEE_SSH_MAX_SESSIONS: ${COFFEE_SSH_MAX_SESSIONS:-}
-      COFFEE_SSH_MAX_SESSIONS_PER_IP: ${COFFEE_SSH_MAX_SESSIONS_PER_IP:-}
-      COFFEE_SSH_CONNECTIONS_PER_MINUTE: ${COFFEE_SSH_CONNECTIONS_PER_MINUTE:-}
-      COFFEE_SSH_IDLE_TIMEOUT: ${COFFEE_SSH_IDLE_TIMEOUT:-}
     ports:
       - ${COFFEE_SSH_PORT:-2222}:2222
+    # Limits, messages and routes live in the image's /etc/tty-gateway/gateway.toml (a copy of
+    # deploy/gateway.toml). To use your own, mount it over that file (below); after editing it,
+    # `docker compose -f deploy/compose.yaml kill -s HUP gateway` reloads it without dropping
+    # the sessions (check it first: `docker compose … run --rm --no-deps gateway --check`).
+    # A relative path is relative to this file's directory.
     volumes:
       - host-key:/data
+      # - ./my-gateway.toml:/etc/tty-gateway/gateway.toml:ro
     networks:
       - public
       - internal

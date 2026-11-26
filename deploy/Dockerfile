@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
-# ROAST/TTY SSH gateway: tty-gateway plus the coffee-tui it starts for every session.
+# ROAST/TTY SSH gateway: tty-gateway plus the coffee-tui it starts for every session,
+# configured by deploy/gateway.toml.
 # Build from the repository root:
 #
 #   docker build -f deploy/Dockerfile -t roast-tty-ssh .
@@ -14,7 +15,8 @@ ARG DEBIAN_RELEASE=bookworm
 FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS build
 WORKDIR /src
 # Only what the Rust workspace needs: its manifests, the TUI app (with theme.json),
-# the crates, and the contract fixtures coffee-api's tests read.
+# the crates (every workspace member, tty-gateway-testkit included), and the contract
+# fixtures coffee-api's tests read.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml ./
 COPY apps/tui ./apps/tui
 COPY crates ./crates
@@ -36,9 +38,15 @@ RUN apt-get update \
  && install -d -o coffee -g coffee -m 0700 /data
 COPY --from=build /out/tty-gateway /out/coffee-tui /usr/local/bin/
 
-ENV COFFEE_SSH_ADDR=0.0.0.0:2222 \
-    COFFEE_SSH_HOST_KEY=/data/ssh_host_ed25519_key \
-    COFFEE_TUI_BIN=/usr/local/bin/coffee-tui \
+# The gateway's configuration: the shop (default route) and gallery@. Mount your own over it
+# (read-only); `docker kill -s HUP` reloads it. coffee-tui is found next to tty-gateway.
+COPY deploy/gateway.toml /etc/tty-gateway/gateway.toml
+
+# TTY_GATEWAY_* override the file's listen address and host key. The shop's route reads
+# COFFEE_API_URL, COFFEE_INTERNAL_KEY (never baked in: compose passes it) and COFFEE_COLORS.
+ENV TTY_GATEWAY_CONFIG=/etc/tty-gateway/gateway.toml \
+    TTY_GATEWAY_ADDR=0.0.0.0:2222 \
+    TTY_GATEWAY_HOST_KEY=/data/ssh_host_ed25519_key \
     COFFEE_API_URL=http://127.0.0.1:3000 \
     LANG=C.UTF-8
 
