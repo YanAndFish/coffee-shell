@@ -11,7 +11,11 @@
 //!   ([`palette`], a [`tty_host::FrameFilter`]);
 //! - the Chinese Ctrl+C hint ([`INTERRUPT_HINT`]).
 
-use std::{env, io};
+use std::{
+  env,
+  io::{self, Write as _},
+  process::ExitCode,
+};
 
 use coffee_app::SessionEnv;
 use tty_host::{Appearance, HostOptions, Root};
@@ -69,7 +73,8 @@ pub fn app_root_for(gallery: bool) -> io::Result<Root> {
 
 /// What `tty-host` runs for the session `env`: [`app_root`] with nsh's base UI set and
 /// the app's, the colour depth `env.color_mode` forces (`COFFEE_COLORS`), the Chinese
-/// Ctrl+C hint and the palette pin at every depth.
+/// Ctrl+C hint and the palette pin at every depth. Behind the gateway ([`is_remote`])
+/// panics stay quiet: the SSH client sees one neutral line, not the panic.
 pub fn host_options(env: &SessionEnv) -> io::Result<HostOptions> {
   let palette = Palette::app().map_err(io::Error::other)?;
   Ok(
@@ -77,8 +82,15 @@ pub fn host_options(env: &SessionEnv) -> io::Result<HostOptions> {
       .ui_sets(vec![nsh_base::registry(), coffee_app::registry()])
       .color_mode(env.color_mode.clone())
       .interrupt_hint(INTERRUPT_HINT)
-      .frame_filter(move |depth| Box::new(Pin::new(palette, depth))),
+      .frame_filter(move |depth| Box::new(Pin::new(palette, depth)))
+      .quiet_panics(is_remote(env)),
   )
+}
+
+/// Whether the session is a remote shopper's: `tty-gateway` always sets
+/// `COFFEE_CLIENT_IP`; `target/debug/coffee-tui` run by hand has none.
+pub fn is_remote(env: &SessionEnv) -> bool {
+  env.client_ip.is_some()
 }
 
 /// Configures `coffee_app` with `env` and runs its root until the app ends, the user
@@ -87,6 +99,27 @@ pub fn run(env: SessionEnv) -> io::Result<()> {
   let options = host_options(&env)?;
   coffee_app::configure(env);
   tty_host::run(options)
+}
+
+/// [`run`] as the process: its exit status, with the error (if any) printed once the
+/// terminal is restored. A panic was reported by the host already (in full locally, as
+/// one neutral line remotely), so it adds nothing; its status is 101, as a panic on the
+/// main thread gives.
+pub fn main(env: SessionEnv) -> ExitCode {
+  match run(env) {
+    Ok(()) => ExitCode::SUCCESS,
+    Err(error) if tty_host::is_panic(&error) => ExitCode::from(101),
+    Err(error) => {
+      let text = error.to_string();
+      // The host names the program itself in some messages ("coffee-tui needs a terminal").
+      let _ = if text.starts_with(PROGRAM) {
+        writeln!(io::stderr(), "{text}")
+      } else {
+        writeln!(io::stderr(), "{PROGRAM}: {text}")
+      };
+      ExitCode::FAILURE
+    }
+  }
 }
 
 #[cfg(test)]
@@ -115,6 +148,15 @@ mod tests {
     assert_eq!(options.color_mode.as_deref(), Some("mono"));
     assert_eq!(options.interrupt_hint, INTERRUPT_HINT);
     assert_eq!(options.ui_sets.len(), 2);
+    assert!(!options.quiet_panics, "run by hand: panics in full");
+    let remote = SessionEnv {
+      client_ip: Some("192.0.2.1".into()),
+      ..SessionEnv::default()
+    };
+    assert!(
+      host_options(&remote).unwrap().quiet_panics,
+      "behind the gateway"
+    );
     let pin = (options.frame_filter.expect("the pin"))(tty_host::ColorDepth::Monochrome);
     assert!(pin.owns_colors(), "the pin owns the colours, mono included");
   }

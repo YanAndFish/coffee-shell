@@ -26,7 +26,7 @@ use std::{
   rc::Rc,
   sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
   },
   time::{Duration, Instant},
 };
@@ -128,6 +128,30 @@ pub struct Replies {
 struct Modes {
   active: AtomicBool,
   keyboard: AtomicBool,
+  /// Whether a thread panicked while the session was up ([`PANICKING`], then
+  /// [`REPORTED`] once the hook printed its report): set by the panic hook, read by the
+  /// run loop (nsh's engine thread runs without `catch_unwind`, so the hook is the only
+  /// place that sees its panic).
+  panicked: AtomicU8,
+}
+
+/// The panic hook started: the terminal is being restored and the panic reported.
+const PANICKING: u8 = 1;
+/// The panic hook is done.
+const REPORTED: u8 = 2;
+/// How long the session's end waits for a panic hook running on another thread to finish
+/// its report, so the process does not exit in the middle of it.
+const REPORT_WAIT: Duration = Duration::from_millis(500);
+
+/// What the panic hook prints once it restored the terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PanicReport {
+  /// What the previous hook prints (by default the message, the source location and,
+  /// when asked for, a backtrace): for a terminal the developer sits at.
+  Full,
+  /// This one line and nothing else: for a terminal a remote user sits at, who must see
+  /// no message, source path or backtrace.
+  Line(String),
 }
 
 /// Raw mode, the alternate screen and the input modes, restored on drop.
@@ -144,7 +168,16 @@ impl Session {
   /// switches to the alternate screen with mouse capture, bracketed paste, focus reports
   /// and (when answered) kitty keys. `program` names this program in the error when stdin
   /// or stdout is not a terminal.
-  pub fn enter(shutdown: &Shutdown, ask_rgb: bool, program: &str) -> io::Result<Self> {
+  ///
+  /// From here on a panic on any thread requests the `shutdown` (so no writer touches the
+  /// terminal again), restores the terminal, marks the session [`Self::panicked`] and
+  /// prints `report`.
+  pub fn enter(
+    shutdown: &Shutdown,
+    ask_rgb: bool,
+    program: &str,
+    report: PanicReport,
+  ) -> io::Result<Self> {
     let stdin = rustix::stdio::stdin();
     let stdout = rustix::stdio::stdout();
     if !rustix::termios::isatty(stdin) || !rustix::termios::isatty(stdout) {
@@ -170,9 +203,27 @@ impl Session {
     session.modes.active.store(true, Ordering::Release);
     let previous = std::panic::take_hook();
     let modes = session.modes.clone();
+    let stop = shutdown.flag();
     std::panic::set_hook(Box::new(move |panic| {
+      // A write in progress on another thread gives up at its next step, and no frame
+      // follows: the restored screen stays the shell's.
+      stop.store(true, Ordering::SeqCst);
+      if modes.active.load(Ordering::Acquire) {
+        modes.panicked.store(PANICKING, Ordering::SeqCst);
+      }
       restore(&modes);
-      previous(panic);
+      match &report {
+        PanicReport::Full => previous(panic),
+        // Best effort, and never a panic inside the hook: the output may be full or gone.
+        // Raw mode is off again, so the terminal turns `\n` into a new line itself.
+        PanicReport::Line(line) => {
+          let _ = writeln!(io::stderr(), "{line}");
+        }
+      }
+      let _ =
+        modes
+          .panicked
+          .compare_exchange(PANICKING, REPORTED, Ordering::SeqCst, Ordering::SeqCst);
     }));
     terminal::enable_raw_mode()?;
     // Before crossterm's reader exists, so the answers are ours to read. Whatever else
@@ -208,6 +259,12 @@ impl Session {
       session.keyboard = true;
     }
     Ok(session)
+  }
+
+  /// Whether a thread panicked while the session was up: the terminal is restored
+  /// already, and the run must end with an error.
+  pub fn panicked(&self) -> bool {
+    self.modes.panicked.load(Ordering::SeqCst) != 0
   }
 
   /// What the terminal answered at startup.
@@ -255,6 +312,11 @@ impl Session {
 
 impl Drop for Session {
   fn drop(&mut self) {
+    // A panic hook on another thread restores the terminal and reports: let it finish.
+    let deadline = Instant::now() + REPORT_WAIT;
+    while self.modes.panicked.load(Ordering::SeqCst) == PANICKING && Instant::now() < deadline {
+      std::thread::sleep(Duration::from_millis(5));
+    }
     restore(&self.modes);
     for &(fd, flags) in &self.flags {
       let _ = rustix::fs::fcntl_setfl(fd, flags);
@@ -1131,12 +1193,13 @@ mod tests {
     let ctrl = KeyModifiers::CONTROL;
     let none = KeyModifiers::NONE;
     let events =
-      decode_keys("a中G\t\x7f\x03\n\x1b\x1bx\x1b[1;5C\x1bOP\x1b[15~\x1b[Z\x1b[3~".as_bytes());
+      decode_keys("a€G\t\x7f\x03\n\x1b\x1bx\x1b[1;5C\x1bOP\x1b[15~\x1b[Z\x1b[3~".as_bytes());
     assert_eq!(
       events,
       vec![
         press(KeyCode::Char('a'), none),
-        press(KeyCode::Char('中'), none),
+        // Three bytes of UTF-8, as a CJK character.
+        press(KeyCode::Char('€'), none),
         press(KeyCode::Char('G'), KeyModifiers::SHIFT),
         press(KeyCode::Tab, none),
         press(KeyCode::Backspace, none),

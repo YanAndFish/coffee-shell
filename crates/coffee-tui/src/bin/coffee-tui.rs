@@ -2,6 +2,6 @@
 //!
 //! `tty-gateway` starts one per SSH session on a PTY; locally, run it in any terminal.
 
-fn main() -> std::io::Result<()> {
-  coffee_tui::run(coffee_tui::session_env_from_process())
+fn main() -> std::process::ExitCode {
+  coffee_tui::main(coffee_tui::session_env_from_process())
 }

@@ -21,7 +21,8 @@
 
 use std::{
   cell::{Cell, RefCell},
-  env, io,
+  env,
+  io::{self, Write as _},
   rc::Rc,
   sync::Arc,
   time::{Duration, Instant},
@@ -81,6 +82,12 @@ pub struct HostOptions {
   pub interrupt_hint: String,
   /// Makes the filter every frame goes through; `None` leaves frames as nsh drew them.
   pub frame_filter: Option<FrameFilterFactory>,
+  /// The terminal belongs to someone who must not see the program's internals (a remote
+  /// SSH user): after a panic the restored terminal gets one neutral line instead of the
+  /// panic's message, source location and backtrace, and errors the app reported but
+  /// survived are not printed at the end. `false` (a developer's terminal): the panic is
+  /// reported as usual and such errors are listed once the terminal is restored.
+  pub quiet_panics: bool,
 }
 
 impl HostOptions {
@@ -94,6 +101,7 @@ impl HostOptions {
       color_mode: None,
       interrupt_hint: interrupt::DEFAULT_HINT.to_owned(),
       frame_filter: None,
+      quiet_panics: false,
     }
   }
 
@@ -122,6 +130,93 @@ impl HostOptions {
   ) -> Self {
     self.frame_filter = Some(Box::new(factory));
     self
+  }
+
+  /// Hides panics and internal errors from the terminal (see [`Self::quiet_panics`]).
+  pub fn quiet_panics(mut self, quiet: bool) -> Self {
+    self.quiet_panics = quiet;
+    self
+  }
+}
+
+/// The error [`run`] returns when a thread panicked during the session.
+#[derive(Debug)]
+pub struct Panicked;
+
+impl std::fmt::Display for Panicked {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str("a thread panicked; the session ended")
+  }
+}
+
+impl std::error::Error for Panicked {}
+
+/// Whether `error` is [`run`]'s [`Panicked`]: the panic hook reported it already, so a
+/// caller need not print anything more.
+pub fn is_panic(error: &io::Error) -> bool {
+  error.get_ref().is_some_and(|inner| inner.is::<Panicked>())
+}
+
+/// The one line a quiet session prints after a panic.
+fn panic_line(program: &str) -> String {
+  format!("{program}: the session ended after an internal error")
+}
+
+/// What the app reported through `on_app_error` during the run.
+#[derive(Debug, Default)]
+struct Reports {
+  /// The first fatal error (the app did not load, or its VM stopped): it ends the run.
+  fatal: Option<String>,
+  /// How many errors the app kept running after (an exception escaping a callback, an
+  /// asset that did not load, a development update), and the last one.
+  survived: usize,
+  last: Option<String>,
+}
+
+impl Reports {
+  fn record(&mut self, error: &AppError) {
+    self.note(error.is_fatal(), error.to_string());
+  }
+
+  fn note(&mut self, fatal: bool, text: String) {
+    if fatal {
+      self.fatal.get_or_insert(text);
+    } else {
+      self.survived += 1;
+      self.last = Some(text);
+    }
+  }
+
+  /// The line listing the errors the app survived, for a developer's terminal.
+  fn survived_line(&self, program: &str) -> Option<String> {
+    let last = self.last.as_deref()?;
+    Some(format!(
+      "{program}: the app reported {} error(s) it kept running after; the last: {last}",
+      self.survived
+    ))
+  }
+}
+
+/// How the run ends. In order: a panic is an error ([`Panicked`]) whatever else
+/// happened (its hook requests the shutdown, and the writes it stops fail); then a fatal
+/// app error; then the loop's own error, unless the session `ended` (a signal, a hang-up),
+/// when a failed write is the end of the session, not an error. Errors the app survived
+/// never turn a normal end into a failure.
+fn outcome(
+  result: io::Result<()>,
+  panicked: bool,
+  ended: bool,
+  reports: &Reports,
+) -> io::Result<()> {
+  if panicked {
+    return Err(io::Error::other(Panicked));
+  }
+  if let Some(fatal) = &reports.fatal {
+    return Err(io::Error::other(fatal.clone()));
+  }
+  match result {
+    Err(error) if !ended => Err(error),
+    _ => Ok(()),
   }
 }
 
@@ -163,7 +258,9 @@ pub fn capabilities(
 }
 
 /// Runs `options.root` until the app ends, the user presses Ctrl+C twice, a signal
-/// arrives or the terminal hangs up.
+/// arrives or the terminal hangs up (all `Ok`), a thread panics (`Err` of [`Panicked`],
+/// see [`is_panic`]) or the app reports a fatal error (`Err` with its text). The terminal
+/// is restored in every case.
 pub fn run(options: HostOptions) -> io::Result<()> {
   let HostOptions {
     program,
@@ -172,11 +269,17 @@ pub fn run(options: HostOptions) -> io::Result<()> {
     color_mode,
     interrupt_hint,
     frame_filter,
+    quiet_panics,
   } = options;
   let choice = color::Choice::from_env(color_mode.as_deref(), |name| env::var(name).ok());
 
   let shutdown = terminal::Shutdown::install()?;
-  let session = terminal::Session::enter(&shutdown, choice.asks_terminal(), &program)?;
+  let report = if quiet_panics {
+    terminal::PanicReport::Line(panic_line(&program))
+  } else {
+    terminal::PanicReport::Full
+  };
+  let session = terminal::Session::enter(&shutdown, choice.asks_terminal(), &program, report)?;
   let depth = choice.answered(session.replies().truecolor).depth;
   let filter = frame_filter.map(|factory| factory(depth));
 
@@ -193,11 +296,9 @@ pub fn run(options: HostOptions) -> io::Result<()> {
   let waker = terminal::Waker::new()?;
   app_options.wake = Some(waker.callback());
   let mut view = AppView::new(app_options);
-  let failure = Rc::new(RefCell::new(None));
-  let reported = failure.clone();
-  view.on_app_error(move |error| {
-    *reported.borrow_mut() = Some(error.to_string());
-  });
+  let reports = Rc::new(RefCell::new(Reports::default()));
+  let reported = reports.clone();
+  view.on_app_error(move |error| reported.borrow_mut().record(error));
   let cursor = Rc::new(Cell::new(CursorStyle::default()));
   let changed = cursor.clone();
   view.on_cursor_style_changed(move |style| changed.set(style));
@@ -223,27 +324,30 @@ pub fn run(options: HostOptions) -> io::Result<()> {
     clipboard,
     cursor,
     shown: CursorStyle::default(),
+    reports: reports.clone(),
   };
   // Prime the area so the first layout has the terminal's size, as nsh-tui-host does.
   host.draw(&mut terminal, &mut view, false)?;
   view.load(root)?;
   let result = host.run(&mut terminal, &mut view);
-  // A write that failed because the terminal hung up or a signal arrived is the end of
-  // the session, not an error.
   let ended = shutdown.requested() || terminal::disconnected().unwrap_or(true);
-  let result = result.or_else(|error| if ended { Ok(()) } else { Err(error) });
   view.stop();
   // Nothing may write once the loop ended but the session's own bounded restore.
   shutdown.request();
   drop(terminal);
   drop(host);
+  let panicked = session.panicked();
   drop(session);
-  let error = failure.borrow_mut().take();
-  match (result, error) {
-    (Err(error), _) => Err(error),
-    (_, Some(error)) => Err(io::Error::other(error)),
-    _ => Ok(()),
+  let reports = reports.borrow();
+  let result = outcome(result, panicked, ended, &reports);
+  if !quiet_panics
+    && result.is_ok()
+    && let Some(line) = reports.survived_line(&program)
+  {
+    // The terminal is the shell's again; best effort, as the restore.
+    let _ = writeln!(io::stderr(), "{line}");
   }
+  result
 }
 
 /// The run loop's state: nsh's `run_app` loop with the frame filter, the Ctrl+C hint,
@@ -260,6 +364,7 @@ struct Host<'a> {
   clipboard: Arc<clipboard::TerminalClipboard>,
   cursor: Rc<Cell<CursorStyle>>,
   shown: CursorStyle,
+  reports: Rc<RefCell<Reports>>,
 }
 
 impl Host<'_> {
@@ -301,6 +406,13 @@ impl Host<'_> {
     let mut redraw = true;
     let mut repaint = false;
     loop {
+      // A panic restored the terminal already (and stops every write): draw nothing more.
+      if self.session.panicked() {
+        return Err(io::Error::other(Panicked));
+      }
+      if self.reports.borrow().fatal.is_some() {
+        return Ok(());
+      }
       if self.interrupt.expire(Instant::now()) {
         redraw = true;
       }
@@ -570,6 +682,69 @@ mod tests {
     assert_eq!(plain.background_color, Some([255, 255, 255]));
   }
 
+  fn failed_write() -> io::Result<()> {
+    Err(io::Error::new(
+      io::ErrorKind::BrokenPipe,
+      "the terminal hung up",
+    ))
+  }
+
+  #[test]
+  fn a_panic_wins_over_everything() {
+    let mut reports = Reports::default();
+    reports.note(true, "load failed".into());
+    // The hook requested the shutdown, so the session looks ended and its writes failed:
+    // still an error, and a recognisable one.
+    for ended in [false, true] {
+      for result in [Ok(()), failed_write()] {
+        let error = outcome(result, true, ended, &reports).unwrap_err();
+        assert!(is_panic(&error), "{error}");
+      }
+    }
+    assert!(!is_panic(&failed_write().unwrap_err()));
+  }
+
+  #[test]
+  fn a_fatal_app_error_fails_the_run() {
+    let mut reports = Reports::default();
+    reports.note(true, "first".into());
+    reports.note(true, "second".into());
+    let error = outcome(Ok(()), false, true, &reports).unwrap_err();
+    assert_eq!(error.to_string(), "first");
+    assert!(!is_panic(&error));
+  }
+
+  #[test]
+  fn errors_the_app_survived_leave_a_normal_end_normal() {
+    let mut reports = Reports::default();
+    assert_eq!(reports.survived_line("probe"), None);
+    reports.note(false, "Error: one".into());
+    reports.note(false, "Error: two".into());
+    assert!(outcome(Ok(()), false, false, &reports).is_ok());
+    assert!(outcome(failed_write(), false, true, &reports).is_ok());
+    let line = reports.survived_line("probe").unwrap();
+    assert!(
+      line.starts_with("probe: ") && line.contains("2 error(s)") && line.ends_with("Error: two")
+    );
+  }
+
+  #[test]
+  fn a_failed_write_is_an_error_only_while_the_session_lasts() {
+    let reports = Reports::default();
+    assert!(outcome(Ok(()), false, false, &reports).is_ok());
+    assert!(outcome(failed_write(), false, true, &reports).is_ok());
+    let error = outcome(failed_write(), false, false, &reports).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+  }
+
+  #[test]
+  fn the_quiet_panic_line_is_neutral() {
+    assert_eq!(
+      panic_line("probe"),
+      "probe: the session ended after an internal error"
+    );
+  }
+
   mod probe {
     use nsh_core::prelude::*;
 
@@ -589,11 +764,14 @@ mod tests {
     assert_eq!(options.program, "probe");
     assert_eq!(options.interrupt_hint, interrupt::DEFAULT_HINT);
     assert!(options.color_mode.is_none() && options.frame_filter.is_none());
+    assert!(!options.quiet_panics);
     assert!(!options.ui_sets.is_empty(), "nsh's base set");
     let options = options
       .color_mode(Some("16".into()))
       .interrupt_hint(" bye ")
+      .quiet_panics(true)
       .frame_filter(|_| Box::new(Probe));
+    assert!(options.quiet_panics);
     assert_eq!(options.color_mode.as_deref(), Some("16"));
     assert_eq!(options.interrupt_hint, " bye ");
     let filter = (options.frame_filter.unwrap())(ColorDepth::Ansi16);
