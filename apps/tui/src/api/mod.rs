@@ -17,6 +17,8 @@
 
 mod endpoints;
 mod fixtures;
+#[cfg(test)]
+mod script;
 
 use std::fmt;
 
@@ -26,6 +28,8 @@ use serde::{Serialize, de::DeserializeOwned};
 
 pub use endpoints::ENDPOINTS;
 pub use fixtures::FixtureSet;
+#[cfg(test)]
+pub use script::{Script, Stepped};
 
 /// Where requests go.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +39,9 @@ pub enum Transport {
   /// The contract fixtures (`packages/contract/fixtures/v1`), answered in process: what
   /// tests and `nsh run` use, deterministic and offline.
   Fixture(FixtureSet),
+  /// Unit tests: each call waits until the test answers it ([`Script`]).
+  #[cfg(test)]
+  Script(Script),
 }
 
 impl Transport {
@@ -425,6 +432,11 @@ impl ApiClient {
         }
         let answer = set.answer(&call, self)?;
         decode(answer.status, answer.body.as_bytes())
+      }
+      #[cfg(test)]
+      Transport::Script(script) => {
+        let (status, body) = script.send(&call).await?;
+        decode(status, body.as_bytes())
       }
     }
   }

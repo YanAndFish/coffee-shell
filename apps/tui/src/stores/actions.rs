@@ -157,20 +157,24 @@ pub fn leave_splash(stores: &Stores) {
 }
 
 /// After any sign-in: merge the guest cart (or load the member cart), load addresses and
-/// settings; the profile and orders reload on their next visit. The units merged.
-async fn sync_member(stores: Stores) -> u32 {
+/// settings; the profile and orders reload on their next visit. The units merged, or `None`
+/// when the session ended on the way (the expiry flow already went to the login page:
+/// the caller must not navigate or greet).
+async fn sync_member(stores: Stores) -> Option<u32> {
   let merged = match stores.cart.merge_guest().await {
     Ok(merged) => merged,
-    Err(failure) => {
-      session_expired(&stores, &failure);
-      0
-    }
+    Err(failure) if session_expired(&stores, &failure) => return None,
+    Err(_) => 0,
   };
   stores.addresses.fetch().await;
   stores.settings.fetch().await;
   stores.orders.invalidate();
   stores.profile.invalidate();
-  merged
+  if !stores.session.is_member_untracked() || stores.session.expired_untracked() {
+    // A later load saw the session end: the shell's expiry flow goes to the login page.
+    return None;
+  }
+  Some(merged)
 }
 
 /// `g`: browse as a guest (`以访客身份浏览` / `结算前需要登录`).
@@ -206,7 +210,10 @@ pub fn submit_auth(stores: &Stores) {
     let name = auth.user.username.clone();
     stores.session.signed_in(auth);
     stores.session.auth_step(revision, super::AuthStep::Sync);
-    let merged = sync_member(stores).await;
+    let Some(merged) = sync_member(stores).await else {
+      // Signed in, then expired at once: the login page says `登录已失效`; stay there.
+      return;
+    };
     stores.session.auth_done(revision);
     let next = stores.session.take_return_to().unwrap_or(Route::Catalog);
     let next = if next == Route::Login {
@@ -334,9 +341,9 @@ pub fn add_selection(stores: &Stores, buy_now: bool) {
 }
 
 /// Runs a cart change; failures become toasts.
-fn cart_change<F>(stores: &Stores, change: impl FnOnce(super::CartStore) -> F + 'static)
+fn cart_change<F, T>(stores: &Stores, change: impl FnOnce(super::CartStore) -> F + 'static)
 where
-  F: Future<Output = Result<coffee_api::Cart, ApiFailure>> + 'static,
+  F: Future<Output = Result<T, ApiFailure>> + 'static,
 {
   let stores = *stores;
   stores.spawn(async move {
@@ -876,6 +883,26 @@ mod flows {
       assert_eq!(
         last_toast(&stores),
         "操作没有完成 / 连接服务器失败，请稍后重试"
+      );
+    });
+  }
+
+  #[test]
+  fn a_session_that_expires_during_the_login_sync_stays_on_the_login_page() {
+    // fixture:expired signs in, then every member call answers `401 session_expired`.
+    with_stores(FixtureSet::Expired, None, (100, 30), |stores| {
+      start(&stores);
+      assert_eq!(stores.router.top(), Route::Login);
+      fill_login(&stores, "林晓", "secret1");
+      assert_eq!(key(&stores, "enter"), Some("login.submit"));
+      assert!(!stores.session.is_member());
+      assert_eq!(stores.router.top(), Route::Login, "not the catalog");
+      assert!(!stores.session.submitting(), "the form is usable again");
+      assert_eq!(last_toast(&stores), "登录已失效 / 请重新登录，购物车已保留");
+      assert!(
+        !titles(&stores).iter().any(|t| t.starts_with("欢迎回来")),
+        "no welcome: {:?}",
+        titles(&stores)
       );
     });
   }

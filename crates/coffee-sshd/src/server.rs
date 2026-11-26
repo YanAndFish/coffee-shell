@@ -22,7 +22,7 @@ use russh::{
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::TcpListener,
-  sync::{mpsc, oneshot},
+  sync::{mpsc, oneshot, watch},
   task::JoinHandle,
 };
 
@@ -34,8 +34,13 @@ use crate::{
 /// The notice every client sees before logging in (SSH auth banner).
 pub const BANNER: &str = "\n  ◆ROAST/TTY 终端咖啡馆\n  演示环境 · 不是真实商店 · 不收款、不发货 · 请勿使用真实密码、地址或电话\n\n";
 
-/// How long a session's child has to leave after SIGHUP before it is killed.
+/// How long a session's child has to leave after SIGHUP or SIGTERM before it is killed.
 const KILL_GRACE: Duration = Duration::from_millis(1000);
+/// On shutdown: how long the sessions have to say goodbye (their program restores the
+/// client's terminal and leaves, the notice goes out) before the server stops anyway.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(3000);
+/// What a client sees when the server stops under its session.
+const STOPPING_NOTICE: &str = "ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。";
 /// Keepalives detect a client that vanished without closing its connection.
 const KEEPALIVE: Duration = Duration::from_secs(30);
 /// Tries at starting a session's program, and the pause between them.
@@ -54,17 +59,25 @@ struct Shared {
   next_id: AtomicU64,
   connections: AtomicUsize,
   started: Instant,
+  /// `true` once the server stops: sessions and connections end on their own, politely.
+  stopping: watch::Sender<bool>,
 }
 
-/// How far a connection got: the login watchdog reads it.
+/// How far a connection got: the login watchdog and the shutdown read it.
 #[derive(Default)]
 struct Progress {
   authenticated: AtomicBool,
   /// A shell was asked for (and started or refused with a message).
   settled: AtomicBool,
+  /// Its session program runs (or is still saying goodbye).
+  running: AtomicBool,
 }
 
-/// Runs the SSH server on `listener` until `shutdown` resolves.
+/// Runs the SSH server on `listener` until `shutdown` resolves. Then it takes no new
+/// connection, and every session ends as a client leaving it would not: its program gets
+/// SIGTERM and restores the client's terminal (leaves the alternate screen, …), the client
+/// reads why the connection closes, and only then the connection goes. It returns once all
+/// connections are gone, or after [`SHUTDOWN_GRACE`].
 pub async fn serve(
   listener: TcpListener,
   config: Config,
@@ -96,6 +109,7 @@ pub async fn serve(
     next_id: AtomicU64::new(1),
     connections: AtomicUsize::new(0),
     started: Instant::now(),
+    stopping: watch::Sender::new(false),
   });
   // Connections beyond this are dropped before the handshake: refused sessions still
   // get a polite message, but only up to a point.
@@ -103,7 +117,7 @@ pub async fn serve(
   tokio::pin!(shutdown);
   loop {
     let (socket, peer) = tokio::select! {
-      () = &mut shutdown => return Ok(()),
+      () = &mut shutdown => break,
       accepted = listener.accept() => match accepted {
         Ok(accepted) => accepted,
         Err(error) => {
@@ -132,29 +146,33 @@ pub async fn serve(
     let progress = Arc::new(Progress::default());
     let handler = Connection::new(shared.clone(), id, peer, progress.clone());
     let config = russh_config.clone();
+    let mut stopping = shared.stopping.subscribe();
     // From accept to a running session: handshake, login and the shell request. A client
     // that stalls anywhere in between (even before its SSH version line) is cut off.
     let deadline = tokio::time::Instant::now() + shared.config.auth_timeout;
     tokio::spawn(async move {
       let _counted = counted;
       let _ticket = ticket;
-      let session = match tokio::time::timeout_at(
-        deadline,
-        server::run_stream(config, socket, handler),
-      )
-      .await
-      {
-        Ok(Ok(session)) => session,
-        Ok(Err(error)) => {
-          tracing::debug!(conn = id, %error, "handshake failed");
-          return;
-        }
-        Err(_) => {
-          tracing::info!(conn = id, "handshake timed out");
-          return;
-        }
+      let handshake =
+        tokio::time::timeout_at(deadline, server::run_stream(config, socket, handler));
+      let session = tokio::select! {
+        result = handshake => match result {
+          Ok(Ok(session)) => session,
+          Ok(Err(error)) => {
+            tracing::debug!(conn = id, %error, "handshake failed");
+            return;
+          }
+          Err(_) => {
+            tracing::info!(conn = id, "handshake timed out");
+            return;
+          }
+        },
+        // Nothing on the client's screen yet: just go.
+        () = stopped(&mut stopping) => return,
       };
       let handle = session.handle();
+      let goodbye = handle.clone();
+      let running = progress.clone();
       let watchdog = tokio::spawn(async move {
         tokio::time::sleep_until(deadline).await;
         if progress.settled.load(Ordering::Acquire) {
@@ -170,12 +188,44 @@ pub async fn serve(
           .disconnect(russh::Disconnect::ByApplication, why.into(), String::new())
           .await;
       });
-      if let Err(error) = session.await {
+      tokio::pin!(session);
+      let result = tokio::select! {
+        result = &mut session => result,
+        () = stopped(&mut stopping) => {
+          // The session (if any) says goodbye on its own channel first; then the connection.
+          let until = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+          while running.running.load(Ordering::Acquire) && tokio::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+          }
+          let _ = goodbye
+            .disconnect(russh::Disconnect::ByApplication, "server stopping".into(), String::new())
+            .await;
+          tokio::time::timeout_at(until, &mut session)
+            .await
+            .unwrap_or(Ok(()))
+        }
+      };
+      if let Err(error) = result {
         tracing::debug!(conn = id, %error, "connection ended with an error");
       }
       watchdog.abort();
     });
   }
+  // Stopping: every connection ends itself (see above); wait for them, not for ever.
+  shared.stopping.send_replace(true);
+  let open = shared.connections.load(Ordering::Acquire);
+  if open > 0 {
+    tracing::info!(open, "closing the connections");
+  }
+  let until = Instant::now() + SHUTDOWN_GRACE + Duration::from_millis(500);
+  while shared.connections.load(Ordering::Acquire) > 0 && Instant::now() < until {
+    tokio::time::sleep(Duration::from_millis(20)).await;
+  }
+  let left = shared.connections.load(Ordering::Acquire);
+  if left > 0 {
+    tracing::warn!(left, "connections still open at shutdown");
+  }
+  Ok(())
 }
 
 /// One open TCP connection, counted until it ends.
@@ -369,6 +419,7 @@ impl Connection {
     );
     let (to_child, from_connection) = mpsc::channel(64);
     self.to_child = Some(to_child);
+    self.progress.running.store(true, Ordering::Release);
     tokio::spawn(run_session(SessionTask {
       conn: self.id,
       child,
@@ -378,6 +429,7 @@ impl Connection {
       channel,
       last_input: self.last_input.clone(),
       shared: self.shared.clone(),
+      progress: self.progress.clone(),
       _slot: slot,
     }));
   }
@@ -428,6 +480,7 @@ struct SessionTask {
   channel: ChannelId,
   last_input: Arc<AtomicU64>,
   shared: Arc<Shared>,
+  progress: Arc<Progress>,
   _slot: Slot,
 }
 
@@ -436,6 +489,16 @@ enum End {
   Exited(io::Result<ExitStatus>),
   Disconnected,
   Idle,
+  Stopping,
+}
+
+/// Clears [`Progress::running`] when the session task ends, however it ends.
+struct Running(Arc<Progress>);
+
+impl Drop for Running {
+  fn drop(&mut self) {
+    self.0.running.store(false, Ordering::Release);
+  }
 }
 
 /// Pumps the PTY to the channel and the channel to the PTY until the child exits or
@@ -451,8 +514,11 @@ async fn run_session(task: SessionTask) {
     channel,
     last_input,
     shared,
+    progress,
     _slot,
   } = task;
+  let _running = Running(progress);
+  let mut stopping = shared.stopping.subscribe();
   let started = Instant::now();
   let pid = child.id();
   let (mut reader, mut writer) = pty.into_split();
@@ -523,6 +589,7 @@ async fn run_session(task: SessionTask) {
     tokio::select! {
       status = child.wait() => break End::Exited(status),
       _ = &mut gone => break End::Disconnected,
+      () = stopped(&mut stopping) => break End::Stopping,
       () = tokio::time::sleep(check) => {
         if let (Some(idle), Some(quiet)) = (idle, quiet()) && quiet >= idle {
           break End::Idle;
@@ -563,7 +630,7 @@ async fn run_session(task: SessionTask) {
     }
     End::Disconnected => {
       feeder.abort();
-      let how = stop(&mut child, pid).await;
+      let how = stop(&mut child, pid, rustix::process::Signal::HUP).await;
       pump.abort();
       tracing::info!(
         conn,
@@ -575,7 +642,7 @@ async fn run_session(task: SessionTask) {
     }
     End::Idle => {
       feeder.abort();
-      let how = stop(&mut child, pid).await;
+      let how = stop(&mut child, pid, rustix::process::Signal::HUP).await;
       let _ = tokio::time::timeout(Duration::from_millis(300), &mut pump).await;
       pump.abort();
       let minutes = idle.map_or(0, |idle| idle.as_secs() / 60);
@@ -595,7 +662,33 @@ async fn run_session(task: SessionTask) {
         )
         .await;
     }
+    End::Stopping => {
+      feeder.abort();
+      // SIGTERM: coffee-host restores the client's terminal and leaves (it does on SIGHUP,
+      // SIGTERM and SIGINT); its last output, that restore, is still in the PTY.
+      let how = stop(&mut child, pid, rustix::process::Signal::TERM).await;
+      let _ = tokio::time::timeout(Duration::from_millis(500), &mut pump).await;
+      pump.abort();
+      tracing::info!(
+        conn,
+        ?pid,
+        how,
+        seconds = started.elapsed().as_secs(),
+        "session ended: server stopping"
+      );
+      // Whatever the program did on its way out (restored, died on the signal, was
+      // killed, said nothing in time), the notice goes on a restored screen.
+      let notice = format!("{TERMINAL_RESET}\r\n{STOPPING_NOTICE}");
+      // The connection task disconnects once this task is done.
+      tell_and_close(&handle, channel, &notice, 143).await;
+    }
   }
+}
+
+/// Resolves once the server stops (at once if it already did).
+async fn stopped(stopping: &mut watch::Receiver<bool>) {
+  // The borrow `wait_for` gives back must not live on in a `select!` arm.
+  let _ = stopping.wait_for(|stopping| *stopping).await;
 }
 
 /// Writes `message` on the channel, then ends it with `status`.
@@ -607,17 +700,26 @@ async fn tell_and_close(handle: &Handle, channel: ChannelId, message: &str, stat
   let _ = handle.close(channel).await;
 }
 
-/// SIGHUP to the child's process group (it is a session leader on its own PTY), then
-/// SIGKILL if it is still there after [`KILL_GRACE`].
-async fn stop(child: &mut tokio::process::Child, pid: Option<u32>) -> &'static str {
+/// `signal` (SIGHUP: the client left; SIGTERM: the server stops) to the child's process
+/// group (it is a session leader on its own PTY), then SIGKILL if it is still there after
+/// [`KILL_GRACE`].
+async fn stop(
+  child: &mut tokio::process::Child,
+  pid: Option<u32>,
+  signal: rustix::process::Signal,
+) -> &'static str {
   let group = pid
     .and_then(|pid| i32::try_from(pid).ok())
     .and_then(rustix::process::Pid::from_raw);
   if let Some(group) = group {
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::HUP);
+    let _ = rustix::process::kill_process_group(group, signal);
   }
   if tokio::time::timeout(KILL_GRACE, child.wait()).await.is_ok() {
-    return "hangup";
+    return if signal == rustix::process::Signal::TERM {
+      "terminated"
+    } else {
+      "hangup"
+    };
   }
   if let Some(group) = group {
     let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);

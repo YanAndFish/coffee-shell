@@ -40,9 +40,12 @@ docker compose -f deploy/compose.yaml logs -f gateway     # sessions, fingerprin
 images built beforehand) starts the pair with a throwaway key and checks the SSH banner, that the backend is not
 published and refuses calls without the key, that a key-less stock `ssh` session shows the products from the backend
 (not the built-in sample data), that a stock `ssh` session with a throwaway key registers, adds a bag, saves an
-address, checks out and gets a receipt (`scripts/e2e/run.py --gateway 127.0.0.1:2222 smoke`; its text screenshots
+address, checks out and gets a receipt (`scripts/e2e/run.py --gateway 127.0.0.1:<port> smoke`; its text screenshots
 go to `.data/e2e-smoke/`), that the sessions' `coffee-tui` are gone after the clients leave, and that a restarted
-backend migrates and seeds nothing twice. Then it removes everything. It needs `python3` and `ssh` on the host.
+backend migrates and seeds nothing twice. It runs as a Compose project of its own (`roast-tty-smoke-<pid>`, or
+`COFFEE_SMOKE_PROJECT`) on a free port (or `COFFEE_SMOKE_PORT`), so a deployment on the same machine (project
+`roast-tty`, port 2222) keeps its containers and volumes; at the end it removes everything of its own project. It
+needs `python3` and `ssh` on the host.
 
 ## Build the images alone
 

@@ -9,8 +9,9 @@
 //!
 //! The async operations are `async fn`s returning the outcome; [`super::actions`] spawns them
 //! and turns outcomes into toasts and navigation. A mutation keeps the cart on screen while
-//! it runs ([`Remote::begin_quiet`]); a newer one supersedes an older answer; a failed one
-//! changes nothing (a guest change is rolled back).
+//! it runs ([`Remote::begin_quiet`]); a newer one supersedes an older answer, and only the
+//! latest answer touches the guest lines; a failed one changes nothing (a guest change is
+//! rolled back). Quantity steps go one at a time, each from the quantity last answered.
 
 use coffee_api::{
   AppliedCoupon, Cart, CartLine, CartMergeRequest, CartQuoteRequest, ErrorCode, GuestCartLine,
@@ -166,6 +167,8 @@ pub struct CartStore {
   checkout: Signal<Option<CheckoutStep>>,
   attempt: Signal<(u64, Option<String>)>,
   receipt: Signal<Option<Order>>,
+  steps: Signal<Vec<(String, i8)>>,
+  stepping: Signal<bool>,
 }
 
 impl CartStore {
@@ -182,6 +185,8 @@ impl CartStore {
       checkout: signal(None),
       attempt: signal((0, None)),
       receipt: signal(None),
+      steps: signal(Vec::new()),
+      stepping: signal(false),
     }
   }
 
@@ -354,13 +359,16 @@ impl CartStore {
     } else {
       client.quote_cart(&self.quote_request(None)).await
     };
-    if let Ok(cart) = &result
+    if let Err(failure) = &result {
+      self.session.report(failure);
+    }
+    // Only the latest answer speaks for the guest lines: a newer change (an add while this
+    // quote was out) already holds lines this older quote has never seen.
+    if self.cart.is_current(revision)
+      && let Ok(cart) = &result
       && !self.member()
     {
       self.adopt_quote(cart);
-    }
-    if let Err(failure) = &result {
-      self.session.report(failure);
     }
     self.cart.finish(revision, result);
   }
@@ -495,11 +503,39 @@ impl CartStore {
     }
   }
 
-  /// `←` `→`: line `sku`'s quantity ±1.
-  pub async fn step_quantity(self, sku: String, delta: i8) -> Result<Cart, ApiFailure> {
-    let current = self.line(&sku).map_or(1, |(_, l)| l.quantity);
-    let next = current.saturating_add_signed(delta).max(1);
-    self.set_quantity(sku, next).await
+  /// `←` `→`: line `sku`'s quantity ±1. Steps go one request at a time: a step pressed
+  /// while one is out waits for its answer, then goes from the quantity the server answered
+  /// (two quick `→` on 1 make 3). Each press is its own step, clamped to 1 … the line's
+  /// most, in the order pressed (`→ → ←` on 8 of 9 ends on 8); one that changes nothing
+  /// sends nothing. A failed request drops the steps still waiting (they counted on it).
+  pub async fn step_quantity(self, sku: String, delta: i8) -> Result<(), ApiFailure> {
+    self.steps.update(|steps| steps.push((sku, delta)));
+    if self.stepping.get_untracked() {
+      // The step under way sends it.
+      return Ok(());
+    }
+    self.stepping.set(true);
+    let mut outcome = Ok(());
+    while let Some((sku, delta)) = self.steps.with_untracked(|steps| steps.first().cloned()) {
+      self.steps.update(|steps| {
+        steps.remove(0);
+      });
+      let Some((_, line)) = self.line(&sku) else {
+        continue;
+      };
+      let most = line.max_quantity.clamp(1, MAX_LINE_QUANTITY);
+      let next = line.quantity.saturating_add_signed(delta).clamp(1, most);
+      if next == line.quantity {
+        continue;
+      }
+      if let Err(failure) = self.set_quantity(sku, next).await {
+        self.steps.set(Vec::new());
+        outcome = Err(failure);
+        break;
+      }
+    }
+    self.stepping.set(false);
+    outcome
   }
 
   /// `space`: selects or unselects line `sku`.
@@ -690,7 +726,8 @@ impl CartStore {
 
   /// Places the order (after [`Self::begin_checkout`] and the checks). On success the
   /// receipt shows and the cart is what the server left; on failure the cart is as it was
-  /// (a network failure keeps the attempt's key, so a retry cannot order twice).
+  /// (a network failure keeps the attempt's key, so a retry cannot order twice), except
+  /// that `price_changed` reloads it first: the next `c` sends the total now shown.
   pub async fn place_order(self) -> Result<PlacedOrder, ApiFailure> {
     let (attempt, key) = self.attempt.get_untracked();
     let key = key.unwrap_or_else(|| idempotency_key(attempt + 1));
@@ -718,12 +755,19 @@ impl CartStore {
           self.checkout.set(None);
         });
       }
-      Err(failure) => batch(|| {
-        self.checkout.set(None);
-        if !failure.is_network() {
-          self.attempt.set((attempt + 1, None));
+      Err(failure) => {
+        if failure.is(ErrorCode::PriceChanged) {
+          // The total the member confirmed is not the server's any more: show the new one
+          // before they press `c` again (a retry would send the old total once more).
+          self.fetch().await;
         }
-      }),
+        batch(|| {
+          self.checkout.set(None);
+          if !failure.is_network() {
+            self.attempt.set((attempt + 1, None));
+          }
+        });
+      }
     }
     result
   }
@@ -744,6 +788,7 @@ impl CartStore {
       self.coupon_feedback.set(None);
       self.checkout.set(None);
       self.receipt.set(None);
+      self.steps.set(Vec::new());
     });
   }
 }
@@ -754,7 +799,57 @@ mod tests {
   use nsh_core::element::{Runtime, create_root};
 
   use super::*;
-  use crate::api::{ApiClient, FixtureSet, Transport, now_or_never};
+  use crate::api::{ApiClient, FixtureSet, Script, Stepped, Transport, now_or_never};
+
+  const CART: &str = include_str!("../../../../packages/contract/fixtures/v1/cart/cart.json");
+  const CART_EMPTY: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/cart/cart-empty.json");
+  const GUEST_QUOTE: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/cart/guest-quote.json");
+  const LOGIN: &str = include_str!("../../../../packages/contract/fixtures/v1/auth/login.json");
+  const PRICE_CHANGED: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/errors/price_changed.json");
+  const PINK: &str = "RT-PNK-250G-PO-STD";
+
+  /// Stores over a [`Script`]: every answer comes when the test gives it.
+  fn with_script(test: impl FnOnce(Script, SessionStore, CartStore)) {
+    let runtime = Runtime::default();
+    let _entered = runtime.enter();
+    let script = Script::default();
+    let transport = Transport::Script(script.clone());
+    let (owner, (session, cart)) = create_root(|| {
+      let session = SessionStore::with_client(ApiClient::new(transport, None));
+      (session, CartStore::new(session))
+    });
+    test(script, session, cart);
+    owner.dispose();
+  }
+
+  /// The member cart of the fixtures with line `sku` at `quantity` and the total `total`.
+  fn member_cart(sku: &str, quantity: u8, total: u32) -> String {
+    let mut cart: Cart = serde_json::from_str(CART).unwrap();
+    for line in &mut cart.lines {
+      if line.sku == sku {
+        line.quantity = quantity;
+      }
+    }
+    cart.totals.total = total;
+    serde_json::to_string(&cart).unwrap()
+  }
+
+  /// Reloads the member cart with the pink line at `quantity`.
+  fn cart_with_quantity(script: &Script, cart: CartStore, quantity: u8) {
+    let mut load = Stepped::start(cart.fetch());
+    script.answer(0, 200, member_cart(PINK, quantity, 100));
+    assert!(load.poll().is_some());
+  }
+
+  fn sign_in_scripted(script: &Script, session: SessionStore, cart: CartStore) {
+    session.signed_in(serde_json::from_str(LOGIN).unwrap());
+    let mut load = Stepped::start(cart.fetch());
+    script.answer(0, 200, member_cart(PINK, 1, 426));
+    assert!(load.poll().is_some());
+  }
 
   fn with_cart(set: FixtureSet, test: impl FnOnce(SessionStore, CartStore)) {
     let runtime = Runtime::default();
@@ -924,6 +1019,96 @@ mod tests {
       assert_eq!(cart.cart().and_then(|c| c.address).map(|a| a.id), Some(2));
       let expired = now_or_never(cart.set_quantity("RT-GONE".into(), 2)).unwrap_err();
       assert!(expired.is(ErrorCode::NotFound));
+    });
+  }
+
+  #[test]
+  fn an_older_quote_landing_late_leaves_the_guest_lines_alone() {
+    with_script(|script, _, cart| {
+      // The cart page's load (no lines yet), then `a` on the list before it answered.
+      let mut load = Stepped::start(cart.fetch());
+      let add = Stepped::start(cart.add(line("yirga", 2)));
+      assert_eq!(script.calls(), ["POST /cart/quote", "POST /cart/quote"]);
+      script.answer(1, 200, GUEST_QUOTE);
+      add.finish().unwrap();
+      script.answer(0, 200, CART_EMPTY);
+      assert!(load.poll().is_some());
+      assert_eq!(cart.guest().lines, vec![line("yirga", 2)]);
+      assert_eq!(cart.item_count(), 2, "the screen still shows the add");
+      // The next add quotes both lines, not only the new one.
+      let _next = Stepped::start(cart.add(line("pinkb", 1)));
+      let lines = script.body(0)["lines"].as_array().unwrap().len();
+      assert_eq!(lines, 2);
+    });
+  }
+
+  #[test]
+  fn quick_quantity_steps_go_one_at_a_time_from_the_latest_answer() {
+    with_script(|script, session, cart| {
+      sign_in_scripted(&script, session, cart);
+      let mut first = Stepped::start(cart.step_quantity(PINK.into(), 1));
+      // The second `→` before the first answer: it waits for it.
+      now_or_never(cart.step_quantity(PINK.into(), 1)).unwrap();
+      assert_eq!(script.calls(), [format!("PATCH /cart/lines/{PINK}")]);
+      assert_eq!(script.body(0)["quantity"], 2);
+      script.answer(0, 200, member_cart(PINK, 2, 530));
+      assert!(first.poll().is_none(), "the waiting step goes out now");
+      assert_eq!(script.body(0)["quantity"], 3);
+      script.answer(0, 200, member_cart(PINK, 3, 634));
+      first.finish().unwrap();
+      assert_eq!(cart.cursor_line().map(|l| l.quantity), Some(3));
+      // A failed step drops the ones counting on it.
+      let first = Stepped::start(cart.step_quantity(PINK.into(), 1));
+      now_or_never(cart.step_quantity(PINK.into(), 1)).unwrap();
+      script.drop_connection(0);
+      assert!(first.finish().unwrap_err().is_network());
+      assert!(script.calls().is_empty());
+      assert_eq!(cart.cursor_line().map(|l| l.quantity), Some(3));
+      // At the line's most (9): `→` out, then `→` `←` pressed. Each press clamps on its own:
+      // the second `→` changes nothing, the `←` goes back to 8.
+      cart_with_quantity(&script, cart, 8);
+      let mut first = Stepped::start(cart.step_quantity(PINK.into(), 1));
+      now_or_never(cart.step_quantity(PINK.into(), 1)).unwrap();
+      now_or_never(cart.step_quantity(PINK.into(), -1)).unwrap();
+      assert_eq!(script.body(0)["quantity"], 9);
+      script.answer(0, 200, member_cart(PINK, 9, 900));
+      assert!(first.poll().is_none(), "the `←` goes out");
+      assert_eq!(script.body(0)["quantity"], 8);
+      script.answer(0, 200, member_cart(PINK, 8, 800));
+      first.finish().unwrap();
+      assert!(script.calls().is_empty());
+      assert_eq!(cart.cursor_line().map(|l| l.quantity), Some(8));
+      cart_with_quantity(&script, cart, 3);
+      // `→` then `←` before the answer: nothing more to send.
+      let mut first = Stepped::start(cart.step_quantity(PINK.into(), 1));
+      now_or_never(cart.step_quantity(PINK.into(), -1)).unwrap();
+      script.answer(0, 200, member_cart(PINK, 4, 738));
+      assert!(first.poll().is_none(), "back to 3");
+      script.answer(0, 200, member_cart(PINK, 3, 634));
+      first.finish().unwrap();
+      assert!(script.calls().is_empty());
+    });
+  }
+
+  #[test]
+  fn a_changed_price_reloads_the_cart_so_the_retry_sends_the_new_total() {
+    with_script(|script, session, cart| {
+      sign_in_scripted(&script, session, cart);
+      cart.begin_checkout();
+      let mut order = Stepped::start(cart.place_order());
+      assert_eq!(script.calls(), ["POST /orders"]);
+      assert_eq!(script.body(0)["expectedTotal"], 426);
+      script.answer(0, 409, PRICE_CHANGED);
+      assert!(order.poll().is_none(), "the cart reloads first");
+      assert!(cart.submitting(), "no second `c` while it reloads");
+      assert_eq!(script.calls(), ["GET /cart"]);
+      script.answer(0, 200, member_cart(PINK, 1, 436));
+      assert!(order.finish().unwrap_err().is(ErrorCode::PriceChanged));
+      assert!(!cart.submitting());
+      assert_eq!(cart.total(), 436, "the new total shows");
+      cart.begin_checkout();
+      let _retry = Stepped::start(cart.place_order());
+      assert_eq!(script.body(0)["expectedTotal"], 436);
     });
   }
 
