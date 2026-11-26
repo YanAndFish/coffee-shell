@@ -17,15 +17,18 @@ checkout needs no database step. `db:reset` is for humans only: Prisma refuses `
 
 `pnpm dev` (`scripts/dev.mjs`) prints `✓ ready — connect with: ssh -p 2222 localhost` once the backend answers
 `/v1/health` and the gateway listens. It fails with a clear message when a piece is missing (no `dev` script in
-`apps/server`, cargo build failure, port in use, the gateway exiting). Ctrl+C (or SIGINT/SIGTERM to
-`node scripts/dev.mjs`) stops whatever runs, in any phase: the cargo build (with its rustc jobs) as well as backend
-and gateway, each in its own process group. `pnpm dev --skip-build` reuses the built binaries. Run it in the
-background for automation (`run_in_background`), then wait for the line containing `✓ ready` (plain `ready` also
-matches the seed's `already present`). Other ports: `PORT=3917 TTY_GATEWAY_ADDR=127.0.0.1:2917`.
+`apps/server`, cargo build failure, port in use, a configuration that fails `tty-gateway --check` (run before the
+gateway starts), the gateway exiting). Ctrl+C (or SIGINT/SIGTERM/SIGHUP to `node scripts/dev.mjs`) stops whatever
+runs, in any phase: the cargo build (with its rustc jobs) as well as backend and gateway, each in its own process
+group. The gateway's log lines carry the tag `[gateway]`. `pnpm dev --skip-build` reuses the built binaries. Run
+it in the background for automation (`run_in_background`), then wait for the line containing `✓ ready` (plain
+`ready` also matches the seed's `already present`). Other ports: `PORT=3917 TTY_GATEWAY_ADDR=127.0.0.1:2917`.
 Each session starts `target/debug/coffee-tui` afresh, so `cargo build -p coffee-tui` is enough to try a TUI change
 without restarting `pnpm dev`.
 
-The gateway runs `target/debug/tty-gateway --config deploy/gateway.toml`. That file is the shop: the banner, the
+The gateway runs `target/debug/tty-gateway --config deploy/gateway.toml` (`TTY_GATEWAY_CONFIG=FILE pnpm dev` picks
+another file; `TTY_GATEWAY_ADDR` and `TTY_GATEWAY_HOST_KEY` are passed on; the old `COFFEE_SSH_ADDR` /
+`COFFEE_SSH_HOST_KEY` are ignored with a warning). That file is the shop: the banner, the
 Chinese messages, the limits and two routes. The **SSH user name** picks the route: `gallery` gets the UI gallery
 (`coffee-tui` with `COFFEE_UI_GALLERY=1`), `coffee`, `shop` and every other name (the default route) get the shop.
 `pnpm dev` gives the gateway `COFFEE_API_URL` and a random per-run `COFFEE_INTERNAL_KEY` (never printed); the
@@ -37,7 +40,9 @@ Limits are in the file, not the environment (`deploy/README.md` lists every key)
 new connections per address per minute, so a script that connects in a tight loop hits it. Use a copy with
 `connections_per_minute = 0` (and a free `listen`) and start the gateway on it yourself; never edit the limits in
 `deploy/gateway.toml` for a test. Check any file first: `target/debug/tty-gateway --check --config FILE`. A running
-gateway rereads its file on `kill -HUP <pid>` (new connections only; a broken file keeps the old one).
+gateway rereads its file on a SIGHUP to **its own** pid (`pkill -HUP -x tty-gateway`; a SIGHUP to `dev.mjs` stops
+everything): new connections only; the log says `reloaded … changes=routes added … · removed … · changed …`, or
+`reload failed: the running configuration stays`.
 
 Without a backend: `COFFEE_API_URL=fixture: target/debug/tty-gateway --config deploy/gateway.toml` (after
 `cargo build -p coffee-tui -p tty-gateway`) serves sessions from the committed fixtures (the header shows
@@ -117,8 +122,10 @@ pgrep -fl coffee-tui                       # after the client is gone: no childr
 
 Killing the client (`kill -9` the `ssh` process) must also end its `coffee-tui` within 2 seconds (the gateway logs
 `session ended: client left ... how="hangup"`); so must a client EOF (`ssh -tt ... </dev/null` ends at once). A
-SIGTERM to `tty-gateway` with sessions open tells each client it is shutting down, hangs the programs up and exits
-within `server.shutdown_grace` (2 s) + 1 s. When done, stop `pnpm dev` (Ctrl+C, or SIGINT to `pnpm dev` and
+SIGTERM to `tty-gateway` with sessions open resets each client's terminal, shows `shutting_down`, hangs the
+programs up and exits within `server.shutdown_grace` (2 s) + 1 s (the log ends with `stopped done=true millis=…`).
+A second SIGTERM/SIGINT during that drain exits at once with status 1 and can leave session programs behind: check
+`pgrep -fl coffee-tui` after it. When done, stop `pnpm dev` (Ctrl+C, or SIGINT to `pnpm dev` and
 `node scripts/dev.mjs`) and prove nothing is left:
 `pgrep -fl "dev.mjs|tty-gateway|coffee-tui|src/main.ts"` prints nothing and ports 3000/2222 are free
 (`lsof -nP -iTCP:3000 -iTCP:2222 -sTCP:LISTEN`).
@@ -135,10 +142,12 @@ Two layers, both automated:
   depth, the brand). Fast. `TTY_GATEWAY_LOG=info` makes their servers log to stderr.
 - `pnpm test:e2e:real` builds `coffee-tui` + `tty-gateway` and runs `scripts/e2e/run.py`: the shop's flows over the
   **real** stack. Each flow gets a copy of a freshly migrated and seeded SQLite database, its own backend
-  (`node apps/server/src/main.ts`) and `tty-gateway` (on `deploy/gateway.toml`, with its own port and no connection
-  rate) on free ports, and stock `ssh` clients (throwaway keys in
-  `.data/e2e/work/keys`, or none) on PTYs read by `pty-run.py`'s emulator. Flows: `main`, `money`, `stock`,
-  `session`, `gateway` (what each checks: `docs/acceptance.md`). About 2 minutes.
+  (`node apps/server/src/main.ts`) and `tty-gateway` (on a copy of `deploy/gateway.toml` read with `tomllib`, with
+  `connections_per_minute = 0` and its own port and host key) on free ports, and stock `ssh` clients (throwaway keys
+  in `.data/e2e/work/keys`, or none; `stack.connect(name, key, user="gallery")` picks the route) on PTYs read by
+  `pty-run.py`'s emulator, which honours synchronized updates (mode 2026): the driver reads whole frames, never half
+  a redraw. Flows: `main`, `money`, `stock`, `session`, `gateway` (the three user names and which `COFFEE_*` names
+  each route's session gets, too; what each checks: `docs/acceptance.md`). About 2 minutes.
 
 ```sh
 pnpm test:e2e:real                          # all flows
@@ -148,7 +157,7 @@ E2E_WAIT=30 python3 scripts/e2e/run.py      # more time per step on a slow machi
 python3 scripts/e2e/run.py --gateway 127.0.0.1:2222 smoke   # a purchase on a gateway you started
 ```
 
-Output: `.data/e2e/<flow>/NN-<session>-<step>.txt` (text screenshots), `backend.log`, `sshd.log`, `shop.db`, and on a
+Output: `.data/e2e/<flow>/NN-<session>-<step>.txt` (text screenshots), `backend.log`, `gateway.log`, `shop.db`, and on a
 failure `FAIL.txt` with the failing step, the last screen of every open session and the log tails. After each flow
 the runner fails if a `coffee-tui` is left or a log holds a password, the internal key or a bearer token.
 
@@ -157,7 +166,8 @@ Writing or changing a flow (`scripts/e2e/flows.py`; shop steps in `shop.py`; the
 - **Wait for the screen, never for time or a key count.** `t.wait("text", ...)`, `t.wait_any`, `t.gone`,
   `t.wait_footer` (the status bar), `t.wait_for(predicate, "what")`; each has a timeout and fails with the screen.
   Steps that move focus or a selection press their key until the screen confirms (`focus_login_field` reads the
-  status bar's `离开输入` and the cursor's row; `choose` reads the `▐ … ▌` option), with a bound.
+  focus from the card's glyphs, a heavy box around the focused field; `choose` reads the `▐ … ▌` option), with a
+  bound.
 - Wait for a page to be ready before keys that act on it (a detail is ready when its `SKU RT-…` line shows).
 - `t.key("esc")` pauses after Esc so the next key is not read as Alt+key.
 - Money is checked against `shop.quote()` (an independent copy of the rules), the database through `stack.sql()`.
