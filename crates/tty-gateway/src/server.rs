@@ -305,12 +305,17 @@ impl Drop for Counted {
   }
 }
 
-/// The requested terminal.
+/// 客户端请求的终端设置。
 #[derive(Clone, Debug)]
 struct PtyRequest {
+  /// 终端类型，传给子进程的 `TERM`。
   term: String,
+  /// 终端列数。
   cols: u16,
+  /// 终端行数。
   rows: u16,
+  /// 删除光标左侧字符的按键值。`None` 使用系统默认值，255 表示禁用。
+  erase: Option<u8>,
 }
 
 /// One SSH connection (russh calls it a session).
@@ -480,6 +485,7 @@ impl Connection {
     let task = SessionTask {
       conn: self.id,
       env: self.session_env(&route, &pty),
+      erase: pty.erase,
       route,
       link: link_end,
       handle,
@@ -613,7 +619,7 @@ impl server::Handler for Connection {
     row_height: u32,
     _pix_width: u32,
     _pix_height: u32,
-    _modes: &[(Pty, u32)],
+    modes: &[(Pty, u32)],
     session: &mut Session,
   ) -> Result<(), Self::Error> {
     if self.channel != Some(channel) || self.started {
@@ -623,6 +629,11 @@ impl server::Handler for Connection {
       term: sane_term(term),
       cols: clamp_size(col_width),
       rows: clamp_size(row_height),
+      erase: modes
+        .iter()
+        .filter(|(mode, _)| *mode == Pty::VERASE)
+        .filter_map(|(_, value)| u8::try_from(*value).ok())
+        .next_back(),
     });
     session.channel_success(channel)
   }

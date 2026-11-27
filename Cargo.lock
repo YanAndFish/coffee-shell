@@ -4086,6 +4086,7 @@ name = "tty-gateway"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "libc",
  "pty-process",
  "rand 0.10.4",
  "russh",

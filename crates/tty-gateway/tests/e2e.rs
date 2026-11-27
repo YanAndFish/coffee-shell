@@ -7,7 +7,8 @@ use std::{
 };
 
 use tty_gateway_testkit::{
-  Login, Terminal, TestServer, alive, connect, crash_bin, field, probe_bin, quote_path, temp_dir,
+  Login, Terminal, TestServer, alive, connect, crash_bin, field, probe_bin, quote_path, script_bin,
+  temp_dir,
 };
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -43,6 +44,87 @@ APP_KEY = "${{env:APP_KEY}}"
 
 fn probe(dir: &Path) -> std::path::PathBuf {
   probe_bin(dir, "probe.sh", VARS)
+}
+
+/// 通过 SSH 发送输入，检查子进程实际读到的完整一行。
+async fn assert_canonical_input(modes: &[(russh::Pty, u32)], input: &[u8], expected: &str) {
+  let dir = temp_dir("erase");
+  let program = script_bin(
+    &dir,
+    "read-line.sh",
+    "stty -echo\nprintf 'READY\\n'\nIFS= read -r line\nprintf 'LINE=<%s>\\n' \"$line\"\n",
+  );
+  let server = TestServer::start(&app(&program, "")).await;
+  let (handle, _) = connect(server.addr, Login::Keyless).await;
+  let channel = handle.channel_open_session().await.unwrap();
+  channel
+    .request_pty(true, "xterm-256color", 80, 24, 0, 0, modes)
+    .await
+    .unwrap();
+  channel.request_shell(true).await.unwrap();
+  let mut terminal = Terminal::over(channel, 80, 24);
+  assert!(
+    terminal.wait_raw("READY", WAIT).await,
+    "{}",
+    terminal.raw_text()
+  );
+  terminal.send(input).await;
+  assert!(terminal.wait_closed(WAIT).await, "{}", terminal.raw_text());
+  assert_eq!(
+    field(&terminal.raw_text(), "LINE"),
+    Some(format!("<{expected}>")),
+    "终端模式：{modes:?}，输出：{:?}",
+    terminal.raw_text()
+  );
+  assert_eq!(terminal.exit_status, Some(0));
+  server.shutdown().await;
+  std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn requested_erase_characters_edit_the_childs_input() {
+  for erase in *b"\x08\x7f" {
+    assert_canonical_input(
+      &[(russh::Pty::VERASE, u32::from(erase))],
+      &[b'a', b'b', erase, b'c', b'\n'],
+      "ac",
+    )
+    .await;
+  }
+}
+
+/// 读取新建 PTY 的默认 erase 字符，避免测试依赖某个平台的缺省按键。
+fn default_erase_character() -> u8 {
+  let (_master, slave) = pty_process::open().unwrap();
+  rustix::termios::tcgetattr(&slave).unwrap().special_codes
+    [rustix::termios::SpecialCodeIndex::VERASE]
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_omitted_erase_mode_uses_the_system_default() {
+  let erase = default_erase_character();
+  assert_canonical_input(&[], &[b'a', b'b', erase, b'c', b'\n'], "ac").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_erase_value_larger_than_a_byte_uses_the_system_default() {
+  let erase = default_erase_character();
+  assert_canonical_input(
+    &[(russh::Pty::VERASE, 0x108)],
+    &[b'a', b'b', erase, b'c', b'\n'],
+    "ac",
+  )
+  .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_disabled_erase_mode_passes_backspace_and_delete_to_the_child() {
+  assert_canonical_input(
+    &[(russh::Pty::VERASE, 255)],
+    b"ab\x08\x7fc\n",
+    "ab\x08\x7fc",
+  )
+  .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
