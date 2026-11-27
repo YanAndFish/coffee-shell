@@ -52,7 +52,13 @@ pub fn panel(stores: Stores, shape: Shape) -> View {
       untracked(|| match body {
         Body::Loading => ui::loading_live("正在载入…", animate).into_element(),
         Body::Failed => ui::error_state(
-          "购物车加载失败",
+          move || {
+            SharedString::from(if cart.merge_pending() {
+              "购物车同步失败"
+            } else {
+              "购物车加载失败"
+            })
+          },
           move || {
             SharedString::from(
               cart

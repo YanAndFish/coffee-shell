@@ -160,6 +160,17 @@ impl<T: Clone + PartialEq + 'static> Remote<T> {
     })
   }
 
+  /// Starts a load whose answer stands for other data than the state holds (the member
+  /// cart after the guest's quote): loading with nothing shown, and nothing kept should it
+  /// fail. The revision its answer must carry.
+  pub fn begin_fresh(&self) -> u64 {
+    batch(|| {
+      let revision = self.bump();
+      self.state.set(RemoteState::Loading(None));
+      revision
+    })
+  }
+
   /// Starts a request that keeps the state as it is (a mutation: the page keeps showing
   /// the data, not a loading state), and the revision its answer must carry.
   pub fn begin_quiet(&self) -> u64 {
