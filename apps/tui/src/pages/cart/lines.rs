@@ -63,7 +63,7 @@ pub fn panel(stores: Stores, shape: Shape) -> View {
           },
           "⏎",
           "重试",
-          move || press(&stores, "cart.checkout"),
+          move || press(&stores, "cart.retry"),
         )
         .into_element(),
         Body::Empty => ui::empty_state_with(
