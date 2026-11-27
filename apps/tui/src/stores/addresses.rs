@@ -145,7 +145,7 @@ pub struct AddressSave {
   pub address: Address,
   /// 是否新增了地址。false 表示修改已有地址。
   pub created: bool,
-  /// 是否保存了当前草稿。false 表示用户已关闭草稿或打开了另一份草稿。
+  /// 响应到达时，发起保存的草稿是否还打开。
   pub current_dialog: bool,
 }
 
@@ -169,11 +169,11 @@ fn no_items(book: &AddressList) -> bool {
 /// The address book's state behind its functions. `Copy`: hold it anywhere.
 #[derive(Clone, Copy)]
 pub struct AddressStore {
-  /// 当前登录会话的请求客户端。
+  /// 当前会话，用于取得请求客户端。
   session: SessionStore,
   /// 服务端返回的地址本及加载状态。
   book: Remote<AddressList>,
-  /// 当前选中的地址卡片。None 表示由地址本选择第一张卡片。
+  /// 当前选中的地址卡片。None 表示尚未指定卡片。
   cursor: Signal<Option<AddressCursor>>,
   /// 当前打开的地址草稿。None 表示弹窗已关闭。
   dialog: Signal<Option<AddressDraft>>,
