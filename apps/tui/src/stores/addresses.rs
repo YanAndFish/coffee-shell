@@ -138,6 +138,17 @@ pub struct AddressDraft {
   pub saving: bool,
 }
 
+/// 地址保存成功后的数据，以及是否需要关闭发起保存的弹窗。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AddressSave {
+  /// 服务端返回的地址。
+  pub address: Address,
+  /// 是否新增了地址。false 表示修改已有地址。
+  pub created: bool,
+  /// 响应到达时，发起保存的草稿是否还打开。
+  pub current_dialog: bool,
+}
+
 /// The cursor `delta` cells from `current` in a grid of `columns` over `items` and the new
 /// card, clamped to the ends.
 pub fn step_cursor(items: &[Address], current: AddressCursor, delta: isize) -> AddressCursor {
@@ -158,10 +169,23 @@ fn no_items(book: &AddressList) -> bool {
 /// The address book's state behind its functions. `Copy`: hold it anywhere.
 #[derive(Clone, Copy)]
 pub struct AddressStore {
+  /// 当前会话，用于取得请求客户端。
   session: SessionStore,
+  /// 服务端返回的地址本及加载状态。
   book: Remote<AddressList>,
+  /// 当前选中的地址卡片。None 表示尚未指定卡片。
   cursor: Signal<Option<AddressCursor>>,
+  /// 当前打开的地址草稿。None 表示弹窗已关闭。
   dialog: Signal<Option<AddressDraft>>,
+  /// 草稿版本号，用来丢弃其他草稿的保存反馈。
+  dialog_version: Signal<u64>,
+  /// 地址本重置次数，用来丢弃退出登录前发出的保存结果。
+  reset_version: Signal<u64>,
+  /// 当前会话中尚未完成的地址修改数量，包括弹窗关闭前发出的保存。
+  pending_changes: Signal<usize>,
+  /// 是否有成功修改的地址本被丢弃，需要在修改结束后补读。
+  book_needs_refresh: Signal<bool>,
+  /// 地址弹窗中当前获得焦点的控件。
   focus: Signal<DialogStop>,
 }
 
@@ -173,6 +197,10 @@ impl AddressStore {
       book: Remote::new(no_items),
       cursor: signal(None),
       dialog: signal(None),
+      dialog_version: signal(0),
+      reset_version: signal(0),
+      pending_changes: signal(0),
+      book_needs_refresh: signal(false),
       focus: signal(DialogStop::FIRST),
     }
   }
@@ -304,7 +332,11 @@ impl AddressStore {
     batch(|| {
       self.book.reset();
       self.cursor.set(None);
-      self.dialog.set(None);
+      self.reset_version.update(|version| *version += 1);
+      self.pending_changes.set(0);
+      self.book_needs_refresh.set(false);
+      self.close_dialog();
+      self.focus.set(DialogStop::FIRST);
     });
   }
 
@@ -314,10 +346,17 @@ impl AddressStore {
     self,
     request: impl Future<Output = Result<AddressList, ApiFailure>>,
   ) -> Result<AddressList, ApiFailure> {
+    let reset_version = self.reset_version.get_untracked();
     let revision = self.book.begin_quiet();
+    self.pending_changes.update(|pending| *pending += 1);
     let result = request.await;
-    if let Ok(book) = &result {
-      self.book.finish_quiet(revision, Ok(book.clone()));
+    if self.reset_version.get_untracked() == reset_version {
+      self.pending_changes.update(|pending| *pending -= 1);
+      if let Ok(book) = &result
+        && !self.book.finish_quiet(revision, Ok(book.clone()))
+      {
+        self.book_needs_refresh.set(true);
+      }
     }
     result
   }
@@ -347,6 +386,28 @@ impl AddressStore {
     result
   }
 
+  /// 地址修改全部结束后，补读被丢弃的成功结果对应的地址本。
+  /// 返回补读期间是否仍是同一次登录，用于决定是否刷新购物车。
+  /// 补读失败时，地址本显示读取失败并提供重试入口。
+  pub async fn refresh_after_changes(self) -> bool {
+    let reset_version = self.reset_version.get_untracked();
+    if self.pending_changes.get_untracked() > 0 || !self.book_needs_refresh.get_untracked() {
+      return true;
+    }
+    let revision = self.book.begin();
+    let result = self.session.client().addresses().await;
+    if self.reset_version.get_untracked() != reset_version {
+      return false;
+    }
+    if let Err(failure) = &result {
+      self.session.report(failure);
+    }
+    if self.book.finish(revision, result) {
+      self.book_needs_refresh.set(false);
+    }
+    true
+  }
+
   // --- The dialog ---------------------------------------------------------------------
 
   /// The dialog's draft, while it is open (tracked).
@@ -374,6 +435,7 @@ impl AddressStore {
   /// `n`: a new address (`标签` 家; `设为默认` checked when the book is empty).
   pub fn open_new(&self) {
     let first = self.book.with_untracked(|book| book.is_none_or(no_items));
+    self.dialog_version.update(|version| *version += 1);
     self.focus.set(DialogStop::FIRST);
     self.dialog.set(Some(AddressDraft {
       editing: None,
@@ -392,6 +454,7 @@ impl AddressStore {
     let Some(address) = untracked(|| self.address(id)) else {
       return;
     };
+    self.dialog_version.update(|version| *version += 1);
     self.focus.set(DialogStop::FIRST);
     self.dialog.set(Some(AddressDraft {
       editing: Some(id),
@@ -410,6 +473,7 @@ impl AddressStore {
 
   /// Closes the dialog (Esc, or after a save).
   pub fn close_dialog(&self) {
+    self.dialog_version.update(|version| *version += 1);
     self.dialog.set(None);
   }
 
@@ -425,16 +489,18 @@ impl AddressStore {
     });
   }
 
-  /// Saves the draft: the server validates; on success the dialog closes, the book is the
-  /// server's and the cursor goes to the saved card; a field's error puts the dialog's
-  /// focus on that field. The saved address and whether it was new.
-  pub async fn save(self) -> Result<(Address, bool), ApiFailure> {
+  /// 保存草稿，返回保存的地址和弹窗是否属于本次保存。
+  /// 当前草稿保存成功后关闭，字段错误会显示在对应字段上。
+  /// 地址本重置后，尚未完成的保存返回 Ok(None)。
+  pub async fn save(self) -> Result<Option<AddressSave>, ApiFailure> {
     let Some(draft) = self.dialog.get_untracked() else {
       return Err(ApiFailure::of(ErrorCode::NotFound));
     };
     if draft.saving {
       return Err(ApiFailure::of(ErrorCode::BadRequest));
     }
+    let dialog_version = self.dialog_version.get_untracked();
+    let reset_version = self.reset_version.get_untracked();
     self.dialog.update(|d| {
       if let Some(d) = d {
         d.saving = true;
@@ -445,20 +511,40 @@ impl AddressStore {
     input.phone = input.phone.filter(|p| !p.trim().is_empty());
     let client = self.session.client();
     let revision = self.book.begin_quiet();
+    self.pending_changes.update(|pending| *pending += 1);
     let result: Result<AddressSaved, ApiFailure> = match draft.editing {
       Some(id) => client.update_address(id, &input).await,
       None => client.create_address(&input).await,
     };
+    if self.reset_version.get_untracked() != reset_version {
+      return Ok(None);
+    }
+    self.pending_changes.update(|pending| *pending -= 1);
+    let current_dialog = self.dialog_version.get_untracked() == dialog_version;
     match result {
       Ok(saved) => {
         batch(|| {
-          self.book.finish_quiet(revision, Ok(saved.book));
-          self.cursor.set(Some(AddressCursor::Card(saved.address.id)));
-          self.dialog.set(None);
+          let updated = self.book.finish_quiet(revision, Ok(saved.book));
+          if !updated {
+            self.book_needs_refresh.set(true);
+          }
+          if current_dialog {
+            if updated {
+              self.cursor.set(Some(AddressCursor::Card(saved.address.id)));
+            }
+            self.close_dialog();
+          }
         });
-        Ok((saved.address, draft.editing.is_none()))
+        Ok(Some(AddressSave {
+          address: saved.address,
+          created: draft.editing.is_none(),
+          current_dialog,
+        }))
       }
       Err(failure) => {
+        if !current_dialog {
+          return Err(failure);
+        }
         let error = FieldError {
           field: field_of(&failure),
           message: save_failure_line(&failure),
@@ -612,9 +698,10 @@ mod tests {
         None,
         "an edit clears the error"
       );
-      let (saved, new) = now_or_never(book.save()).unwrap();
-      assert!(new);
-      assert_eq!(saved.id, 4);
+      let saved = now_or_never(book.save()).unwrap().unwrap();
+      assert!(saved.created);
+      assert!(saved.current_dialog);
+      assert_eq!(saved.address.id, 4);
       assert_eq!(book.dialog(), None);
       assert_eq!(book.cursor(), AddressCursor::Card(4));
       assert_eq!(book.count(), 4);
@@ -633,8 +720,8 @@ mod tests {
         Some(11),
         "the full phone"
       );
-      let (_, new) = now_or_never(book.save()).unwrap();
-      assert!(!new);
+      let saved = now_or_never(book.save()).unwrap().unwrap();
+      assert!(!saved.created);
     });
   }
 
