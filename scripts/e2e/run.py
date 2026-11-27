@@ -13,7 +13,8 @@ internal key, and no screen or written configuration the internal key.
 
 Needs the debug binaries (`cargo build -p coffee-tui -p tty-gateway`; `pnpm test:e2e:real`
 builds them), `pnpm install` done, `ssh` and `ssh-keygen`. Output (text screenshots, logs,
-FAIL.txt on failure) goes to `.data/e2e/` or `--out`.
+FAIL.txt on failure) goes to `.data/e2e/` or `--out`: a new or empty directory, or an earlier
+report, whose own entries are replaced and whose other files are kept.
 """
 
 from __future__ import annotations
@@ -95,6 +96,41 @@ def run_flow(name: str, out: Path, work: Path, template: Path | None, bins: Path
   return ok, time.monotonic() - started
 
 
+MARKER = ".e2e-report"
+RUN_DIR = re.compile(r"run-\d+")
+
+
+def own_entry(name: str) -> bool:
+  """Whether `name` is something a run writes at the top of its output directory: the
+  marker, `work/`, a flow's directory or a `--repeat` run's `run-N/`."""
+  return name in (MARKER, "work") or name in FLOWS or bool(RUN_DIR.fullmatch(name))
+
+
+def prepare_out(out: Path) -> None:
+  """Makes `out` ready for a new report. A missing or empty directory is used as it is; an
+  earlier report (it has the marker, or holds only what a run writes) loses what the earlier
+  run wrote, and keeps everything else. Any other directory is refused: nothing in it is
+  deleted. Raises ValueError with the reason."""
+  if out.exists() and not out.is_dir():
+    raise ValueError(f"--out {out} is not a directory")
+  out.mkdir(parents=True, exist_ok=True)
+  names = sorted(path.name for path in out.iterdir())
+  foreign = [name for name in names if not own_entry(name)]
+  if foreign and MARKER not in names:
+    shown = ", ".join(foreign[:5]) + (", …" if len(foreign) > 5 else "")
+    raise ValueError(f"--out {out} is not empty and not an e2e report ({shown}); "
+                     "give an empty or new directory")
+  for name in names:
+    if own_entry(name):
+      path = out / name
+      if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+      else:
+        path.unlink()
+  (out / MARKER).write_text("Written by scripts/e2e/run.py: the next run here replaces its "
+                            "work/, flow and run-N/ directories and keeps everything else.\n")
+
+
 def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                    epilog="Flows: " + ", ".join(DEFAULT) + " (default); "
@@ -134,8 +170,10 @@ def main() -> int:
         parser.error(f"{bins / binary} is not built: cargo build -p coffee-tui -p tty-gateway")
 
   out = args.out.resolve()
-  if out.exists():
-    shutil.rmtree(out)
+  try:
+    prepare_out(out)
+  except ValueError as error:
+    parser.error(str(error))
   work = out / "work"
   work.mkdir(parents=True)
   template = None
