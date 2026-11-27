@@ -3,14 +3,14 @@
 //!
 //! # Carriers
 //!
-//! nsh 0.6.1 draws an app's colours in a terminal as ANSI *meanings*, not values: a saturated
+//! nsh (0.6.1, 0.7.1) draws an app's colours in a terminal as ANSI *meanings*, not values: a saturated
 //! colour becomes the accent of its hue band (`Yellow`, `Green`, `Red`, `Cyan`, `Blue`,
 //! `Magenta`), a neutral one the default foreground or the same plus `DIM`, and a fill is
 //! drawn only on a box under three rows tall, as its exact RGB when it is saturated and the
 //! standard gray otherwise. Nine shades of brown would all come out as "dim".
 //!
 //! So each design token travels through nsh on a **carrier** that survives that mapping, and
-//! `coffee-host`'s palette pin (`crates/coffee-host/src/palette.rs`) swaps the carrier back for
+//! `coffee-tui`'s palette pin (`crates/coffee-tui/src/palette.rs`) swaps the carrier back for
 //! the token's value at every colour depth:
 //!
 //! - a text tone ([`Tone`]) is a [`Channel`] (the ANSI meaning nsh picks) plus an optional
@@ -31,7 +31,7 @@
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
-/// The ANSI meaning nsh 0.6.1 gives a carrier colour (its `palette::tone`).
+/// The ANSI meaning nsh (0.6.1, 0.7.1) gives a carrier colour (its `palette::tone`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Channel {
   /// The terminal's default foreground (`Reset`): neutral text far from the ground.

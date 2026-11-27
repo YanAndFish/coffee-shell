@@ -7,8 +7,10 @@
 #
 # Starts the pair with a throwaway COFFEE_INTERNAL_KEY and checks: the gateway answers
 # with its SSH banner; the backend is not published and refuses calls without the key; a
-# stock `ssh` session (no key) shows the product list served by the backend, not the
-# built-in sample data; a stock `ssh` session with a key registers, adds a bean, saves an
+# stock `ssh guest@` session (no key; a user name no route lists, so the default route: the
+# shop) shows the product list served by the backend, not the built-in sample data;
+# `ssh gallery@` gets the UI gallery and the gateway logs `route=gallery`; a stock
+# `ssh guest@` session with a key registers, adds a bean, saves an
 # address, checks out and gets its receipt (scripts/e2e/run.py's `smoke` flow; its screens
 # land in .data/e2e-smoke/); the sessions' coffee-tui are gone after the clients leave; a
 # restarted backend starts again on the same database without migrating or seeding twice.
@@ -87,6 +89,14 @@ if grep -q '样例数据' "$screen"; then
   exit 1
 fi
 "${compose[@]}" logs --no-color gateway | grep -E 'session (started|ended)'
+
+step "gallery@ is routed to the UI gallery (deploy/gateway.toml), and the log says so"
+python3 scripts/pty-run.py --size 160x50 --timeout 60 \
+  --step 'until=UI 组件库 GALLERY' --expect '演示环境' \
+  -- ssh -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  -o LogLevel=ERROR -o PubkeyAuthentication=no -o IdentitiesOnly=yes gallery@127.0.0.1 \
+  | tee "$screen"
+"${compose[@]}" logs --no-color gateway | grep -E 'session started.*user="gallery".*route=gallery'
 
 step "a stock ssh session with a key buys: register → add → address → checkout → receipt"
 python3 scripts/e2e/run.py --gateway "127.0.0.1:$port" --out .data/e2e-smoke smoke

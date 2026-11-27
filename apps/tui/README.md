@@ -1,7 +1,8 @@
 # coffee-app — the ROAST/TTY terminal UI
 
-The nsh 0.6.1 (Rust mode) UI of the terminal coffee shop, as a library: `coffee-host` (bin `coffee-tui`) runs
-`coffee_app::App` in a terminal, one process per SSH session. Rules: `CLAUDE.md` and
+The nsh 0.7.1 (Rust mode) UI of the terminal coffee shop, as a library: `coffee-tui` (`crates/coffee-tui`, on the generic
+terminal host `crates/tty-host`) runs `coffee_app::App` in a terminal, one process per SSH session behind
+`tty-gateway` (`ssh -p 2222 localhost` for the shop, `gallery@localhost` for the gallery). Rules: `CLAUDE.md` and
 `.claude/skills/nsh-tui-conventions`; the design: `docs/design/`.
 
 ```sh

@@ -4,6 +4,22 @@
 - 日期：2026-11-22
 - 范围：`crates/coffee-sshd`、`crates/coffee-host`、`deploy/`
 
+> **状态注记（2026-11-26）**：会话模型、认证、Ctrl+C、色深与度量结论仍然有效；名字与配置方式已被
+> [ADR 0003](0003-app-agnostic-gateway.md) 取代，下文保留当时的写法：
+>
+> - `crates/coffee-sshd` → `crates/tty-gateway`（bin `tty-gateway`）；`crates/coffee-host` → 通用的
+>   `crates/tty-host`（`terminal.rs`、`color.rs`、`clipboard.rs`、`interrupt.rs`）+ 咖啡馆的 `crates/coffee-tui`
+>   （bin `coffee-tui`，`palette.rs`、`tests/pin_render.rs`）；`coffee_host::palette::Pin` → `coffee_tui` 的
+>   `Pin`（实现 `tty_host::FrameFilter`）。
+> - `COFFEE_TUI_BIN` 与全部 `COFFEE_SSH_*` 调优变量（`ADDR`、`HOST_KEY`、`MAX_SESSIONS`、`MAX_SESSIONS_PER_IP`、
+>   `CONNECTIONS_PER_MINUTE`、`IDLE_TIMEOUT`、`AUTH_TIMEOUT`、`LOG`）不再存在：改为 `deploy/gateway.toml` 里的
+>   键（`limits.max_sessions` 等）与 `TTY_GATEWAY_CONFIG` / `ADDR` / `HOST_KEY` / `LOG`。`COFFEE_SSH_FINGERPRINT`
+>   仍是应用的输入，由路由的 `env` 表给出。横幅、版本串与中文提示也搬进了这份文件。
+> - “会话边界与限额”里写死的子进程环境，现在是网关的固定部分加上路由的 `env` 表（ADR 0003 第 2 节）。
+> - “尚未做”里的**会话最长时长**已做（`limits.max_session_time`，状态 124）；停机时直接丢下会话的问题由
+>   **优雅停机**解决（ADR 0003 第 4 节）。
+> - 度量测试 `measure_twenty_sessions` 在 `crates/coffee-tui/tests/ssh.rs`（下方复现命令已更新）。
+
 ## 背景
 
 ROAST/TTY 通过 SSH 免密码提供一个 nsh（0.6.1，Rust 模式）写的终端咖啡馆。需要决定一个 SSH
@@ -36,7 +52,7 @@ ROAST/TTY 通过 SSH 免密码提供一个 nsh（0.6.1，Rust 模式）写的终
 
 环境：macOS（Apple Silicon，Darwin 27.2），release 构建，真实 `coffee-tui`（当前占位首页），
 russh 客户端 + `vt100` 终端模拟器，160×50，无公钥登录；度量代码是
-`crates/coffee-sshd/tests/e2e.rs` 的 `measure_twenty_sessions`（`--ignored`）。
+`crates/coffee-sshd/tests/e2e.rs` 的 `measure_twenty_sessions`（`--ignored`；现在在 `crates/coffee-tui/tests/ssh.rs`）。
 
 服务器为独立运行的 release `coffee-sshd`（`COFFEE_SPIKE_ADDR`/`COFFEE_SPIKE_PID`），测试客户端也是
 release 构建。连续两轮：
@@ -85,9 +101,10 @@ RSS 两轮之差来自 macOS 的内存压缩/回收时机（同一二进制、�
 以访客身份走一遍：`Esc` → `g` → 列表 → `⏎` 第一款的详情 → `a` 加入 → `2` 购物车，之后停在购物车上测内存与空闲
 CPU）。同一台机器（Apple M1，8 核，macOS 27.2），release `coffee-sshd` + release `coffee-tui`，后端为
 `node dist/main.mjs`（`pnpm -F @coffee/server build`）+ 新迁移、新种子的 SQLite，带内部密钥；先连一次预热。复现：
-起后端与 release sshd（`COFFEE_SSH_MAX_SESSIONS_PER_IP=64`、`COFFEE_SSH_CONNECTIONS_PER_MINUTE=0`），然后
-`COFFEE_SPIKE_ADDR=127.0.0.1:<端口> COFFEE_SPIKE_PID=<sshd pid> COFFEE_SPIKE_WAIT='耶加雪菲 孔加' cargo test --release
--p coffee-sshd --test e2e measure_twenty_sessions -- --ignored --nocapture`。
+起后端与 release `tty-gateway`（一份 `deploy/gateway.toml` 的副本，`[limits]` 里 `max_sessions_per_ip = 64`、
+`connections_per_minute = 0`；当时是环境变量），然后
+`COFFEE_SPIKE_ADDR=127.0.0.1:<端口> COFFEE_SPIKE_PID=<网关 pid> COFFEE_SPIKE_WAIT='耶加雪菲 孔加' cargo test --release
+-p coffee-tui --test ssh measure_twenty_sessions -- --ignored --nocapture`。
 
 | 指标                                      | 走完 列表→详情→购物车（第 1 轮） | 同（第 2 轮）                | 只停在登录页                |
 | ----------------------------------------- | -------------------------------- | ---------------------------- | --------------------------- |
@@ -152,7 +169,7 @@ CPU）。同一台机器（Apple M1，8 核，macOS 27.2），release `coffee-ss
 
   OpenSSH 默认不转发 `COLORTERM`（macOS 自带配置只 `SendEnv LANG LC_*`），而 `TERM` 原样到达，所以第 4 条
   让 kitty、Ghostty、foot、Alacritty、WezTerm、rio 用原版 `ssh` 也是真彩（同 nsh-tui-host 0.6.1 的
-  `truecolor_brand`；`TERM_PROGRAM` 等经 SSH 到不了，只对本地运行有用）。
+  `truecolor_brand`，0.7.1 未变；`TERM_PROGRAM` 等经 SSH 到不了，只对本地运行有用）。
   第 5 条只在“回答能改变结果”时才问：在已有的启动查询里、DA1 之前加两个 `XTGETTCAP` 请求
   （`DCS + q 524742 ST` 问 `RGB`、`DCS + q 5463 ST` 问 `Tc`，分开发，因为 xterm 遇到第一个不认识的名字就
   停）。终端按序回答，答复先于 DA1 到达，所以**不增加等待**（DA1 一到即结束，上限仍是 1.5 秒）；只有
@@ -263,12 +280,14 @@ nsh 默认“有选区则复制，否则立即退出”。经 SSH 时 raw 模式
   粘贴/焦点报告、结束同步更新、离开备用屏、显示光标、复位颜色），再显示
   “ROAST/TTY 出错了，会话已结束（代码 N）。请重新连接；如果一直这样，请稍后再试。”，以该代码关闭通道，
   日志 `warn`。正常退出（0）不提示。
-- 网关停止（SIGTERM / Ctrl+C）：不再接受新连接；每个会话的程序收到 SIGTERM，自己恢复客户端终端（离开
-  备用屏等）后退出（1 秒内不退则 SIGKILL），它最后的输出先发完；然后 sshd 总是再发一次上面的终端复位
-  （程序可能被信号直接杀死、什么都没恢复），再显示“ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。”，
-  以状态 143 关闭通道，然后断开连接；还在登录的连接直接断开。全部连接结束（至多约 3.5 秒）后进程退出。
-  此前进程直接退出，客户端停在备用屏里。e2e `a_stopping_server_restores_the_client_terminal_before_it_closes`
-  和 `a_program_that_dies_on_sigterm_without_cleanup_still_leaves_a_restored_screen` 固定了这一点。
+- 网关停止（SIGTERM / Ctrl+C）：不再接受新连接；网关总是先发一次上面的终端复位（程序可能被信号直接杀死、
+  什么都没恢复），再显示“ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。”，然后让每个会话的程序退出，
+  以状态 143 关闭通道并断开连接；还在登录的连接直接断开。此前进程直接退出，客户端停在备用屏里。
+  信号、时限与文案的来源现在由 [ADR 0003](0003-app-agnostic-gateway.md) 第 4 节规定（进程组收 SIGHUP，
+  `server.shutdown_grace` 后 SIGKILL，全程至多 grace + 1 秒；文案是 `deploy/gateway.toml` 的 `shutting_down`）。
+  `crates/tty-gateway/tests/lifecycle.rs` 的 `a_shutdown_tells_every_client_and_takes_every_program_down`（程序不做
+  任何恢复）和 `crates/coffee-tui/tests/ssh.rs` 的 `a_shutdown_tells_the_shop_client_and_ends_coffee_tui`（真实
+  `coffee-tui`）固定了这一点。
 
 ### 空闲计时的缺陷（第二阶段修复）
 
@@ -315,19 +334,19 @@ nsh 默认“有选区则复制，否则立即退出”。经 SSH 时 raw 模式
 
 ## 对其他切片的请求
 
-- 根 `.gitignore` 加 `.data/`：`cargo run -p coffee-sshd` 默认把主机密钥生成在工作目录的
+- 根 `.gitignore` 加 `.data/`：网关（现在是 `tty-gateway`，`server.host_key` 的默认值）默认把主机密钥生成在工作目录的
   `.data/ssh_host_ed25519_key`。
 - TUI（`apps/tui`）：Ctrl+C 不再到达应用（宿主拦截），应用不要把 Ctrl+C 绑成任何命令；若想让
   “再按一次 Ctrl+C 退出”出现在自己的状态栏里，需要宿主与应用之间加一个约定（例如应用暴露一个
   信号/回调），目前由宿主覆盖在底行中央 2 秒。
 - TUI：颜色请只用 `theme.json` 的 token，钉色按“ANSI 语义 → token”反查；自定义的饱和色会落到
   最近的色相（黄/绿/红会被钉成 primary/success/destructive），中性色会变成前景或次要文字。
-- 根脚本 `pnpm dev`/`pnpm ssh`：`coffee-sshd` 需要先 `cargo build -p coffee-host`（它在自身旁边找
-  `coffee-tui`）。PTY 驱动脚本若只发一次 `\x03` 期待退出，需要改为两次。
+- 根脚本 `pnpm dev`/`pnpm ssh`：网关需要先构建 `coffee-tui`（现在是 `cargo build -p coffee-tui`；路由的裸程序名
+  先在网关旁边找）。PTY 驱动脚本若只发一次 `\x03` 期待退出，需要改为两次。
 
 ## 后果
 
 - 每会话一个进程的内存与进程数随在线人数线性增长；限额默认 64，容器按“64 × 单会话内存 + sshd”
   规划。
-- `coffee-tui` 必须与 `coffee-sshd` 一起发布（同一镜像，`COFFEE_TUI_BIN`）。
+- `coffee-tui` 必须与网关一起发布（同一镜像；现在由 `deploy/gateway.toml` 的路由点名，不再有 `COFFEE_TUI_BIN`）。
 - 回退路线保留：若第二阶段复测超出阈值，先考虑进程内多 `AppView`，再考虑 `ForceCommand`。

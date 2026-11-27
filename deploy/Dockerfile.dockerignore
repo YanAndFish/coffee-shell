@@ -1,5 +1,5 @@
 # Build context for deploy/Dockerfile (BuildKit picks this file up by its name).
-# Everything is out except what the Rust build needs.
+# Everything is out except what the Rust build needs and the gateway's configuration.
 *
 !Cargo.toml
 !Cargo.lock
@@ -11,6 +11,7 @@
 !apps/tui/src/**
 !crates/**
 !packages/contract/fixtures/**
+!deploy/gateway.toml
 **/target
 **/.nsh
 **/node_modules

@@ -65,7 +65,7 @@ export async function readJsonBody(ctx: Context): Promise<unknown> {
 
 /**
  * The validated `X-SSH-Fingerprint`, or `null` without one. A malformed value is
- * `400 validation_failed` (field `header.x-ssh-fingerprint`): the TUI forwards what sshd set.
+ * `400 validation_failed` (field `header.x-ssh-fingerprint`): the TUI forwards what the gateway set.
  */
 export function sshFingerprint(ctx: Context): string | null {
   const value = ctx.get(SSH_FINGERPRINT_HEADER)

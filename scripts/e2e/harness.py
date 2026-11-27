@@ -1,12 +1,14 @@
-"""The real stack for end-to-end flows: a backend on a fresh SQLite database, `coffee-sshd`,
+"""The real stack for end-to-end flows: a backend on a fresh SQLite database, `tty-gateway`,
 and stock `ssh` clients on pseudo-terminals whose screens are read as text.
 
 Nothing here knows the shop: flows (`flows.py`) say what to press and what to wait for.
-The terminal emulator is `scripts/pty-run.py`'s (imported, not copied).
+The terminal emulator is `scripts/pty-run.py`'s (imported, not copied). The gateway runs
+`deploy/gateway.toml` with a few overrides (`gateway_config`), written to the flow's
+directory as `gateway.toml`.
 
   stack = Stack(work_dir, template_db, flow_dir)
-  with stack:                               # backend + sshd up, both stopped on exit
-    term = stack.connect("buyer", key="k1") # ssh -i <work>/k1 ... (None: no key at all)
+  with stack:                               # backend + gateway up, both stopped on exit
+    term = stack.connect("buyer", key="k1") # ssh -i <work>/k1 guest@... (None: no key at all)
     term.wait("用户名")                     # until the text is on screen (or fail)
     term.type("abc"); term.key("enter")
     term.snap("receipt")                    # <flow_dir>/NN-buyer-receipt.txt
@@ -27,12 +29,14 @@ import sqlite3
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[2]
+GATEWAY_CONFIG = ROOT / "deploy" / "gateway.toml"
 
 _spec = importlib.util.spec_from_file_location("pty_run", ROOT / "scripts" / "pty-run.py")
 assert _spec and _spec.loader
@@ -107,6 +111,143 @@ def make_key(work: Path, name: str) -> Path:
   return key
 
 
+# --- The gateway's configuration ------------------------------------------------------------
+
+def merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+  """`base` with `overrides` laid over it: tables merge key by key, anything else replaces."""
+  out = dict(base)
+  for key, value in overrides.items():
+    if isinstance(value, dict) and isinstance(out.get(key), dict):
+      out[key] = merge(out[key], value)
+    else:
+      out[key] = value
+  return out
+
+
+def gateway_config(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+  """`deploy/gateway.toml` for a flow: no per-minute connection budget (flows connect often
+  from one address), then `overrides`."""
+  with open(GATEWAY_CONFIG, "rb") as file:
+    config = tomllib.load(file)
+  config = merge(config, {"limits": {"connections_per_minute": 0}})
+  return merge(config, overrides or {})
+
+
+_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
+_ESCAPES = {"\\": "\\\\", '"': '\\"', "\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f",
+            "\r": "\\r"}
+
+
+def _toml_string(text: str) -> str:
+  out = []
+  for char in text:
+    if char in _ESCAPES:
+      out.append(_ESCAPES[char])
+    elif ord(char) < 0x20 or ord(char) == 0x7F:
+      out.append(f"\\u{ord(char):04X}")
+    else:
+      out.append(char)
+  return '"' + "".join(out) + '"'
+
+
+def _toml_key(key: str) -> str:
+  return key if _BARE_KEY.fullmatch(key) else _toml_string(key)
+
+
+def _toml_value(value: Any) -> str:
+  if isinstance(value, bool):
+    return "true" if value else "false"
+  if isinstance(value, int):
+    return str(value)
+  if isinstance(value, str):
+    return _toml_string(value)
+  if isinstance(value, list):
+    return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+  raise TypeError(f"no TOML for {type(value).__name__}: {value!r}")
+
+
+def toml_dumps(data: dict[str, Any]) -> str:
+  """TOML that `tomllib` reads back as `data`: strings, ints, booleans, lists of those and
+  nested tables (enough for the gateway's file)."""
+  lines: list[str] = []
+
+  def table(path: list[str], body: dict[str, Any]) -> None:
+    scalars = [(k, v) for k, v in body.items() if not isinstance(v, dict)]
+    tables = [(k, v) for k, v in body.items() if isinstance(v, dict)]
+    if path and (scalars or not tables):
+      if lines:
+        lines.append("")
+      lines.append("[" + ".".join(_toml_key(part) for part in path) + "]")
+    for key, value in scalars:
+      lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
+    for key, value in tables:
+      table([*path, key], value)
+
+  table([], data)
+  return "\n".join(lines) + "\n"
+
+
+def write_toml(path: Path, data: dict[str, Any]) -> Path:
+  """Writes `data` to `path`, checked: read back with `tomllib`, it must be `data`."""
+  text = toml_dumps(data)
+  if tomllib.loads(text) != data:
+    raise Failure(f"the TOML written for {path.name} does not read back the same")
+  path.write_text(text)
+  return path
+
+
+def check_toml_writer() -> None:
+  """The emitter against awkward values: quotes, backslashes, control characters, CJK, keys
+  that need quoting, nesting, empty tables and lists."""
+  sample = {
+    "top": "a \"quoted\" \\ back\\slash\n\ttab \x01\x7f ◆咖啡 ${env:X:-y}",
+    "n": 0, "big": 2**40, "neg": -3, "yes": True, "no": False,
+    "list": ["x", "y\"z", "\\"], "ints": [1, 2], "empty": [],
+    "server": {"banner": "\n  ◆ROAST/TTY\n\n", "listen": "127.0.0.1:1"},
+    "routes": {"a.b": {"command": ["/bin/x", "--flag"], "env": {"K": "${fingerprint}"},
+                       "messages": {}},
+               "c": {"env": {"with space": "v", "": "empty key"}}},
+  }
+  text = toml_dumps(sample)
+  if tomllib.loads(text) != sample:
+    raise Failure(f"the TOML writer does not round-trip:\n{text}")
+
+
+def check_sync_frames() -> None:
+  """The emulator's synchronized updates: a frame fed in pieces changes nothing a reader sees
+  (text, cursor) until its closing marker; without mode 2026 the screen is live; an update
+  left open is shown as it stands after SYNC_TIMEOUT; DECRQM 2026 is answered."""
+  def expect(what: bool, message: str) -> None:
+    if not what:
+      raise Failure(f"emulator self-check: {message}")
+
+  screen = pty_run.Screen(20, 3)
+  screen.feed(b"\x1b[?2026h\x1b[1;1Hold\x1b[2;5H\x1b[?2026l")
+  frame = screen.frame
+  expect(frame.text().startswith("old") and (frame.x, frame.y) == (4, 1), "the first frame")
+  for half in (b"\x1b[?2026h\x1b[2J\x1b[1;1Hnew", b"\x1b[3;", b"9H\x1b[?20"):
+    screen.feed(half)
+    frame = screen.frame
+    expect(screen.in_update and frame.text().startswith("old") and (frame.x, frame.y) == (4, 1),
+           f"half a frame showed through after {half!r}: {frame.text()!r} at {(frame.x, frame.y)}")
+  screen.feed(b"26l")
+  frame = screen.frame
+  expect(not screen.in_update and frame.text().startswith("new") and (frame.x, frame.y) == (8, 2),
+         f"the completed frame: {frame.text()!r} at {(frame.x, frame.y)}")
+  expect(screen.frames == 2 and screen.split_frames == 3,
+         f"{screen.frames} frames, {screen.split_frames} split reads")
+  screen.feed(b"\x1b[1;1Hlive")
+  expect(screen.frame.text().startswith("live"), "output outside an update is not live")
+  screen.feed(b"\x1b[?2026h\x1b[1;1Hstuck")
+  expect(screen.frame.text().startswith("live"), "an open update showed through")
+  screen._sync_since -= pty_run.SYNC_TIMEOUT + 0.1
+  expect(screen.frame.text().startswith("stuck"), "an update left open is never shown")
+  screen.feed(b"\x1b[?2026l\x1b[?25l")
+  expect(not screen.frame.cursor_visible, "a hidden cursor reads as visible")
+  screen.feed(b"\x1b[?2026$p")
+  expect(screen.replies == [b"\x1b[?2026;2$y"], f"DECRQM 2026 answered {screen.replies}")
+
+
 class Process:
   """A child in its own process group, its output in a log file."""
 
@@ -143,13 +284,14 @@ class Process:
 
 
 class Stack:
-  """Backend + sshd for one flow, on ports of their own and a copy of the template database."""
+  """Backend + gateway for one flow, on ports of their own and a copy of the template
+  database."""
 
   def __init__(self, work: Path, template_db: Path | None, flow_dir: Path, bins: Path | None,
-               gateway: tuple[str, int] | None = None):
-    """With `gateway` (host, port), flows run against a gateway someone else started (the
-    compose pair): no backend, sshd or database of our own."""
-    self.work, self.flow_dir, self.bins, self.gateway = work, flow_dir, bins, gateway
+               external: tuple[str, int] | None = None):
+    """With `external` (host, port), flows run against a gateway someone else started (the
+    compose pair): no backend, gateway or database of our own."""
+    self.work, self.flow_dir, self.bins, self.external = work, flow_dir, bins, external
     self.db = flow_dir / "shop.db"
     flow_dir.mkdir(parents=True, exist_ok=True)
     if template_db:
@@ -157,21 +299,22 @@ class Stack:
         leftover.unlink()
       shutil.copyfile(template_db, self.db)
     self.api_port = free_port()
-    self.ssh_host, self.ssh_port = gateway or ("127.0.0.1", free_port())
+    self.ssh_host, self.ssh_port = external or ("127.0.0.1", free_port())
     self.internal_key = os.urandom(24).hex()
     self.backend: Process | None = None
-    self.sshd: Process | None = None
+    self.gateway: Process | None = None
+    self.config_path = flow_dir / "gateway.toml"
     self.terms: list[Term] = []
     self._snaps = 0
 
   # Lifecycle
 
   def __enter__(self) -> "Stack":
-    if self.gateway:
+    if self.external:
       return self
     try:
       self.start_backend()
-      self.start_sshd()
+      self.start_gateway()
     except BaseException:
       self.close()
       raise
@@ -183,7 +326,7 @@ class Stack:
   def close(self) -> None:
     for term in self.terms:
       term.close()
-    for proc in (self.sshd, self.backend):
+    for proc in (self.gateway, self.backend):
       if proc:
         proc.stop()
 
@@ -210,35 +353,40 @@ class Stack:
     except (urllib.error.URLError, OSError):
       return False
 
-  def start_sshd(self, **overrides: str) -> None:
+  def start_gateway(self, overrides: dict[str, Any] | None = None) -> None:
+    """`tty-gateway --config <flow>/gateway.toml`: `deploy/gateway.toml` with `overrides`
+    (see `gateway_config`). The address, host key and log filter come from its environment,
+    as do the backend's URL and the internal key the shop's route reads (`${env:…}`)."""
+    write_toml(self.config_path, gateway_config(overrides))
     env = {
       "PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""),
       "TMPDIR": os.environ.get("TMPDIR", "/tmp"), "LANG": "C.UTF-8",
-      "COFFEE_SSH_ADDR": f"127.0.0.1:{self.ssh_port}",
-      "COFFEE_SSH_HOST_KEY": str(self.work / "ssh_host_ed25519_key"),
-      "COFFEE_TUI_BIN": str(self.bins / "coffee-tui"),
+      "TTY_GATEWAY_ADDR": f"127.0.0.1:{self.ssh_port}",
+      "TTY_GATEWAY_HOST_KEY": str(self.work / "ssh_host_ed25519_key"),
+      "TTY_GATEWAY_LOG": "info,russh=warn",
       "COFFEE_API_URL": f"http://127.0.0.1:{self.api_port}",
       "COFFEE_INTERNAL_KEY": self.internal_key,
-      # Flows connect often from one address: no per-minute connection budget here.
-      "COFFEE_SSH_CONNECTIONS_PER_MINUTE": "0",
-      "COFFEE_SSH_LOG": "info,russh=warn",
-      **overrides,
     }
-    self.sshd = Process("sshd", [str(self.bins / "coffee-sshd")], env, self.flow_dir / "sshd.log")
-    if not wait_until(lambda: listening(self.ssh_port) or not self.sshd.alive(), 30):
-      raise Failure(f"coffee-sshd is not listening after 30 s:\n{self.sshd.tail()}")
-    if not self.sshd.alive():
-      raise Failure(f"coffee-sshd exited:\n{self.sshd.tail()}")
+    argv = [str(self.bins / "tty-gateway"), "--config", str(self.config_path)]
+    self.gateway = Process("gateway", argv, env, self.flow_dir / "gateway.log")
+    if not wait_until(lambda: listening(self.ssh_port) or not self.gateway.alive(), 30):
+      raise Failure(f"tty-gateway is not listening after 30 s:\n{self.gateway.tail()}")
+    if not self.gateway.alive():
+      raise Failure(f"tty-gateway exited:\n{self.gateway.tail()}")
 
-  def stop_sshd(self) -> None:
-    if self.sshd:
-      self.sshd.stop()
+  def stop_gateway(self) -> None:
+    if self.gateway:
+      self.gateway.stop()
+
+  def gateway_log(self) -> str:
+    return self.gateway.log.read_text(errors="replace") if self.gateway else ""
 
   # Sessions
 
   def connect(self, name: str, key: str | None = None, size: tuple[int, int] = (130, 40),
-              term: str = "xterm-256color") -> "Term":
-    """`ssh` to the gateway as a stock client: with the throwaway key `key`, or with none."""
+              term: str = "xterm-256color", user: str = "guest") -> "Term":
+    """`ssh user@gateway` as a stock client: with the throwaway key `key`, or with none. The
+    user name picks the route; no route lists `guest`, so it gets the default (the shop)."""
     argv = ["ssh", "-F", "/dev/null", "-p", str(self.ssh_port),
             "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
             "-o", "LogLevel=ERROR", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
@@ -247,7 +395,7 @@ class Stack:
       argv += ["-o", "PubkeyAuthentication=no"]
     else:
       argv += ["-i", str(make_key(self.work, key))]
-    argv += ["-tt", f"guest@{self.ssh_host}"]
+    argv += ["-tt", f"{user}@{self.ssh_host}"]
     session = Term(self, name, argv, size, term)
     self.terms.append(session)
     return session
@@ -256,19 +404,37 @@ class Stack:
     self._snaps += 1
     return self._snaps
 
-  def tui_pids(self) -> list[int]:
-    """`coffee-tui` processes whose parent is this flow's sshd."""
-    if not self.sshd:
+  def session_pids(self) -> list[int]:
+    """The live (non-zombie) children of this flow's gateway: its session programs, whatever
+    the route runs."""
+    if not self.gateway or not self.gateway.alive():
       return []
-    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat=,comm="], capture_output=True,
+    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat="], capture_output=True,
                          text=True, timeout=10).stdout
     pids = []
     for line in out.splitlines():
-      parts = line.split(None, 3)
-      if (len(parts) == 4 and parts[1] == str(self.sshd.proc.pid) and not parts[2].startswith("Z")
-          and parts[3].endswith("coffee-tui")):
+      parts = line.split()
+      if (len(parts) == 3 and parts[1] == str(self.gateway.proc.pid)
+          and not parts[2].startswith("Z")):
         pids.append(int(parts[0]))
     return pids
+
+  def env_names(self, pid: int) -> set[str] | None:
+    """The names in process `pid`'s environment (Linux: /proc; macOS: `ps -E`), or None when
+    this system does not tell. Only names: values (the internal key) never leave here."""
+    environ = Path(f"/proc/{pid}/environ")
+    if environ.exists():
+      try:
+        entries = environ.read_bytes().split(b"\0")
+      except OSError:
+        return None
+      return {entry.split(b"=", 1)[0].decode(errors="replace") for entry in entries if b"=" in entry}
+    if sys.platform != "darwin":
+      return None
+    out = subprocess.run(["ps", "-E", "-ww", "-o", "command=", "-p", str(pid)],
+                         capture_output=True, text=True, timeout=10).stdout
+    names = set(re.findall(r"(?:^|\s)([A-Z_][A-Z0-9_]*)=", out))
+    return names or None
 
   def sql(self, query: str) -> list[tuple]:
     """Reads the flow's database directly (the shop's truth, not the UI's)."""
@@ -293,8 +459,11 @@ class Term:
   # Reading
 
   @property
-  def screen(self):
-    return self.session.screen
+  def screen(self) -> "pty_run.Frame":
+    """The last completed frame: the host draws each frame inside a synchronized update, and
+    one that arrives over several reads is not seen until it is whole (a half-painted frame
+    moves the cursor and the status bar before the focus has really moved)."""
+    return self.session.screen.frame
 
   def text(self) -> str:
     return self.screen.text()
@@ -306,9 +475,11 @@ class Term:
     """The status bar: the bottom row."""
     return self.row(self.screen.rows - 1)
 
-  def cursor(self) -> tuple[int, int]:
-    """(column, row) of the terminal cursor: where a focused text field puts it."""
-    return self.screen.x, self.screen.y
+  def cursor(self) -> tuple[int, int] | None:
+    """(column, row) of the terminal cursor, where a focused text field puts it; None while
+    it is hidden (its position then only says where the last frame's drawing ended)."""
+    screen = self.screen
+    return (screen.x, screen.y) if screen.cursor_visible else None
 
   def find(self, needle: str) -> tuple[int, int] | None:
     """(row, cell column) of the first `needle` on screen. Columns count cells: a CJK
@@ -452,7 +623,7 @@ def fail_report(failure: Failure, stack: Stack | None) -> str:
     for term in stack.terms:
       if term.name != failure.term and not term.closed:
         parts += [f"--- last screen of {term.name} ---", term.text()]
-    for proc in (stack.backend, stack.sshd):
+    for proc in (stack.backend, stack.gateway):
       if proc:
         parts += [f"--- {proc.name} log (tail) ---", proc.tail(25)]
   return "\n".join(parts)

@@ -290,7 +290,7 @@ test('the status bar\'s mode block is a pill: ▐ 选购 BROWSE ▌, ink on ambe
   if (!cells)
     return
   // nsh keeps an opaque accent fill as its exact colour and leaves the label in the
-  // terminal's default text colour; coffee-host pins default text on that fill to `ink`.
+  // terminal's default text colour; coffee-tui pins default text on that fill to `ink`.
   const bottom = cells[cells.length - 1]
   const block = bottom.slice(0, 15)
   expect(block.map(cell => cell.symbol).join('')).toBe('▐ 选 购  BROWSE ▌')

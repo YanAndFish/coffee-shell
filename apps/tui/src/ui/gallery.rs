@@ -4,7 +4,8 @@
 //! - **Tests** open it from `src/ui/gallery.entry.tsx` (`open('./src/ui/gallery.entry.tsx',
 //!   …)` in `apps/tui/Gallery.test.tsx`); it is registered next to `App`.
 //! - **The real host**: `COFFEE_UI_GALLERY=1 target/debug/coffee-tui` (or through
-//!   `scripts/pty-run.py --env COFFEE_UI_GALLERY=1`) shows it over the app, with the host's
+//!   `scripts/pty-run.py --env COFFEE_UI_GALLERY=1`, or `ssh -p 2222 gallery@localhost`, the
+//!   gateway's `gallery` route) shows it over the app, with the host's
 //!   palette pin and colour depths (`COFFEE_COLORS=16|mono`).
 //!
 //! Keys (the gallery's own small table; the app never mounts it): `← →` / `h l` / `[ ]` turn
@@ -319,7 +320,6 @@ pub fn UiGallery() -> impl IntoElement {
         .min_h(px(0.0))
         .overflow_hidden()
         .px(layout::cols(1))
-        .pt(layout::rows(1))
         .child(dynamic(move || {
           page_view(PAGES[demo.page.get()], demo, layout)
         })),
@@ -692,7 +692,6 @@ fn panels_page(layout: Layout) -> AnyElement {
   let filter = panel(
     "筛选 FILTER",
     view()
-      .pt(layout::rows(1))
       .child(section_head("产区", "f"))
       .child(radio("全部", Some("8".into()), || true, || {}))
       .child(radio("埃塞俄比亚", Some("1".into()), || false, || {})),
@@ -702,7 +701,6 @@ fn panels_page(layout: Layout) -> AnyElement {
     "订单已提交 ORDER",
     Tone::Acc2,
     view()
-      .pt(layout::rows(1))
       .child(heading("豆子档案"))
       .child(leader("产区", "慧兰 · 皮塔利托", 30))
       .child(rule(true)),

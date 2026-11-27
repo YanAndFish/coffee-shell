@@ -84,7 +84,7 @@ money, error details) and the endpoint table: `packages/contract/README.md`. Dec
 pnpm --filter @coffee/contract generate && git status --short packages/contract   # fixtures committed?
 pnpm check && pnpm test
 cd apps/tui && nsh check && nsh test
-pnpm test:e2e:real          # from the root: the shop's flows over the real backend, sshd and ssh (~2 min)
+pnpm test:e2e:real          # from the root: the shop's flows over the real backend, tty-gateway and ssh (~2 min)
 ```
 
 The end-to-end flows (`scripts/e2e/flows.py`, steps in `shop.py`) are the only tests that run the TUI against the real

@@ -1,0 +1,46 @@
+[package]
+name = "tty-gateway"
+description = "SSH front end for terminal programs: the user name picks a route, each session runs its program on a PTY."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "tty-gateway"
+path = "src/main.rs"
+
+[dependencies]
+bytes = "1"
+pty-process = { version = "0.5", features = [ "async" ] }
+rand = "0.10"
+# `ring` instead of the default aws-lc-rs: no cmake/C toolchain needed to build.
+russh = { version = "0.65", default-features = false, features = [
+  "flate2",
+  "ring",
+  "rsa"
+] }
+rustix = { version = "1.1", features = [ "process" ] }
+serde.workspace = true
+tokio = { version = "1", features = [
+  "io-util",
+  "macros",
+  "net",
+  "process",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time"
+] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = [
+  "env-filter",
+  "fmt"
+] }
+
+[dev-dependencies]
+tty-gateway-testkit = { path = "../tty-gateway-testkit" }

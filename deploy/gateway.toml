@@ -1,0 +1,71 @@
+# ROAST/TTY's tty-gateway configuration (`pnpm dev`, the Docker image, scripts/e2e).
+#
+# Like an nginx front end for terminal programs: one SSH port, and the SSH user name picks a
+# route (`ssh -p 2222 gallery@localhost` → [routes.gallery]); any name no route lists lands
+# on `server.default_route` (the shop). Each session runs the route's command on its own PTY
+# with only the environment the route spells out.
+#
+#   tty-gateway --check --config deploy/gateway.toml   # check it, print a summary, exit
+#   tty-gateway --config deploy/gateway.toml            # serve; SIGHUP reloads this file
+#
+# TTY_GATEWAY_ADDR and TTY_GATEWAY_HOST_KEY override `listen` and `host_key` (the Docker
+# image and the scripts set them). `${env:NAME}` is read from the gateway's own environment
+# when the file is loaded; an entry whose variable is unset is left out. Unknown keys are
+# errors.
+
+[server]
+listen = "127.0.0.1:2222"
+host_key = ".data/ssh_host_ed25519_key"
+server_id = "SSH-2.0-ROAST_TTY"
+banner = "\n  ◆ROAST/TTY 终端咖啡馆\n  演示环境 · 不是真实商店 · 不收款、不发货 · 请勿使用真实密码、地址或电话\n\n"
+default_route = "coffee"
+shutdown_grace = "2s"
+
+[limits]
+max_sessions = 64
+max_sessions_per_ip = 8
+# New connections per address per minute; 0 turns the limit off.
+connections_per_minute = 30
+auth_timeout = "30s"
+idle_timeout = "15m"
+# "0": no limit.
+max_session_time = "0"
+
+[messages]
+no_pty = "ROAST/TTY 需要一个终端：请用 `ssh -t`，不要加 -T。"
+unavailable = "ROAST/TTY 暂时无法启动，请稍后再试。"
+crashed = "ROAST/TTY 出错了，会话已结束（代码 {code}）。请重新连接；如果一直这样，请稍后再试。"
+idle = "ROAST/TTY 空闲超过 {minutes} 分钟，连接已关闭。"
+time_limit = "ROAST/TTY 会话已到时长上限，连接已关闭。"
+full = "ROAST/TTY 当前在线会话已满（上限 {max}），请稍后再试。"
+full_per_ip = "ROAST/TTY 来自你的地址的会话已达上限（{max} 个），请先关闭其他会话。"
+full_route = "ROAST/TTY 这项服务的会话已满（上限 {max}），请稍后再试。"
+shutting_down = "ROAST/TTY 服务正在停止，连接已关闭。请稍后重新连接。"
+
+# The shop: `coffee@`, `shop@` and every name no other route lists.
+[routes.coffee]
+users = [
+  "coffee",
+  "shop"
+]
+# A bare name: next to the tty-gateway executable first, then on PATH.
+command = [ "coffee-tui" ]
+
+[routes.coffee.env]
+COFFEE_API_URL = "${env:COFFEE_API_URL:-http://127.0.0.1:3000}"
+# A secret (the backend trusts fingerprints only with it): only this route names it.
+COFFEE_INTERNAL_KEY = "${env:COFFEE_INTERNAL_KEY}"
+COFFEE_SSH_FINGERPRINT = "${fingerprint}"
+COFFEE_CLIENT_IP = "${client_ip}"
+COFFEE_COLORS = "${env:COFFEE_COLORS}"
+
+# The UI component gallery (sample data, no backend): `gallery@`. It gets neither the
+# backend's address nor the internal key.
+[routes.gallery]
+users = [ "gallery" ]
+command = [ "coffee-tui" ]
+
+[routes.gallery.env]
+COFFEE_UI_GALLERY = "1"
+COFFEE_CLIENT_IP = "${client_ip}"
+COFFEE_COLORS = "${env:COFFEE_COLORS}"

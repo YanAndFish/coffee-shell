@@ -1,0 +1,31 @@
+[package]
+name = "coffee-tui"
+description = "Runs the coffee-app root in a terminal (one process per SSH session)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "coffee-tui"
+path = "src/bin/coffee-tui.rs"
+
+[dependencies]
+coffee-app.workspace = true
+nsh-base.workspace = true
+serde_json.workspace = true
+tty-host.workspace = true
+
+[dev-dependencies]
+# `#[component]` in the probe components of `tests/pin_render.rs`.
+nsh-core.workspace = true
+# `tests/ssh.rs`: the shop behind an in-process tty-gateway on `deploy/gateway.toml`.
+tokio = { version = "1", features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "time"
+] }
+toml = "0.8"
+tty-gateway-testkit = { path = "../tty-gateway-testkit" }

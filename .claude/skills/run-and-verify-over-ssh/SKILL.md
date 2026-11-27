@@ -1,6 +1,6 @@
 ---
 name: run-and-verify-over-ssh
-description: Run the whole ROAST/TTY demo locally (backend + coffee-sshd + coffee-tui) and verify it non-interactively over SSH with scripts/pty-run.py - screens at several sizes, keys, resize, colour depths, and no leftover processes. Use to prove a UI or SSH change works end to end.
+description: Run the whole ROAST/TTY demo locally (backend + tty-gateway + coffee-tui) and verify it non-interactively over SSH with scripts/pty-run.py - screens at several sizes, keys, resize, colour depths, user-name routing (shop, gallery@), and no leftover processes. Use to prove a UI or SSH change works end to end.
 ---
 
 # Run and verify over SSH
@@ -9,32 +9,44 @@ description: Run the whole ROAST/TTY demo locally (backend + coffee-sshd + coffe
 
 ```sh
 pnpm install
-pnpm dev        # builds coffee-tui + coffee-sshd, migrates + seeds the backend, starts backend + sshd
+pnpm dev        # builds coffee-tui + tty-gateway, migrates + seeds the backend, starts backend + gateway
 ```
 
 The backend's `dev` script runs `prisma migrate deploy` and the (idempotent) seed on every start, so a fresh
 checkout needs no database step. `db:reset` is for humans only: Prisma refuses `migrate reset` from an AI agent.
 
 `pnpm dev` (`scripts/dev.mjs`) prints `✓ ready — connect with: ssh -p 2222 localhost` once the backend answers
-`/v1/health` and sshd listens. It fails with a clear message when a piece is missing (no `dev` script in
-`apps/server`, cargo build failure, port in use, sshd exiting). Ctrl+C (or SIGINT/SIGTERM to `node scripts/dev.mjs`)
-stops whatever runs, in any phase: the cargo build (with its rustc jobs) as well as backend and sshd, each in its own
-process group. `pnpm dev --skip-build` reuses the built binaries. Run it in the background for automation
-(`run_in_background`), then wait for the line containing `✓ ready` (plain `ready` also matches the seed's
-`already present`). Other ports: `PORT=3917 COFFEE_SSH_ADDR=127.0.0.1:2917`.
-Each session starts `target/debug/coffee-tui` afresh, so `cargo build -p coffee-host` is enough to try a TUI change
+`/v1/health` and the gateway listens. It fails with a clear message when a piece is missing (no `dev` script in
+`apps/server`, cargo build failure, port in use, a configuration that fails `tty-gateway --check` (run before the
+gateway starts), the gateway exiting). Ctrl+C (or SIGINT/SIGTERM/SIGHUP to `node scripts/dev.mjs`) stops whatever
+runs, in any phase: the cargo build (with its rustc jobs) as well as backend and gateway, each in its own process
+group. The gateway's log lines carry the tag `[gateway]`. `pnpm dev --skip-build` reuses the built binaries. Run
+it in the background for automation (`run_in_background`), then wait for the line containing `✓ ready` (plain
+`ready` also matches the seed's `already present`). Other ports: `PORT=3917 TTY_GATEWAY_ADDR=127.0.0.1:2917`.
+Each session starts `target/debug/coffee-tui` afresh, so `cargo build -p coffee-tui` is enough to try a TUI change
 without restarting `pnpm dev`.
 
-Environment it sets or passes on: `HOST`/`PORT` (backend, 127.0.0.1:3000), `COFFEE_SSH_ADDR` (127.0.0.1:2222),
-`COFFEE_SSH_HOST_KEY` (`.data/ssh_host_ed25519_key`), and it gives sshd `COFFEE_TUI_BIN`, `COFFEE_API_URL` and a
-random per-run `COFFEE_INTERNAL_KEY` (never printed). Everything else in your environment reaches `coffee-sshd`
-too: `COFFEE_COLORS`, `COFFEE_SSH_MAX_SESSIONS`, `COFFEE_SSH_MAX_SESSIONS_PER_IP`,
-`COFFEE_SSH_CONNECTIONS_PER_MINUTE` (30 new connections per address per minute: scripts that connect in a tight
-loop hit it; set `0` to turn it off), `COFFEE_SSH_IDLE_TIMEOUT`, `COFFEE_SSH_AUTH_TIMEOUT`, `COFFEE_SSH_LOG` (see
-`deploy/README.md`).
+The gateway runs `target/debug/tty-gateway --config deploy/gateway.toml` (`TTY_GATEWAY_CONFIG=FILE pnpm dev` picks
+another file; `TTY_GATEWAY_ADDR` and `TTY_GATEWAY_HOST_KEY` are passed on; the old `COFFEE_SSH_ADDR` /
+`COFFEE_SSH_HOST_KEY` are ignored with a warning). That file is the shop: the banner, the
+Chinese messages, the limits and two routes. The **SSH user name** picks the route: `gallery` gets the UI gallery
+(`coffee-tui` with `COFFEE_UI_GALLERY=1`), `coffee`, `shop` and every other name (the default route) get the shop.
+`pnpm dev` gives the gateway `COFFEE_API_URL` and a random per-run `COFFEE_INTERNAL_KEY` (never printed); the
+shop route hands them, `COFFEE_COLORS` (if you set it) and the session's `COFFEE_SSH_FINGERPRINT` /
+`COFFEE_CLIENT_IP` to each `coffee-tui` through its `env` table. The gateway itself reads only `TTY_GATEWAY_CONFIG`,
+`TTY_GATEWAY_ADDR`, `TTY_GATEWAY_HOST_KEY` (default `.data/ssh_host_ed25519_key`) and `TTY_GATEWAY_LOG`.
 
-Without a backend: `COFFEE_API_URL=fixture: cargo run -p coffee-sshd` (after `cargo build -p coffee-host`) serves
-sessions from the committed fixtures (the header shows `◇ 样例数据`).
+Limits are in the file, not the environment (`deploy/README.md` lists every key): `connections_per_minute = 30`
+new connections per address per minute, so a script that connects in a tight loop hits it. Use a copy with
+`connections_per_minute = 0` (and a free `listen`) and start the gateway on it yourself; never edit the limits in
+`deploy/gateway.toml` for a test. Check any file first: `target/debug/tty-gateway --check --config FILE`. A running
+gateway rereads its file on a SIGHUP to **its own** pid (`pkill -HUP -x tty-gateway`; a SIGHUP to `dev.mjs` stops
+everything): new connections only; the log says `reloaded … changes=routes added … · removed … · changed …`, or
+`reload failed: the running configuration stays`.
+
+Without a backend: `COFFEE_API_URL=fixture: target/debug/tty-gateway --config deploy/gateway.toml` (after
+`cargo build -p coffee-tui -p tty-gateway`) serves sessions from the committed fixtures (the header shows
+`◇ 样例数据`).
 
 ## 2. Connect by hand
 
@@ -42,6 +54,10 @@ sessions from the committed fixtures (the header shows `◇ 样例数据`).
 localhost`). Try both with your key and without (`-o PubkeyAuthentication=no -o IdentitiesOnly=yes`): both must get
 in without a password prompt, after the banner `◆ROAST/TTY 终端咖啡馆 / 演示环境 · 不是真实商店 ...`. Never touch
 `~/.ssh`. Quitting takes Ctrl+C **twice** (the first shows `再按一次 Ctrl+C 退出`).
+
+The user name picks the program: `ssh -p 2222 gallery@localhost` (plus the options above) opens the gallery,
+`coffee@`, `shop@` or any other name the shop. The gateway logs `user` and `route` on every `authenticated` and
+`session started` line.
 
 ## 3. Verify without a human: `scripts/pty-run.py`
 
@@ -53,6 +69,10 @@ SSH="ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 
 
 # A new connection opens on the login page (the focus in 用户名, so the status bar says 离开输入):
 python3 scripts/pty-run.py --size 160x50 --step 'until=离开输入' --expect '登录 · SIGN IN' --expect '演示环境' -- $SSH
+
+# Routing: an unknown user name gets the default route (the shop); gallery@ gets the gallery:
+python3 scripts/pty-run.py --size 160x50 --step 'until=离开输入' -- ${SSH/localhost/whoever@localhost}
+python3 scripts/pty-run.py --size 160x50 --step wait=2 --step snap -- ${SSH/localhost/gallery@localhost}
 
 # Too small, then resized back (state kept):
 python3 scripts/pty-run.py --size 60x20 --step 'until=终端太小' --step resize=160x50 \
@@ -73,10 +93,10 @@ python3 scripts/pty-run.py --size 100x30 --term xterm-kitty --colorterm '' --raw
   --step 'until=离开输入' -- $SSH # 38;2; only
 # ... while a plain xterm-256color session stays at 256 (pty-run does not answer XTGETTCAP):
 python3 scripts/pty-run.py --size 100x30 --colorterm '' --raw /tmp/plain.raw --step 'until=离开输入' -- $SSH
-# The whole decision table: crates/coffee-host/src/color.rs.
+# The whole decision table: crates/tty-host/src/color.rs.
 
-# Forcing a depth: sshd only forwards LANG, LC_* and COLORTERM from the client, so COFFEE_COLORS must be set on
-# the server (`COFFEE_COLORS=mono pnpm dev --skip-build`), or test the TUI alone:
+# Forcing a depth: the shop's route takes only LANG, LC_* and COLORTERM from the client, so COFFEE_COLORS must be
+# set on the gateway (`COFFEE_COLORS=mono pnpm dev --skip-build`; the route passes it on), or test the TUI alone:
 python3 scripts/pty-run.py --size 100x30 --env COFFEE_COLORS=mono --env COFFEE_API_URL=fixture: \
   -- target/debug/coffee-tui
 ```
@@ -100,24 +120,34 @@ python3 scripts/pty-run.py --size 100x30 --step 'until=离开输入' --step key=
 pgrep -fl coffee-tui                       # after the client is gone: no children left (allow 2 s)
 ```
 
-Killing the client (`kill -9` the `ssh` process) must also end its `coffee-tui` within 2 seconds (sshd logs
-`session ended: client left ... how="hangup"`). When done, stop `pnpm dev` (Ctrl+C, or SIGINT to `pnpm dev` and
+Killing the client (`kill -9` the `ssh` process) must also end its `coffee-tui` within 2 seconds (the gateway logs
+`session ended: client left ... how="hangup"`); so must a client EOF (`ssh -tt ... </dev/null` ends at once). A
+SIGTERM to `tty-gateway` with sessions open resets each client's terminal, shows `shutting_down`, hangs the
+programs up and exits within `server.shutdown_grace` (2 s) + 1 s (the log ends with `stopped done=true millis=…`).
+A second SIGTERM/SIGINT during that drain exits at once with status 1 and can leave session programs behind: check
+`pgrep -fl coffee-tui` after it. When done, stop `pnpm dev` (Ctrl+C, or SIGINT to `pnpm dev` and
 `node scripts/dev.mjs`) and prove nothing is left:
-`pgrep -fl "scripts/dev.mjs|coffee-sshd|coffee-tui|src/main.ts"` prints nothing and ports 3000/2222 are free
+`pgrep -fl "dev.mjs|tty-gateway|coffee-tui|src/main.ts"` prints nothing and ports 3000/2222 are free
 (`lsof -nP -iTCP:3000 -iTCP:2222 -sTCP:LISTEN`).
 
 ## 6. Automated end-to-end tests
 
 Two layers, both automated:
 
-- `pnpm test:e2e` (also part of `cargo test --workspace`) runs `crates/coffee-sshd/tests`: an in-process sshd, a
-  russh client with a `vt100` screen, a stub backend serving the contract fixtures. Fast; covers the gateway (auth,
-  limits, idle, crashes, colour depth, resize). `COFFEE_SSH_LOG=info` makes their servers log to stderr.
-- `pnpm test:e2e:real` builds `coffee-tui` + `coffee-sshd` and runs `scripts/e2e/run.py`: the shop's flows over the
+- `pnpm test:e2e` (also part of `cargo test --workspace`) runs the in-process SSH tests, built on
+  `crates/tty-gateway-testkit` (an in-process gateway on an ephemeral port, a russh client with a `vt100` screen):
+  `crates/tty-gateway/tests` with stand-in programs and neutral messages (auth, limits, idle, time limit, crashes,
+  resize, routes, reload, `--check`, shutdown, input floods, EOF) and `crates/coffee-tui/tests/ssh.rs` with the real
+  `coffee-tui`, `deploy/gateway.toml` and a stub backend serving the contract fixtures (Chinese messages, colour
+  depth, the brand). Fast. `TTY_GATEWAY_LOG=info` makes their servers log to stderr.
+- `pnpm test:e2e:real` builds `coffee-tui` + `tty-gateway` and runs `scripts/e2e/run.py`: the shop's flows over the
   **real** stack. Each flow gets a copy of a freshly migrated and seeded SQLite database, its own backend
-  (`node apps/server/src/main.ts`) and `coffee-sshd` on free ports, and stock `ssh` clients (throwaway keys in
-  `.data/e2e/work/keys`, or none) on PTYs read by `pty-run.py`'s emulator. Flows: `main`, `money`, `stock`,
-  `session`, `gateway` (what each checks: `docs/acceptance.md`). About 2 minutes.
+  (`node apps/server/src/main.ts`) and `tty-gateway` (on a copy of `deploy/gateway.toml` read with `tomllib`, with
+  `connections_per_minute = 0` and its own port and host key) on free ports, and stock `ssh` clients (throwaway keys
+  in `.data/e2e/work/keys`, or none; `stack.connect(name, key, user="gallery")` picks the route) on PTYs read by
+  `pty-run.py`'s emulator, which honours synchronized updates (mode 2026): the driver reads whole frames, never half
+  a redraw. Flows: `main`, `money`, `stock`, `session`, `gateway` (the three user names and which `COFFEE_*` names
+  each route's session gets, too; what each checks: `docs/acceptance.md`). About 2 minutes.
 
 ```sh
 pnpm test:e2e:real                          # all flows
@@ -127,7 +157,7 @@ E2E_WAIT=30 python3 scripts/e2e/run.py      # more time per step on a slow machi
 python3 scripts/e2e/run.py --gateway 127.0.0.1:2222 smoke   # a purchase on a gateway you started
 ```
 
-Output: `.data/e2e/<flow>/NN-<session>-<step>.txt` (text screenshots), `backend.log`, `sshd.log`, `shop.db`, and on a
+Output: `.data/e2e/<flow>/NN-<session>-<step>.txt` (text screenshots), `backend.log`, `gateway.log`, `shop.db`, and on a
 failure `FAIL.txt` with the failing step, the last screen of every open session and the log tails. After each flow
 the runner fails if a `coffee-tui` is left or a log holds a password, the internal key or a bearer token.
 
@@ -136,7 +166,8 @@ Writing or changing a flow (`scripts/e2e/flows.py`; shop steps in `shop.py`; the
 - **Wait for the screen, never for time or a key count.** `t.wait("text", ...)`, `t.wait_any`, `t.gone`,
   `t.wait_footer` (the status bar), `t.wait_for(predicate, "what")`; each has a timeout and fails with the screen.
   Steps that move focus or a selection press their key until the screen confirms (`focus_login_field` reads the
-  status bar's `离开输入` and the cursor's row; `choose` reads the `▐ … ▌` option), with a bound.
+  focus from the card's glyphs, a heavy box around the focused field; `choose` reads the `▐ … ▌` option), with a
+  bound.
 - Wait for a page to be ready before keys that act on it (a detail is ready when its `SKU RT-…` line shows).
 - `t.key("esc")` pauses after Esc so the next key is not read as Alt+key.
 - Money is checked against `shop.quote()` (an independent copy of the rules), the database through `stack.sql()`.

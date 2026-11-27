@@ -11,11 +11,11 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
 ## 1. Find the spec
 
 - Terminal spec of every component: `docs/design/components.md`, including the table **实现与规格的差异** at its end
-  (what nsh 0.6.1 cannot draw and what `ui/` does instead). Tokens: `docs/design/tokens.md`, including **终端载体**.
+  (what nsh cannot draw and what `ui/` does instead). Tokens: `docs/design/tokens.md`, including **终端载体**.
 - Source: `docs/design/raw/design-system/components/<Name>/README.md` and `components/bundle.css` (class prefix
   `t-`). Screens that use it: `docs/design/screens/*.md` (160×50 and 80×24 mocks with exact cells).
 - Look at the gallery first: it shows every component in every state.
-  `cargo build -p coffee-host && python3 scripts/pty-run.py --size 160x50 --env COFFEE_UI_GALLERY=1 --env
+  `cargo build -p coffee-tui && python3 scripts/pty-run.py --size 160x50 --env COFFEE_UI_GALLERY=1 --env
   COFFEE_API_URL=fixture: --step key=right -- target/debug/coffee-tui` (`←/→` turn pages; see `ui/gallery.rs`).
 
 ## 2. What already exists (one file each)
@@ -55,18 +55,18 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
   `KeyOptions { when: When::Always, .. }`.
 - A dialog is an overlay with a `DialogFocus` ring (the focus trap); its keys stay in the command table.
 
-## 4. Write it — the nsh 0.6.1 terminal rules that bite
+## 4. Write it — the nsh 0.7.1 terminal rules that bite
 
 1. `apps/tui/src/ui/<name>.rs` (snake_case file), a plain `fn` returning `View`/`AnyElement` or a builder implementing
    `IntoElement` (`Button`). `#[component]` only for a root (`UiGallery`). Rustdoc: purpose, the drawing in a `text`
    block, props, states, an example.
 2. **Colours**: only `Tone` / `Fill` through `ui::label` & co. They are carriers (`theme.rs`, "Carriers"): a marked tone
    is drawn italic and the host's pin turns it into the token. A new colour = a new row in `theme.json`, in `INKS` or
-   `FILLS`, in `docs/design/tokens.md`, and a case in `crates/coffee-host/tests/pin_render.rs`.
+   `FILLS`, in `docs/design/tokens.md`, and a case in `crates/coffee-tui/tests/pin_render.rs`.
 3. **Frames**: nsh draws only thin borders and only on boxes it deems cards; use `frame()` (glyph frames) for anything
    else, with a known height when you have one.
-4. **Spacing**: horizontal padding is at most 2 columns (one on a box of text), vertical padding under 24 pt and gaps
-   under 16 pt are 0 rows, gaps inside framed boxes are 0: use `hspace(n)` / `vspace(n)` for exact cells, `gap_cols(1|2)`
+4. **Spacing**: horizontal padding is at most 2 columns (one on a box of text), vertical padding under 12 pt and gaps
+   under 16 pt (12 pt inside a framed box) are 0 rows, and none is more than 1 row: use `hspace(n)` / `vspace(n)` for exact cells, `gap_cols(1|2)`
    for row gaps. An explicit height only counts on an empty box (or one whose children are all absolute).
 5. **Fills** are drawn only on boxes under 3 rows. Never put a saturated fill on a pressable view (nsh paints its text
    in the fill's accent): put the fill on a child.
@@ -87,16 +87,16 @@ description: Add or extend a styled component in apps/tui/src/ui (the ROAST/TTY 
 - `apps/tui/Gallery.test.tsx`: opens `./src/ui/gallery.entry.tsx` at 160×50, 130×40, 100×30, 80×24 (`platform:
   'linux'`, explicit size); texts headless, cells (`symbol`, `fg`, `bg`, `modifiers`) on `--target tui`. Colours in that
   JSON are nsh's own (carriers, `italic` marks); pinned colours are checked in `pin_render.rs`.
-- `crates/coffee-host/tests/pin_render.rs`: a new token at true colour, 256, 16 and mono.
+- `crates/coffee-tui/tests/pin_render.rs`: a new token at true colour, 256, 16 and mono.
 
 ## 6. Verify
 
 ```sh
 cd apps/tui && nsh check && nsh test && nsh test --target tui
 cd ../.. && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check
-cargo test -p coffee-app -p coffee-host && pnpm lint
+cargo test -p coffee-app -p coffee-tui -p tty-host && pnpm lint
 ```
 
-Then look at it for real, at every depth: `cargo build -p coffee-host && python3 scripts/pty-run.py --size 160x50
+Then look at it for real, at every depth: `cargo build -p coffee-tui && python3 scripts/pty-run.py --size 160x50
 --env COFFEE_UI_GALLERY=1 --env COFFEE_COLORS=mono -- target/debug/coffee-tui` (`--raw FILE` keeps the SGR bytes).
 Grep your diff for `#` hex literals and `rgb(` outside `theme.json`.

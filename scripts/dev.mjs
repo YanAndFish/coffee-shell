@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 // `pnpm dev`: the whole demo on this machine.
 //
-// 1. Builds `coffee-tui` (crate `coffee-host`) and `coffee-sshd` with Cargo.
+// 1. Builds `coffee-tui` and `tty-gateway` with Cargo.
 // 2. Starts the backend (`pnpm --filter @coffee/server dev`) and waits for `/v1/health`.
-// 3. Starts `coffee-sshd`, which runs one `coffee-tui` per SSH session on a PTY.
+// 3. Checks `deploy/gateway.toml` (`tty-gateway --check`) and starts `tty-gateway` with it:
+//    the SSH user name picks a route, each session runs `coffee-tui` on a PTY (`gallery@`
+//    gets the UI gallery, any other name the shop).
 // 4. Prints how to connect, prefixes both logs, and stops both on Ctrl+C.
 //
-// Both processes share a random `COFFEE_INTERNAL_KEY` made for this run only (never printed).
+// Both processes share a random `COFFEE_INTERNAL_KEY` made for this run only (never printed);
+// the gateway's configuration hands it to the shop's sessions only, with COFFEE_API_URL.
 // Options: `--skip-build` reuses the binaries already in Cargo's target directory.
-// Environment: HOST, PORT (backend, default 127.0.0.1:3000), COFFEE_SSH_ADDR
-// (default 127.0.0.1:2222), COFFEE_SSH_HOST_KEY (default .data/ssh_host_ed25519_key),
-// COFFEE_COLORS (passed on to every session).
+// Environment: HOST, PORT (backend, default 127.0.0.1:3000); TTY_GATEWAY_ADDR (default
+// 127.0.0.1:2222), TTY_GATEWAY_HOST_KEY (default .data/ssh_host_ed25519_key) and
+// TTY_GATEWAY_CONFIG (default deploy/gateway.toml), all three passed to the gateway;
+// COFFEE_COLORS (passed on to every session). The names COFFEE_SSH_ADDR and
+// COFFEE_SSH_HOST_KEY of the old gateway are no longer read (a warning says so).
 //
-// Every phase (cargo metadata, the build, the backend, sshd) runs as a child in its own
+// Every phase (cargo metadata, the build, the check, the backend, the gateway) runs as a child in its own
 // process group, never blocking this process: Ctrl+C, SIGTERM or SIGHUP at any moment stops
 // whatever is running (the whole group, so cargo's rustc jobs and pnpm's node too) and exits.
 
@@ -21,7 +26,7 @@ import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { connect } from 'node:net'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { createInterface } from 'node:readline'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -35,9 +40,9 @@ function paint(code, text) {
     : text
 }
 const tags = {
-  dev: paint('1;33', '[dev]   '),
-  server: paint('36', '[server]'),
-  sshd: paint('35', '[sshd]  '),
+  dev: paint('1;33', '[dev]    '),
+  server: paint('36', '[server] '),
+  gateway: paint('35', '[gateway]'),
 }
 
 function log(message) {
@@ -130,10 +135,24 @@ const apiPort = Number(process.env.PORT || 3000)
 const apiUrl = `http://${apiHost.includes(':')
   ? `[${apiHost}]`
   : apiHost}:${apiPort}`
-const sshAddr = process.env.COFFEE_SSH_ADDR || '127.0.0.1:2222'
+for (const [old, now] of [
+  [
+    'COFFEE_SSH_ADDR',
+    'TTY_GATEWAY_ADDR',
+  ],
+  [
+    'COFFEE_SSH_HOST_KEY',
+    'TTY_GATEWAY_HOST_KEY',
+  ],
+]) {
+  if (process.env[old])
+    log(paint('33', `! ${old} is no longer read: set ${now} instead.`))
+}
+const sshAddr = process.env.TTY_GATEWAY_ADDR || '127.0.0.1:2222'
 const sshPort = Number(sshAddr.slice(sshAddr.lastIndexOf(':') + 1))
 const sshHost = sshAddr.slice(0, sshAddr.lastIndexOf(':')).replace(/^\[|\]$/g, '')
-const hostKey = resolve(root, process.env.COFFEE_SSH_HOST_KEY || '.data/ssh_host_ed25519_key')
+const hostKey = resolve(root, process.env.TTY_GATEWAY_HOST_KEY || '.data/ssh_host_ed25519_key')
+const gatewayConfig = resolve(root, process.env.TTY_GATEWAY_CONFIG || 'deploy/gateway.toml')
 const internalKey = randomBytes(24).toString('base64url')
 
 // --- Preconditions -------------------------------------------------------------------------
@@ -157,7 +176,7 @@ const exe = process.platform === 'win32'
   ? '.exe'
   : ''
 const tuiBin = join(targetDir, 'debug', `coffee-tui${exe}`)
-const sshdBin = join(targetDir, 'debug', `coffee-sshd${exe}`)
+const gatewayBin = join(targetDir, 'debug', `tty-gateway${exe}`)
 
 for (const [port, host, what, variable] of [
   [
@@ -169,8 +188,8 @@ for (const [port, host, what, variable] of [
   [
     sshPort,
     sshHost,
-    'coffee-sshd',
-    'COFFEE_SSH_ADDR',
+    'tty-gateway',
+    'TTY_GATEWAY_ADDR',
   ],
 ]) {
   if (await listening(host, port))
@@ -181,19 +200,19 @@ await unlessStopping()
 // --- Build ---------------------------------------------------------------------------------
 
 if (skipBuild) {
-  for (const bin of [tuiBin, sshdBin]) {
+  for (const bin of [tuiBin, gatewayBin]) {
     if (!existsSync(bin))
-      fail(`${bin} is not built.`, 'Run `pnpm dev` without --skip-build, or `cargo build -p coffee-host -p coffee-sshd`.')
+      fail(`${bin} is not built.`, 'Run `pnpm dev` without --skip-build, or `cargo build -p coffee-tui -p tty-gateway`.')
   }
 }
 else {
-  log('building coffee-tui and coffee-sshd (cargo build -p coffee-host -p coffee-sshd)…')
+  log('building coffee-tui and tty-gateway (cargo build -p coffee-tui -p tty-gateway)…')
   const build = await launch('build', 'cargo', [
     'build',
     '-p',
-    'coffee-host',
+    'coffee-tui',
     '-p',
-    'coffee-sshd',
+    'tty-gateway',
   ], {
     stdio: ['ignore', 'inherit', 'inherit'],
   }).done
@@ -203,6 +222,40 @@ else {
 }
 
 mkdirSync(dirname(hostKey), { recursive: true })
+
+// The gateway's environment: the configuration reads COFFEE_API_URL and COFFEE_INTERNAL_KEY
+// (`${env:…}`) for the shop's sessions; `coffee-tui` is found next to `tty-gateway`.
+const gatewayEnv = {
+  TTY_GATEWAY_ADDR: sshAddr,
+  TTY_GATEWAY_HOST_KEY: hostKey,
+  COFFEE_API_URL: apiUrl,
+  COFFEE_INTERNAL_KEY: internalKey,
+}
+
+// --- Check the gateway's configuration -----------------------------------------------------
+
+{
+  const { child, done } = launch('check', gatewayBin, [
+    '--check',
+    '--config',
+    gatewayConfig,
+  ], {
+    env: {
+      ...process.env,
+      ...gatewayEnv,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  const chunks = []
+  child.stderr.on('data', chunk => chunks.push(chunk))
+  const { code, error } = await done
+  await unlessStopping()
+  const said = Buffer.concat(chunks).toString('utf8').trim()
+  if (error || code !== 0)
+    fail(`${gatewayConfig} does not check out (tty-gateway --check):`, error?.message ?? said)
+  for (const line of said.split('\n').filter(Boolean))
+    log(paint('33', `! ${line}`))
+}
 
 // --- Run -----------------------------------------------------------------------------------
 
@@ -253,17 +306,14 @@ async function run() {
   }
   log('✓ backend is healthy')
 
-  log(`starting coffee-sshd on ${sshAddr}`)
-  start('sshd', sshdBin, [], {
-    COFFEE_SSH_ADDR: sshAddr,
-    COFFEE_SSH_HOST_KEY: hostKey,
-    COFFEE_TUI_BIN: tuiBin,
-    COFFEE_API_URL: apiUrl,
-    COFFEE_INTERNAL_KEY: internalKey,
-  })
+  log(`starting tty-gateway on ${sshAddr} (${relative(root, gatewayConfig) || gatewayConfig})`)
+  start('gateway', gatewayBin, [
+    '--config',
+    gatewayConfig,
+  ], gatewayEnv)
   if (!(await waitFor(() => listening(sshHost, sshPort), 30_000))) {
     if (!stopping) {
-      console.error(`${tags.dev} ${paint('31', `✗ coffee-sshd is not listening on ${sshAddr} after 30 s.`)}`)
+      console.error(`${tags.dev} ${paint('31', `✗ tty-gateway is not listening on ${sshAddr} after 30 s.`)}`)
       await stop(1)
     }
     return
@@ -279,7 +329,9 @@ async function run() {
     : sshHost
   console.log('')
   log(paint('1;32', `✓ ready — connect with:  ssh -p ${sshPort} ${local}`))
-  log('  (or `pnpm ssh`; any user name, no password. Ctrl+C here stops both.)')
+  log(`  the shop: any user name but gallery, no password (or \`pnpm ssh\`)`)
+  log(`  the UI gallery:  ssh -p ${sshPort} gallery@${local}`)
+  log('  Ctrl+C here stops both.')
   console.log('')
 }
 

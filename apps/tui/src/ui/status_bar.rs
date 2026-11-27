@@ -10,7 +10,7 @@
 //! apart and one from the edge. On S the right side keeps only the total; when the hints
 //! leave fewer than two cells before it, it goes ([`right_fits`]).
 //!
-//! nsh draws the pill's text in the terminal's default colour; `coffee-host` pins default text
+//! nsh draws the pill's text in the terminal's default colour; `coffee-tui` pins default text
 //! on an amber fill to `ink`, and nsh draws the fill reversed at 16 colours and in mono, so it
 //! reads at every colour depth. The bar owns the bottom row: nsh's own toasts and search line
 //! would draw there, so the app never uses them.

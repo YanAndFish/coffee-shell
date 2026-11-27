@@ -1,6 +1,6 @@
 """The Phase 2 acceptance flows (docs/acceptance.md), each on a fresh database.
 
-A flow gets a running `Stack` (backend + coffee-sshd) and drives stock `ssh` clients through
+A flow gets a running `Stack` (backend + tty-gateway on deploy/gateway.toml) and drives stock `ssh` clients through
 it. It fails by raising `Failure` (a wait that timed out carries its screen); `snap(label)`
 keeps a named text screenshot next to the flow's logs.
 """
@@ -377,10 +377,10 @@ def flow_session(stack: Stack) -> None:
   t.session.send(b"c")
   time.sleep(0.02)
   t.kill()
-  if not wait_until(lambda: not stack.tui_pids(), 5):
-    raise Failure(f"coffee-tui still running 5 s after the client died: {stack.tui_pids()}")
-  if not wait_until(lambda: "client left" in stack.sshd.log.read_text(), 5):
-    raise Failure("sshd did not log the session's end")
+  if not wait_until(lambda: not stack.session_pids(), 5):
+    raise Failure(f"coffee-tui still running 5 s after the client died: {stack.session_pids()}")
+  if not wait_until(lambda: "client left" in stack.gateway_log(), 5):
+    raise Failure("the gateway did not log the session's end")
   time.sleep(1)  # a checkout already in the backend finishes (or not) in its transaction
   placed = orders(stack)
   cart = stack.sql("SELECT quantity FROM CartItem WHERE productId = 'mandh'")
@@ -426,9 +426,53 @@ def flow_session(stack: Stack) -> None:
 
 # --- Gateway edges ---------------------------------------------------------------------------
 
+GALLERY = "UI 组件库 GALLERY"
+
+
+def session_line(stack: Stack, user: str) -> str:
+  """The gateway's `session started` line of the latest session of SSH user `user`."""
+  lines = [line for line in stack.gateway_log().splitlines()
+           if "session started" in line and f'user="{user}"' in line]
+  return lines[-1] if lines else ""
+
+
+def flow_routes(stack: Stack) -> None:
+  """The SSH user name picks the route: `gallery@` gets the UI gallery, `coffee@` and a name
+  no route lists get the shop (the default route), and the gateway logs which. The internal
+  key and the backend's URL reach the shop's sessions only."""
+  seen: dict[str, set[str] | None] = {}
+  for user, route in (("gallery", "gallery"), ("coffee", "coffee"), ("nobody-e2e", "coffee")):
+    t = stack.connect(f"as-{user}", key=None, size=SIZE, user=user)
+    if route == "gallery":
+      t.wait(GALLERY)
+    else:
+      on_login_page(t)
+      check(GALLERY not in t.text(), f"{user}@ shows the gallery", t)
+    t.snap("first-screen")
+    t.wait_for(lambda: session_line(stack, user), f"the gateway's session line for {user}@", 5)
+    line = session_line(stack, user)
+    check(f"route={route}" in line, f"{user}@ is not on route {route}: {line}", t)
+    pids = stack.session_pids()
+    check(len(pids) == 1, f"{len(pids)} session programs for one client: {pids}", t)
+    seen[user] = stack.env_names(pids[0])
+    t.quit()
+  secrets = {"COFFEE_INTERNAL_KEY", "COFFEE_API_URL"}
+  if seen["gallery"] is None:
+    log("e2e:   session environments not readable here: secret routing not checked")
+  else:
+    check(not secrets & seen["gallery"], f"the gallery got {sorted(secrets & seen['gallery'])}")
+    check("COFFEE_UI_GALLERY" in seen["gallery"], "the gallery session has no COFFEE_UI_GALLERY")
+    for user in ("coffee", "nobody-e2e"):
+      names = seen[user] or set()
+      check(secrets <= names and "COFFEE_UI_GALLERY" not in names,
+            f"{user}@'s session environment: {sorted(n for n in names if n.startswith('COFFEE_'))}")
+
+
 def flow_gateway(stack: Stack) -> None:
-  """The backend down when a client connects: the app's error states, with a retry that works
-  once it is back. A missing session program: a clear message, a clear log line."""
+  """Routing by user name (`flow_routes`). The backend down when a client connects: the app's
+  error states, with a retry that works once it is back. A missing session program: a clear
+  message, a clear log line."""
+  flow_routes(stack)
   stack.stop_backend()
   t = stack.connect("backend-down", key=None, size=SIZE)
   login(t, "无人_e2e")
@@ -442,20 +486,23 @@ def flow_gateway(stack: Stack) -> None:
   t.snap("list-after-retry")
   t.quit()
 
-  stack.stop_sshd()
-  stack.start_sshd(COFFEE_TUI_BIN=str(stack.work / "no-such-coffee-tui"))
-  check("COFFEE_TUI_BIN does not exist" in stack.sshd.log.read_text(),
-        "sshd did not warn about the missing session program at start")
+  stack.stop_gateway()
+  missing = stack.work / "no-such-coffee-tui"
+  stack.start_gateway({"routes": {"coffee": {"command": [str(missing)]}}})
+  check(f"routes.coffee.command: {missing} does not exist" in stack.gateway_log(),
+        "the gateway did not warn about the missing session program at start")
   t = stack.connect("no-program", key=None, size=SIZE)
   t.wait("ROAST/TTY 暂时无法启动，请稍后再试。")
   t.exited()
   check(t.session.describe_exit() == "exited with code 1", f"ssh {t.session.describe_exit()}")
   t.snap("no-program")
   t.close()
-  check("could not start the session program" in stack.sshd.log.read_text(),
-        "sshd did not log why the session failed")
-  stack.stop_sshd()
-  stack.start_sshd()
+  failed = [line for line in stack.gateway_log().splitlines()
+            if "could not start the session program" in line and "trying again" not in line]
+  check(bool(failed) and "route=coffee" in failed[-1] and str(missing) in failed[-1],
+        f"the gateway did not log why the session failed: {failed[-1:]}")
+  stack.stop_gateway()
+  stack.start_gateway()
 
 
 def browse_as_guest_failing(t: Term) -> None:

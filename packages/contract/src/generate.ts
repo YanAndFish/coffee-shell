@@ -36,7 +36,7 @@ function ok(path: string, operationId: string, status: number, schema: z.ZodType
 
 /**
  * Every fixture, keyed by its path under `fixtures/`. Rust tests (crates/coffee-api), the TUI
- * fixture transport and the sshd e2e stub read these files; the first three paths are frozen.
+ * fixture transport and the SSH e2e stub read these files; the first three paths are frozen.
  */
 export const fixtures: readonly Fixture[] = [
   ok('v1/health.json', 'getHealth', 200, HealthSchema, ex.healthExample),

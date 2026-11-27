@@ -56,8 +56,9 @@ pub fn hspace(cells: u16) -> View {
   view().flex_none().w(cols(cells))
 }
 
-/// A blank of exactly `count` rows in a column (vertical padding under 24 points and gaps
-/// under 16 are no rows in nsh's terminal layout, and none is more than one).
+/// A blank of exactly `count` rows in a column (in nsh 0.7's terminal layout vertical padding
+/// under 12 points and gaps under 16, or under 12 in a bordered box, are no rows, and none is
+/// more than one).
 pub fn vspace(count: u16) -> View {
   view().flex_none().h(rows(count))
 }

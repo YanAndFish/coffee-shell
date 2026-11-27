@@ -2,15 +2,16 @@
 """End-to-end flows of ROAST/TTY over the real stack (`pnpm test:e2e:real`).
 
 For each flow: a copy of a freshly migrated and seeded SQLite database, the backend
-(`node apps/server/src/main.ts`) and `coffee-sshd` on free ports, and stock `ssh` clients on
-pseudo-terminals driven by what their screens show. After a flow: no `coffee-tui` may be left,
-and the logs may hold no password, token or internal key.
+(`node apps/server/src/main.ts`) and `tty-gateway` (`deploy/gateway.toml`, see harness.py) on
+free ports, and stock `ssh` clients on pseudo-terminals driven by what their screens show.
+After a flow: no session program may be left, the logs may hold no password, token or
+internal key, and no screen or written configuration the internal key.
 
   python3 scripts/e2e/run.py                 # every flow once
   python3 scripts/e2e/run.py main money      # some flows
   python3 scripts/e2e/run.py --repeat 5      # stability: the whole set five times
 
-Needs the debug binaries (`cargo build -p coffee-host -p coffee-sshd`; `pnpm test:e2e:real`
+Needs the debug binaries (`cargo build -p coffee-tui -p tty-gateway`; `pnpm test:e2e:real`
 builds them), `pnpm install` done, `ssh` and `ssh-keygen`. Output (text screenshots, logs,
 FAIL.txt on failure) goes to `.data/e2e/` or `--out`.
 """
@@ -28,25 +29,30 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from flows import DEFAULT, EXTERNAL, FLOWS  # noqa: E402
-from harness import (ROOT, Failure, Stack, cargo_target_dir, fail_report, log,  # noqa: E402
-                     make_template_db, wait_until)
+from harness import (ROOT, Failure, Stack, cargo_target_dir, check_sync_frames,  # noqa: E402
+                     check_toml_writer, fail_report, log, make_template_db, wait_until)
 from shop import PASSWORD  # noqa: E402
 
 FULL_FINGERPRINT = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")
 
 
 def check_logs(stack: Stack) -> None:
-  """Nothing secret in the backend's or the gateway's log. The gateway logs full key
+  """Nothing secret in the backend's or the gateway's log, and the internal key nowhere in
+  the flow's files (screens, the gateway's configuration). The gateway logs full key
   fingerprints by design (ADR 0001); the backend only shortened ones."""
   backend = stack.backend.log.read_text(errors="replace") if stack.backend else ""
-  sshd = stack.sshd.log.read_text(errors="replace") if stack.sshd else ""
-  for name, text in (("backend", backend), ("sshd", sshd)):
+  gateway = stack.gateway_log()
+  for name, text in (("backend", backend), ("gateway", gateway)):
     for secret, what in ((PASSWORD, "a password"), ("wrong-pass-", "a password"),
                          (stack.internal_key, "the internal key"), ("Bearer", "a token")):
       if secret in text:
         raise Failure(f"the {name} log contains {what}")
   if FULL_FINGERPRINT.search(backend):
     raise Failure("the backend log contains a full key fingerprint")
+  for path in sorted(stack.flow_dir.iterdir()):
+    if path.is_file() and path.suffix in (".txt", ".toml"):
+      if stack.internal_key in path.read_text(errors="replace"):
+        raise Failure(f"{path.name} contains the internal key")
 
 
 def run_flow(name: str, out: Path, work: Path, template: Path | None, bins: Path | None,
@@ -62,8 +68,9 @@ def run_flow(name: str, out: Path, work: Path, template: Path | None, bins: Path
       FLOWS[name](stack)
       for term in stack.terms:
         term.close()
-      if not wait_until(lambda: not stack.tui_pids(), 5):
-        raise Failure(f"coffee-tui left running after every client left: {stack.tui_pids()}")
+      if not wait_until(lambda: not stack.session_pids(), 5):
+        raise Failure(f"session programs left running after every client left: "
+                      f"{stack.session_pids()}")
     if not gateway:
       check_logs(stack)
   except Failure as failure:
@@ -80,6 +87,11 @@ def run_flow(name: str, out: Path, work: Path, template: Path | None, bins: Path
     traceback.print_exc()
   finally:
     stack.close()
+  screens = [term.session.screen for term in stack.terms]
+  frames = sum(screen.frames for screen in screens)
+  split = sum(screen.split_frames for screen in screens)
+  if split:
+    log(f"e2e:   {split} reads ended inside a frame ({frames} frames): read whole")
   return ok, time.monotonic() - started
 
 
@@ -117,9 +129,9 @@ def main() -> int:
   bins = None
   if not gateway:
     bins = Path(os.environ.get("E2E_BIN_DIR") or cargo_target_dir() / "debug")
-    for binary in ("coffee-tui", "coffee-sshd"):
+    for binary in ("coffee-tui", "tty-gateway"):
       if not (bins / binary).is_file():
-        parser.error(f"{bins / binary} is not built: cargo build -p coffee-host -p coffee-sshd")
+        parser.error(f"{bins / binary} is not built: cargo build -p coffee-tui -p tty-gateway")
 
   out = args.out.resolve()
   if out.exists():
@@ -127,7 +139,9 @@ def main() -> int:
   work = out / "work"
   work.mkdir(parents=True)
   template = None
+  check_sync_frames()
   if not gateway:
+    check_toml_writer()
     log(f"e2e: preparing the template database in {work}")
     template = make_template_db(work)
 

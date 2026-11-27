@@ -2,7 +2,7 @@
 //!
 //! # Frozen public interface
 //!
-//! Other crates (`coffee-host`, `coffee-sshd`) and tests code against exactly these items.
+//! Other crates (`coffee-tui`) and tests code against exactly these items.
 //! Change them only together with every caller:
 //!
 //! - [`App`]: the root component. `nsh.json` names it (`"root": "App"`); a host mounts it
@@ -57,8 +57,8 @@ fn native(registry: &mut Registry) {
 
 /// The settings of the one SSH session this process serves.
 ///
-/// The host builds it from its environment (`COFFEE_API_URL` and friends, set by
-/// `coffee-sshd`) and passes it to [`configure`] before the UI starts.
+/// The host builds it from its environment (`COFFEE_API_URL` and friends, set by the
+/// `tty-gateway` route's `env` table) and passes it to [`configure`] before the UI starts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionEnv {
   /// Base URL of the local backend, e.g. `http://127.0.0.1:3000`.
@@ -97,11 +97,17 @@ pub fn session_env() -> Option<&'static SessionEnv> {
 
 /// The root component: provides the layout and the stores, then the shell (header, page
 /// stack, status bar, too-small guard). A host mounts it with `Root::of::<App>()`.
+///
+/// The shell is the content of the app's one window: since nsh 0.7 a Rust root on a desktop
+/// shows only what it puts in a `window()` (the headless `nsh test` runs open the app as a
+/// Linux desktop), while in a terminal a window's content is simply the screen.
 #[component]
 pub fn App() -> impl IntoElement {
   ui::Layout::provide();
   stores::Stores::provide();
-  shell::shell()
+  nsh_core::element::desktop::window()
+    .id("main")
+    .content(shell::shell)
 }
 
 #[cfg(test)]
