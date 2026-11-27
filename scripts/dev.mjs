@@ -14,7 +14,9 @@
 // Environment: HOST, PORT (backend, default 127.0.0.1:3000); TTY_GATEWAY_ADDR (default
 // 127.0.0.1:2222), TTY_GATEWAY_HOST_KEY (default .data/ssh_host_ed25519_key) and
 // TTY_GATEWAY_CONFIG (default deploy/gateway.toml), all three passed to the gateway;
-// COFFEE_COLORS (passed on to every session). The names COFFEE_SSH_ADDR and
+// COFFEE_COLORS (passed on to every session); COFFEE_API_URL (the shop's sessions use it
+// instead of the backend started here, e.g. `fixture:member`; the readiness check still asks
+// that backend). The names COFFEE_SSH_ADDR and
 // COFFEE_SSH_HOST_KEY of the old gateway are no longer read (a warning says so).
 //
 // Every phase (cargo metadata, the build, the check, the backend, the gateway) runs as a child in its own
@@ -135,6 +137,9 @@ const apiPort = Number(process.env.PORT || 3000)
 const apiUrl = `http://${apiHost.includes(':')
   ? `[${apiHost}]`
   : apiHost}:${apiPort}`
+// What the shop's sessions talk to: COFFEE_API_URL as given (empty means unset), else the
+// backend started here. Only the sessions use it; this script checks `apiUrl`.
+const shopApiUrl = process.env.COFFEE_API_URL || apiUrl
 for (const [old, now] of [
   [
     'COFFEE_SSH_ADDR',
@@ -228,7 +233,7 @@ mkdirSync(dirname(hostKey), { recursive: true })
 const gatewayEnv = {
   TTY_GATEWAY_ADDR: sshAddr,
   TTY_GATEWAY_HOST_KEY: hostKey,
-  COFFEE_API_URL: apiUrl,
+  COFFEE_API_URL: shopApiUrl,
   COFFEE_INTERNAL_KEY: internalKey,
 }
 
@@ -305,6 +310,8 @@ async function run() {
     return
   }
   log('✓ backend is healthy')
+  if (shopApiUrl !== apiUrl)
+    log(paint('33', `! the shop's sessions use COFFEE_API_URL as given, not ${apiUrl}`))
 
   log(`starting tty-gateway on ${sshAddr} (${relative(root, gatewayConfig) || gatewayConfig})`)
   start('gateway', gatewayBin, [
