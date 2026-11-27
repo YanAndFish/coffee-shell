@@ -8,18 +8,25 @@ use std::{
   time::{Duration, Instant},
 };
 
-use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
+use rustix::{
+  process::{Pid, Signal, kill_process_group, test_kill_process_group},
+  termios::{OptionalActions, SpecialCodeIndex, tcgetattr, tcsetattr},
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::config::{CommandSpec, Upstream};
 
-/// What starting a session needs.
+/// 启动会话所需的环境变量和终端设置。
 #[derive(Clone, Debug)]
 pub struct Launch {
-  /// The whole environment of the session (nothing else is inherited).
+  /// 会话的全部环境变量。
   pub env: Vec<(String, String)>,
+  /// 终端列数。
   pub cols: u16,
+  /// 终端行数。
   pub rows: u16,
+  /// 删除光标左侧字符的按键值。`None` 使用系统默认值，255 表示禁用。
+  pub erase: Option<u8>,
 }
 
 /// A started upstream. Dropped before [`Running::stop`] finished (a cancelled or
@@ -107,6 +114,16 @@ fn spawn_child(
     )
   })?;
   let (master, slave) = pty_process::open().map_err(io::Error::other)?;
+  if let Some(erase) = launch.erase {
+    let mut termios = tcgetattr(&slave)?;
+    // SSH 用 255 表示禁用，操作系统的禁用值可能不同。
+    termios.special_codes[SpecialCodeIndex::VERASE] = if erase == u8::MAX {
+      libc::_POSIX_VDISABLE
+    } else {
+      erase
+    };
+    tcsetattr(&slave, OptionalActions::Now, &termios)?;
+  }
   master
     .resize(pty_process::Size::new(launch.rows, launch.cols))
     .map_err(io::Error::other)?;
@@ -297,6 +314,7 @@ mod tests {
         env: vec![("PATH".into(), "/usr/bin:/bin".into())],
         cols: 80,
         rows: 24,
+        erase: None,
       })
       .unwrap();
     let start = Instant::now();

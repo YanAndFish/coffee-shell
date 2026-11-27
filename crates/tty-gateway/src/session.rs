@@ -161,25 +161,37 @@ impl Drop for Alive {
   }
 }
 
-/// Everything a session task needs.
+/// 会话任务所需的路由、终端设置和连接状态。
 pub struct SessionTask {
+  /// 用于日志的连接编号。
   pub conn: u64,
+  /// 本次登录选中的路由。
   pub route: Arc<Route>,
-  /// The session's environment (the size comes from the link at the start).
+  /// 会话的全部环境变量。
   pub env: Vec<(String, String)>,
+  /// 删除光标左侧字符的按键值。`None` 使用系统默认值，255 表示禁用。
+  pub erase: Option<u8>,
+  /// 接收客户端输入、终端尺寸和断开通知。
   pub link: LinkEnd,
+  /// 向 SSH 连接发送数据的句柄。
   pub handle: Handle,
+  /// 本次会话使用的 SSH 通道。
   pub channel: ChannelId,
-  /// When the client last typed or resized, on `clock`.
+  /// 客户端最后输入或调整终端尺寸的时间，使用 `clock` 的毫秒数。
   pub last_input: Arc<AtomicU64>,
+  /// 从服务启动时开始计时的时钟。
   pub clock: Clock,
+  /// 所有会话共用的数量限制。
   pub limits: Arc<Limits>,
+  /// 客户端地址，用于按地址限制会话数量。
   pub ip: IpAddr,
+  /// 当前配置允许的总会话数和每个地址的会话数。
   pub caps: Caps,
-  /// Becomes `true` when the server shuts down.
+  /// 服务关闭时变为 `true`。
   pub shutdown: watch::Receiver<bool>,
-  /// How long the program has to leave at a shutdown.
+  /// 服务关闭后等待会话程序退出的时间。
   pub shutdown_grace: Duration,
+  /// 标记连接上的会话正在运行，释放时清除标记。
   pub alive: Alive,
 }
 
@@ -228,6 +240,7 @@ pub async fn run_session(task: SessionTask) {
     conn,
     route,
     env,
+    erase,
     link,
     handle,
     channel,
@@ -273,6 +286,7 @@ pub async fn run_session(task: SessionTask) {
       env: env.clone(),
       cols,
       rows,
+      erase,
     };
     let starting = route.clone();
     let started = tokio::task::spawn_blocking(move || starting.upstream.start(&launch))
