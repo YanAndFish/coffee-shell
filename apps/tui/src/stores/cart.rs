@@ -142,7 +142,7 @@ pub fn add_line(mut lines: Vec<GuestCartLine>, line: GuestCartLine) -> Vec<Guest
   lines
 }
 
-/// The id of a new checkout attempt (8–64 of `[A-Za-z0-9_-]`, P-order-2).
+/// 生成购物车合并或下单的请求标识，格式为 8–64 个 `[A-Za-z0-9_-]` 字符。
 pub fn idempotency_key(attempt: u64) -> String {
   let nanos = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
@@ -160,6 +160,8 @@ pub struct CartStore {
   session: SessionStore,
   cart: Remote<Cart>,
   guest: Signal<GuestCart>,
+  /// 待合并访客购物车的请求标识，失败后重试时复用。
+  merge_key: Signal<Option<String>>,
   cursor: Signal<Option<String>>,
   undo: Signal<Option<Removed>>,
   coupon_input: Signal<String>,
@@ -178,6 +180,7 @@ impl CartStore {
       session,
       cart: Remote::new(no_lines),
       guest: signal(GuestCart::default()),
+      merge_key: signal(None),
       cursor: signal(None),
       undo: signal(None),
       coupon_input: signal(String::new()),
@@ -715,11 +718,9 @@ impl CartStore {
     self.apply(revision, result)
   }
 
-  /// Right after login: merges the guest cart into the account (or loads the member cart
-  /// when the guest had none). The units merged, for `已合并访客购物车 {n} 件` (0 = no
-  /// merge toast). The guest's quote never stands for the member cart: it goes at once, so
-  /// a failure leaves no cart on screen (`✗ 购物车同步失败 · ⏎ 重试`), and the guest lines
-  /// stay until a merge takes them ([`Self::merge_pending`]).
+  /// 登录后合并访客购物车，返回实际加入的商品件数。访客购物车为空时加载会员购物车。
+  /// 同一次合并失败后复用请求标识，供服务端识别重试。
+  /// 等待和失败时清空展示的数据，保留访客商品直到合并成功。
   pub async fn merge_guest(self) -> Result<u32, ApiFailure> {
     let guest = self.guest.get_untracked();
     let client = self.session.client();
@@ -731,15 +732,22 @@ impl CartStore {
       return outcome;
     }
     let request = CartMergeRequest {
+      idempotency_key: Some(self.merge_key.get_untracked().unwrap_or_else(|| {
+        let key = idempotency_key(1);
+        self.merge_key.set(Some(key.clone()));
+        key
+      })),
       lines: guest.lines,
       coupon_code: guest.coupon,
     };
     match client.merge_cart(&request).await {
       Ok(merged) => {
         batch(|| {
-          self.guest.set(GuestCart::default());
-          self.cart.finish(revision, Ok(merged.cart));
-          self.undo.set(None);
+          if self.cart.finish(revision, Ok(merged.cart)) {
+            self.guest.set(GuestCart::default());
+            self.merge_key.set(None);
+            self.undo.set(None);
+          }
         });
         Ok(merged.merged_count)
       }
@@ -817,6 +825,7 @@ impl CartStore {
     batch(|| {
       self.cart.reset();
       self.guest.set(GuestCart::default());
+      self.merge_key.set(None);
       self.cursor.set(None);
       self.undo.set(None);
       self.coupon_input.set(String::new());
@@ -1199,6 +1208,10 @@ mod tests {
       // The merge after login fails: no cart shows (not the guest's quote), the lines stay.
       let merge = Stepped::start(cart.merge_guest());
       assert_eq!(script.calls(), ["POST /cart/merge"]);
+      let first_key = script.body(0)["idempotencyKey"]
+        .as_str()
+        .unwrap()
+        .to_owned();
       script.answer(0, 500, INTERNAL_ERROR);
       assert!(merge.finish().is_err());
       assert_eq!(cart.phase(), Phase::Failed);
@@ -1215,6 +1228,7 @@ mod tests {
       // A change first merges (here 本单寄往 from the address book), and stops if that fails.
       let address = Stepped::start(cart.set_address(1));
       assert_eq!(script.calls(), ["POST /cart/merge"]);
+      assert_eq!(script.body(0)["idempotencyKey"], first_key);
       script.answer(0, 500, INTERNAL_ERROR);
       assert!(address.finish().is_err());
       assert!(script.calls().is_empty(), "no address without the merge");
@@ -1224,11 +1238,13 @@ mod tests {
       // `⏎ 重试` (a load) merges them; then the change goes through on the merged cart.
       let mut load = Stepped::start(cart.fetch());
       assert_eq!(script.calls(), ["POST /cart/merge"]);
+      assert_eq!(script.body(0)["idempotencyKey"], first_key);
       assert_eq!(script.body(0)["lines"].as_array().unwrap().len(), 1);
       script.answer(0, 200, MERGED);
       assert!(load.poll().is_some());
       assert!(!cart.merge_pending());
       assert_eq!(cart.guest(), GuestCart::default());
+      assert_eq!(cart.merge_key.get_untracked(), None);
       assert_eq!(cart.phase(), Phase::Ready);
       assert_eq!(cart.item_count(), 3, "the merged member cart");
       let address = Stepped::start(cart.set_address(1));
@@ -1236,6 +1252,73 @@ mod tests {
       script.answer(0, 200, ADDRESS_SET);
       address.finish().unwrap();
       assert!(cart.cart().is_some_and(|c| c.address.is_some()));
+    });
+  }
+
+  #[test]
+  fn 合并响应丢失后重试使用相同的请求内容和标识() {
+    with_script(|script, session, cart| {
+      let add = Stepped::start(cart.add(line("yirga", 2)));
+      script.answer(0, 200, GUEST_QUOTE);
+      add.finish().unwrap();
+      session.signed_in(serde_json::from_str(LOGIN).unwrap());
+
+      let first = Stepped::start(cart.merge_guest());
+      let body = script.body(0);
+      script.drop_connection(0);
+      assert!(first.finish().unwrap_err().is_network());
+      let retry = Stepped::start(cart.merge_guest());
+      assert_eq!(script.body(0), body);
+      script.answer(0, 200, MERGED);
+      assert_eq!(retry.finish().unwrap(), 1);
+      assert_eq!(cart.merge_key.get_untracked(), None);
+    });
+  }
+
+  #[test]
+  fn 并发合并使用相同的请求标识() {
+    with_script(|script, session, cart| {
+      cart.guest.set(GuestCart {
+        lines: vec![line("yirga", 2)],
+        coupon: None,
+      });
+      session.signed_in(serde_json::from_str(LOGIN).unwrap());
+      let first = Stepped::start(cart.merge_guest());
+      let second = Stepped::start(cart.merge_guest());
+      let first_key = script.body(0)["idempotencyKey"].clone();
+      assert_eq!(script.body(1)["idempotencyKey"], first_key);
+      script.answer(0, 200, MERGED);
+      first.finish().unwrap();
+      assert!(cart.merge_pending());
+      script.answer(0, 200, MERGED);
+      second.finish().unwrap();
+      assert!(!cart.merge_pending());
+    });
+  }
+
+  #[test]
+  fn 清空购物车后使用新的合并请求标识() {
+    with_script(|script, session, cart| {
+      cart.guest.set(GuestCart {
+        lines: vec![line("yirga", 2)],
+        coupon: None,
+      });
+      session.signed_in(serde_json::from_str(LOGIN).unwrap());
+      let first = Stepped::start(cart.merge_guest());
+      let first_key = script.body(0)["idempotencyKey"].clone();
+      script.drop_connection(0);
+      first.finish().unwrap_err();
+      cart.reset();
+      cart.guest.set(GuestCart {
+        lines: vec![line("yirga", 2)],
+        coupon: None,
+      });
+      let next = Stepped::start(cart.merge_guest());
+      assert_ne!(script.body(0)["idempotencyKey"], first_key);
+      script.drop_connection(0);
+      next.finish().unwrap_err();
+      cart.reset();
+      assert_eq!(cart.merge_key.get_untracked(), None);
     });
   }
 }

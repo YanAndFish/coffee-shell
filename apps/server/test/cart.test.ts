@@ -6,9 +6,11 @@ import type { TestDatabase, TestServer } from './helpers.ts'
 import type { TestLine, TestMember } from './support/members.ts'
 import { ApiErrorSchema, CartMergeResultSchema, CartSchema, ERRORS } from '@coffee/contract'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createApp } from '../src/app.ts'
+import { createPrisma } from '../src/db.ts'
 import { distinctLines } from './conformance/cart.ts'
 import { NOW } from './conformance/types.ts'
-import { call, createTestDatabase, listenApp, readFixture } from './helpers.ts'
+import { call, createTestDatabase, listen, listenApp, readFixture } from './helpers.ts'
 import { addAddressRow, addCartRow, createMember } from './support/members.ts'
 
 let db: TestDatabase
@@ -572,6 +574,216 @@ describe('pOST /v1/cart/merge', () => {
     expect(response.status, JSON.stringify(response.body)).toBe(200)
     return CartMergeResultSchema.parse(response.body)
   }
+
+  it('同一请求标识重试时返回首次合并数量和当前购物车', async () => {
+    const m = await member([YIRGA])
+    const body = {
+      idempotencyKey: 'merge-retry-0001',
+      lines: [
+        { ...YIRGA, quantity: 2 },
+        { ...PINKB, productId: 'missing' },
+      ],
+      couponCode: 'tty10',
+    }
+    const first = await merge(m.token, body)
+    expect(first).toMatchObject({ mergedCount: 2, skippedCount: 1 })
+    await ok('PATCH', '/v1/cart/lines/RT-YIR-250G-WB-STD', m.token, { quantity: 1, selected: false })
+    await ok('DELETE', '/v1/cart/coupon', m.token)
+    const replay = await merge(m.token, { ...body, couponCode: ' TTY10 ' })
+    expect(replay).toEqual({ cart: await getCart(m.token), mergedCount: 2, skippedCount: 1 })
+    expect(replay.cart.lines[0]).toMatchObject({ quantity: 1, selected: false })
+    expect(replay.cart.coupon).toBeNull()
+    expect(await db.prisma.cartMerge.count({
+      where: { userId: m.id },
+    })).toBe(1)
+  })
+
+  it('合并成功后连接中断时重试不会重复累加商品', async () => {
+    const m = await member([YIRGA])
+    const body = {
+      idempotencyKey: 'merge-response-lost-0001',
+      lines: [
+        { ...YIRGA, quantity: 2 },
+      ],
+    }
+    const app = createApp({
+      prisma: db.prisma,
+      now: () => NOW,
+      validateResponses: true,
+      logError: () => {},
+    })
+    app.middleware.unshift(async (ctx, next) => {
+      await next()
+      // 业务处理已完成，关闭连接使客户端收不到成功响应。
+      ctx.res.destroy()
+    })
+    const droppingServer = await listen(app)
+    try {
+      await expect(call(droppingServer.origin, 'POST', '/v1/cart/merge', { token: m.token, body })).rejects.toThrow()
+      expect((await getCart(m.token)).lines[0]!.quantity).toBe(3)
+      expect((await merge(m.token, body)).mergedCount).toBe(2)
+      expect((await getCart(m.token)).lines[0]!.quantity).toBe(3)
+    }
+    finally {
+      await droppingServer.close()
+    }
+  })
+
+  it('同一标识携带不同的访客商品时拒绝合并', async () => {
+    const m = await member()
+    const body = {
+      idempotencyKey: 'merge-content-0001',
+      lines: [YIRGA],
+    }
+    await merge(m.token, body)
+    await failure('POST', '/v1/cart/merge', m.token, {
+      ...body,
+      lines: [
+        { ...YIRGA, quantity: 2 },
+      ],
+    }, 'validation_failed', { field: 'body.idempotencyKey' })
+    await failure('POST', '/v1/cart/merge', m.token, {
+      ...body,
+      couponCode: 'TTY10',
+    }, 'validation_failed', { field: 'body.idempotencyKey' })
+    expect((await getCart(m.token)).lines[0]!.quantity).toBe(1)
+  })
+
+  it('不同标识代表两次合并', async () => {
+    const m = await member()
+    for (const idempotencyKey of ['merge-first-0001', 'merge-second-0001']) {
+      expect((await merge(m.token, {
+        idempotencyKey,
+        lines: [YIRGA],
+      })).mergedCount).toBe(1)
+    }
+    expect((await getCart(m.token)).lines[0]!.quantity).toBe(2)
+  })
+
+  it('省略标识时每次请求都会合并', async () => {
+    const m = await member()
+    await merge(m.token, {
+      lines: [YIRGA],
+    })
+    await merge(m.token, {
+      lines: [YIRGA],
+    })
+    expect((await getCart(m.token)).lines[0]!.quantity).toBe(2)
+  })
+
+  it('相同标识在不同账户中分别合并', async () => {
+    for (const m of [await member(), await member()]) {
+      const body = {
+        idempotencyKey: 'merge-accounts-0001',
+        lines: [YIRGA],
+      }
+      await merge(m.token, body)
+      await merge(m.token, body)
+      expect((await getCart(m.token)).lines[0]!.quantity).toBe(1)
+    }
+  })
+
+  it('通过不同数据库连接并发重试时只合并一次', async () => {
+    const m = await member([YIRGA])
+    const otherPrisma = createPrisma(db.url)
+    const otherServer = await listenApp(otherPrisma, {
+      now: () => NOW,
+    })
+    try {
+      const body = {
+        idempotencyKey: 'merge-concurrent-0001',
+        lines: [
+          { ...YIRGA, quantity: 2 },
+        ],
+      }
+      const replies = await Promise.all(Array.from({ length: 4 }, (_, i) => call(
+        i % 2 === 0
+          ? server.origin
+          : otherServer.origin,
+        'POST',
+        '/v1/cart/merge',
+        { token: m.token, body },
+      )))
+      for (const reply of replies) {
+        expect(reply.status, JSON.stringify(reply.body)).toBe(200)
+        expect(CartMergeResultSchema.parse(reply.body)).toMatchObject({ mergedCount: 2, skippedCount: 0 })
+      }
+      expect((await getCart(m.token)).lines[0]!.quantity).toBe(3)
+      expect(await otherPrisma.cartMerge.count({
+        where: { userId: m.id },
+      })).toBe(1)
+    }
+    finally {
+      await otherServer.close()
+      await otherPrisma.$disconnect()
+    }
+  })
+
+  it('重新连接数据库后重试时读取已保存的合并结果', async () => {
+    const m = await member()
+    const body = {
+      idempotencyKey: 'merge-reopened-0001',
+      lines: [
+        { ...YIRGA, quantity: 2 },
+      ],
+    }
+    const first = await merge(m.token, body)
+    const reopened = createPrisma(db.url)
+    const reopenedServer = await listenApp(reopened, {
+      now: () => NOW,
+    })
+    try {
+      const reply = await call(reopenedServer.origin, 'POST', '/v1/cart/merge', { token: m.token, body })
+      expect(reply.status).toBe(200)
+      expect(reply.body).toEqual(first)
+    }
+    finally {
+      await reopenedServer.close()
+      await reopened.$disconnect()
+    }
+  })
+
+  it('合并记录写入失败时商品修改也会回滚', async () => {
+    const m = await member([YIRGA])
+    const body = {
+      idempotencyKey: 'merge-rollback-0001',
+      lines: [
+        { ...YIRGA, quantity: 2 },
+      ],
+    }
+    await db.prisma.$executeRawUnsafe(`CREATE TRIGGER fail_merge_record BEFORE UPDATE ON "CartMerge"
+      BEGIN SELECT RAISE(ABORT, 'forced merge failure'); END`)
+    try {
+      const reply = await call(server.origin, 'POST', '/v1/cart/merge', { token: m.token, body })
+      expect(reply.status).toBe(500)
+      expect((await getCart(m.token)).lines[0]!.quantity).toBe(1)
+      expect(await db.prisma.cartMerge.count({
+        where: { userId: m.id },
+      })).toBe(0)
+    }
+    finally {
+      await db.prisma.$executeRawUnsafe('DROP TRIGGER fail_merge_record')
+    }
+    expect((await merge(m.token, body)).mergedCount).toBe(2)
+    expect((await getCart(m.token)).lines[0]!.quantity).toBe(3)
+  })
+
+  it('请求标识不符合格式时拒绝合并', async () => {
+    const m = await member()
+    for (const idempotencyKey of [
+      '',
+      'short',
+      'x'.repeat(65),
+      'merge 中文',
+      null,
+    ]) {
+      await failure('POST', '/v1/cart/merge', m.token, {
+        idempotencyKey,
+        lines: [YIRGA],
+      }, 'validation_failed', { field: 'body.idempotencyKey' })
+    }
+    expect((await getCart(m.token)).lines).toEqual([])
+  })
 
   it('an empty guest cart changes nothing', async () => {
     const m = await member([YIRGA])

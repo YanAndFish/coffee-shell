@@ -1659,7 +1659,7 @@
           "cart"
         ],
         "summary": "登录后把访客购物车合并进会员购物车",
-        "description": "In guest order, each line is added like `addCartLine` but never fails: quantities are capped at min(9, stock); unknown products, sold-out weights, products without stock and lines beyond 50 are skipped (`skippedCount`). A new line keeps the guest `selected` flag; a line merged into an existing one is selected if either was. A valid `couponCode` replaces the member coupon; an invalid one is ignored.",
+        "description": "In guest order, each line is added like `addCartLine` but never fails: quantities are capped at min(9, stock); unknown products, sold-out weights, products without stock and lines beyond 50 are skipped (`skippedCount`). A new line keeps the guest `selected` flag; a line merged into an existing one is selected if either was. A valid `couponCode` replaces the member coupon; an invalid one is ignored. 同一账户使用相同的 `idempotencyKey` 重试时，只合并一次，返回首次合并的数量和当前购物车。 相同标识携带不同的访客购物车内容时返回 `validation_failed`。省略标识时每次请求都会合并。",
         "security": [
           {
             "internalKey": [],
@@ -3808,6 +3808,10 @@
       "CartMergeRequest": {
         "type": "object",
         "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "pattern": "^[\\w-]{8,64}$"
+          },
           "lines": {
             "maxItems": 50,
             "type": "array",
