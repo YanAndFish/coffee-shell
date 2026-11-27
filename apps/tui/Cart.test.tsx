@@ -9,6 +9,9 @@
 // `removed.json`, `added.json`, `cart-coupon.json`, `orders/placed.json`).
 import type { App } from './testkit'
 import { expect, test } from 'nsh/test'
+
+import guestQuote from '../../packages/contract/fixtures/v1/cart/guest-quote.json' with { type: 'json' }
+import internalError from '../../packages/contract/fixtures/v1/errors/internal_error.json' with { type: 'json' }
 import { enterAsGuest, logInAsMember, logInOnClock, loginReady, runUntil, screenRows, shows, start, startOnClock, waitForPart } from './testkit'
 
 /** Expects one screen row to hold every one of `parts` (on the terminal; headless draws no cells). */
@@ -359,6 +362,32 @@ test('a backend that fails: ✗ and ⏎ 重试', async () => {
   expect(app.texts()).toContain('重试')
   await app.keyboard.press('enter')
   await app.waitFor('text:✗ 购物车加载失败')
+})
+
+test('a click on ⏎ 重试 reloads a cart that failed to load, as ⏎ does', async () => {
+  // A backend the test answers: the first quote fails, the next ones price the cart.
+  const LIVE = 'http://cart.test'
+  let quotes = 0
+  const app = await start(100, 30, {
+    transport: LIVE,
+    network: {
+      [`POST ${LIVE}/v1/cart/quote`]: () => {
+        quotes += 1
+        return quotes === 1
+          ? { status: 500, body: internalError }
+          : { body: guestQuote }
+      },
+    },
+  })
+  await enterAsGuest(app, '商品列表 · 加载失败')
+  await app.keyboard.press('2')
+  await app.waitFor('text:✗ 购物车加载失败')
+  expect(quotes).toBe(1)
+  // The panel's button (the status bar's `⏎ 重试` hint is the second match).
+  await app.press('label:⏎ 重试 >> nth=0')
+  await app.waitFor('text:购物车 · 2 件')
+  expect(quotes).toBe(2)
+  expect(app.texts()).not.toContain('✗ 购物车加载失败')
 })
 
 // --- States the fixture scenarios open ----------------------------------------------------
