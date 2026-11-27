@@ -203,8 +203,8 @@ cart (ADR 0001, "第二阶段完成后复测"). Size the gateway container for `
 
 ## Backend settings (environment)
 
-| Variable              | Image default             | Meaning                                                      |
-| --------------------- | ------------------------- | ------------------------------------------------------------ |
-| `COFFEE_INTERNAL_KEY` | unset (compose: required) | every route but `/v1/health` requires it as `X-Internal-Key` |
-| `HOST` / `PORT`       | `0.0.0.0` / `3000`        | listen address inside the container                          |
-| `DATABASE_URL`        | `file:/data/coffee.db`    | the SQLite file, on the `/data` volume                       |
+| Variable              | Image default             | Meaning                                                             |
+| --------------------- | ------------------------- | ------------------------------------------------------------------- |
+| `COFFEE_INTERNAL_KEY` | unset (compose: required) | every route but `/v1/health` requires it as `X-Internal-Key`        |
+| `HOST` / `PORT`       | `0.0.0.0` / `3000`        | listen address inside the container; the healthcheck follows `PORT` |
+| `DATABASE_URL`        | `file:/data/coffee.db`    | the SQLite file, on the `/data` volume                              |

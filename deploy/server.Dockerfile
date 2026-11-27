@@ -76,6 +76,7 @@ VOLUME ["/data"]
 USER coffee:coffee
 EXPOSE 3000
 STOPSIGNAL SIGTERM
+# The probe asks the port the backend listens on: `PORT` as given at run time (empty means 3000).
 HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=6 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/v1/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/v1/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 ENTRYPOINT ["/app/start.sh"]
