@@ -13,6 +13,8 @@
 //! latest answer touches the guest lines; a failed one changes nothing (a guest change is
 //! rolled back). Quantity steps go one at a time, each from the quantity last answered.
 
+use std::rc::Rc;
+
 use coffee_api::{
   AppliedCoupon, Cart, CartLine, CartMergeRequest, CartQuoteRequest, ErrorCode, GuestCartLine,
   Order, PlaceOrderRequest, PlacedOrder, UpdateCartLineRequest,
@@ -47,6 +49,15 @@ pub struct Removed {
   pub index: u32,
   /// Its product's name, for `已删除 {商品名} · u 撤销`.
   pub name: String,
+}
+
+/// 删除记录在发送恢复请求后暂时不能再次撤销。
+#[derive(Clone, PartialEq, Eq)]
+enum Undo {
+  /// 可以通过购物车的撤销键恢复这条记录。
+  Ready(Removed),
+  /// 请求持有同一条记录，用来识别等待期间发生的另一次删除。
+  Restoring(Rc<Removed>),
 }
 
 /// What the coupon row says under the field.
@@ -163,7 +174,7 @@ pub struct CartStore {
   /// 待合并访客购物车的请求标识，失败后重试时复用。
   merge_key: Signal<Option<String>>,
   cursor: Signal<Option<String>>,
-  undo: Signal<Option<Removed>>,
+  undo: Signal<Option<Undo>>,
   coupon_input: Signal<String>,
   coupon_feedback: Signal<Option<CouponFeedback>>,
   checkout: Signal<Option<CheckoutStep>>,
@@ -314,7 +325,10 @@ impl CartStore {
 
   /// The last deleted line, while it can be restored (tracked).
   pub fn undo(&self) -> Option<Removed> {
-    self.undo.get()
+    self.undo.with(|undo| match undo {
+      Some(Undo::Ready(removed)) => Some(removed.clone()),
+      _ => None,
+    })
   }
 
   /// The coupon field's text (tracked).
@@ -632,23 +646,39 @@ impl CartStore {
         .or_else(|| index.checked_sub(1).and_then(|i| cart.lines.get(i)))
         .map(|l| l.sku.clone());
       batch(|| {
-        self.undo.set(Some(Removed {
+        self.undo.set(Some(Undo::Ready(Removed {
           line: as_guest_line(&line),
           index: u32::try_from(index).unwrap_or(u32::MAX),
           name: line.name.clone(),
-        }));
+        })));
         self.cursor.set(cursor);
       });
     }
     result
   }
 
-  /// `u`: puts the last deleted line back where it was. The restored line, by name.
-  pub async fn restore(self) -> Result<String, ApiFailure> {
-    let Some(removed) = self.undo.get_untracked() else {
-      return Err(ApiFailure::of(ErrorCode::NotFound));
+  /// 恢复最近删除的商品并返回商品名。没有可撤销的记录时返回 None。
+  pub async fn restore(self) -> Result<Option<String>, ApiFailure> {
+    let Some(Undo::Ready(removed)) = self.undo.get_untracked() else {
+      return Ok(None);
     };
-    let result = if self.member() {
+    let removed = Rc::new(removed);
+    self.undo.set(Some(Undo::Restoring(removed.clone())));
+    let result = self.restore_line(&removed).await;
+    let current = self.undo.with_untracked(
+      |undo| matches!(undo, Some(Undo::Restoring(pending)) if Rc::ptr_eq(pending, &removed)),
+    );
+    if current {
+      self
+        .undo
+        .set(result.is_err().then(|| Undo::Ready((*removed).clone())));
+    }
+    result.map(|_| Some(removed.name.clone()))
+  }
+
+  /// 把删除的商品按当时的位置放回会员或访客购物车。
+  async fn restore_line(self, removed: &Removed) -> Result<Cart, ApiFailure> {
+    if self.member() {
       self.settle_merge().await?;
       let client = self.session.client();
       let revision = self.cart.begin_quiet();
@@ -662,11 +692,7 @@ impl CartStore {
         .min(next.len());
       next.insert(at, removed.line.clone());
       self.requote(next).await
-    };
-    result.map(|_| {
-      self.undo.set(None);
-      removed.name
-    })
+    }
   }
 
   /// Applies the coupon field's code (empty removes the coupon). A bad code leaves the cart
@@ -1012,9 +1038,62 @@ mod tests {
       assert!(cart.guest().lines.is_empty());
       let removed = cart.undo().unwrap();
       assert_eq!((removed.name.as_str(), removed.index), ("耶加雪菲 孔加", 0));
-      assert_eq!(now_or_never(cart.restore()).unwrap(), "耶加雪菲 孔加");
+      assert_eq!(
+        now_or_never(cart.restore()).unwrap().as_deref(),
+        Some("耶加雪菲 孔加")
+      );
       assert_eq!(cart.undo(), None);
       assert_eq!(cart.item_count(), 2);
+    });
+  }
+
+  #[test]
+  fn repeated_undo_sends_one_restore_and_failure_allows_retry() {
+    with_script(|script, session, cart| {
+      sign_in_scripted(&script, session, cart);
+      let delete = Stepped::start(cart.remove(PINK.into()));
+      script.answer(0, 200, CART_EMPTY);
+      delete.finish().unwrap();
+      let removed = cart.undo().unwrap();
+
+      let first = Stepped::start(cart.restore());
+      assert_eq!(cart.undo(), None);
+      assert_eq!(now_or_never(cart.restore()).unwrap(), None);
+      assert_eq!(script.calls(), ["POST /cart/lines"]);
+      let body = script.body(0);
+      script.answer(0, 500, INTERNAL_ERROR);
+      assert!(first.finish().is_err());
+      assert_eq!(cart.undo(), Some(removed.clone()));
+
+      let retry = Stepped::start(cart.restore());
+      assert_eq!(script.body(0), body);
+      script.answer(0, 200, member_cart(PINK, 1, 426));
+      assert_eq!(retry.finish().unwrap(), Some(removed.name));
+      assert_eq!(cart.undo(), None);
+      assert!(script.calls().is_empty());
+    });
+  }
+
+  #[test]
+  fn an_older_restore_leaves_a_new_deletion_available() {
+    with_script(|script, session, cart| {
+      sign_in_scripted(&script, session, cart);
+      let delete = Stepped::start(cart.remove(PINK.into()));
+      script.answer(
+        0,
+        200,
+        include_str!("../../../../packages/contract/fixtures/v1/cart/removed.json"),
+      );
+      delete.finish().unwrap();
+      let restore = Stepped::start(cart.restore());
+      let sku = cart.cursor().unwrap();
+      let next_delete = Stepped::start(cart.remove(sku));
+      script.answer(1, 200, CART_EMPTY);
+      next_delete.finish().unwrap();
+      let newer = cart.undo().unwrap();
+      script.answer(0, 200, CART);
+      restore.finish().unwrap();
+      assert_eq!(cart.undo(), Some(newer));
     });
   }
 
