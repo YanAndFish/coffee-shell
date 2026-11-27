@@ -441,6 +441,7 @@ fn every_endpoint_answers_from_its_fixtures() {
   };
   assert_eq!(run(guest.quote_cart(&quote)).unwrap().totals.item_count, 2);
   let merge = CartMergeRequest {
+    idempotency_key: Some("merge-test-0001".into()),
     lines: quote.lines.clone(),
     coupon_code: None,
   };

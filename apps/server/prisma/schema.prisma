@@ -74,6 +74,8 @@ model User {
   sessions       Session[]
   rememberedKeys RememberedKey[]
   cart           Cart?
+  /// 已完成的访客购物车合并请求。
+  cartMerges     CartMerge[]
   addresses      Address[]
   orders         Order[]
   setting        Setting?
@@ -144,6 +146,26 @@ model CartItem {
 
   @@unique([userId, productId, weight, grind, pack])
   @@index([userId, position])
+}
+
+/// 记录访客购物车合并的请求标识和结果，供同一账户重试。
+model CartMerge {
+  /// 发起合并的账户。
+  userId         Int
+  /// 删除账户时删除它的合并记录。
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 客户端为一次合并生成的请求标识。
+  idempotencyKey String
+  /// 访客商品和优惠码的 SHA-256，用来识别携带不同内容的重复标识。
+  requestHash    String
+  /// 首次请求实际加入的商品件数。
+  mergedCount    Int
+  /// 首次请求跳过的商品行数。
+  skippedCount   Int
+  /// 首次合并的时间。
+  createdAt      DateTime @default(now())
+
+  @@id([userId, idempotencyKey])
 }
 
 /// A coupon code. Seeded: `TTY10` (10 % off, 全单 9 折).

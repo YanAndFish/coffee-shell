@@ -255,6 +255,18 @@ fn requests_serialize_as_the_contract_expects() {
     serde_json::to_value(&address).unwrap(),
     serde_json::json!({"recipient":"林晓","region":"上海市 徐汇区","detail":"天平路 88 弄","tag":"work","isDefault":true})
   );
+  let merge = CartMergeRequest {
+    idempotency_key: Some("merge-test-0001".into()),
+    ..Default::default()
+  };
+  assert_eq!(
+    serde_json::to_value(&merge).unwrap(),
+    serde_json::json!({"idempotencyKey":"merge-test-0001","lines":[]})
+  );
+  assert_eq!(
+    serde_json::to_value(CartMergeRequest::default()).unwrap(),
+    serde_json::json!({"lines":[]})
+  );
   let order = PlaceOrderRequest {
     idempotency_key: "checkout-1".into(),
     expected_total: Some(426),

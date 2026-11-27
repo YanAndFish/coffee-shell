@@ -120,6 +120,8 @@ export type CartQuoteRequest = z.input<typeof CartQuoteRequestSchema>
 
 /** Body of `POST /v1/cart/merge`. */
 export const CartMergeRequestSchema = z.strictObject({
+  /** 同一次合并和重试使用相同的请求标识。省略时每次请求都会合并。 */
+  idempotencyKey: z.string().regex(/^[\w-]{8,64}$/).optional(),
   lines: z.array(GuestCartLineSchema).max(MAX_CART_LINES, { error: 'cart_full' }),
   /** The guest's coupon: applied when valid, ignored otherwise. */
   couponCode: z.string().max(32).nullable().optional(),
@@ -342,6 +344,8 @@ export const mergeCart = defineEndpoint({
     'unknown products, sold-out weights, products without stock and lines beyond 50 are skipped (`skippedCount`).',
     'A new line keeps the guest `selected` flag; a line merged into an existing one is selected if either was.',
     'A valid `couponCode` replaces the member coupon; an invalid one is ignored.',
+    '同一账户使用相同的 `idempotencyKey` 重试时，只合并一次，返回首次合并的数量和当前购物车。',
+    '相同标识携带不同的访客购物车内容时返回 `validation_failed`。省略标识时每次请求都会合并。',
   ].join(' '),
   request: { body: CartMergeRequestSchema },
   success: { status: 200, schema: CartMergeResultSchema },

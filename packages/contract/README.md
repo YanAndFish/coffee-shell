@@ -37,6 +37,14 @@ pnpm --filter @coffee/contract check:generated   # fail when they are stale (CI)
 
 There is no pagination: lists are small. `GET /v1/orders` takes `limit` (1–50, default 20) and returns `total`.
 
+### 访客购物车合并重试
+
+调用 `POST /v1/cart/merge` 时，为一次合并生成 `idempotencyKey`。标识由 8–64 个英文字母、数字、下划线或连字符组成。连接中断或响应丢失后，使用相同标识和相同访客商品、优惠码重试。
+
+同一账户的同一标识只合并一次。重试返回首次合并的 `mergedCount`、`skippedCount` 和当前购物车。相同标识携带不同内容时返回 `validation_failed`，错误字段为 `body.idempotencyKey`。
+
+发起下一次合并时使用新标识。省略 `idempotencyKey` 时，每次请求都会执行合并。
+
 ### Error details
 
 | Code                | `details`                                                                 |

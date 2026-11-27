@@ -139,6 +139,9 @@ pub struct CartQuoteRequest {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CartMergeRequest {
+  /// 同一次合并和重试使用相同的标识。`None` 表示每次请求都会合并。
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub idempotency_key: Option<String>,
   /// The guest lines.
   pub lines: Vec<GuestCartLine>,
   /// The guest's coupon, applied when valid.

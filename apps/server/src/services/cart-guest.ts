@@ -14,7 +14,9 @@ import type { HandlerInput } from '../http/route.ts'
 import type { SkuChoice } from './cart-lines.ts'
 import type { LineChoice } from './cart-view.ts'
 import type { ProductFacts } from './products.ts'
+import { createHash } from 'node:crypto'
 import { MAX_CART_LINES } from '@coffee/contract'
+import { Prisma } from '../generated/prisma/client.ts'
 import { fail } from '../middleware/error-handler.ts'
 import {
   cartItems,
@@ -79,48 +81,103 @@ interface MergePlan {
   skippedCount: number
 }
 
+/** 返回访客商品和优惠码的摘要。字段顺序和优惠码写法不影响摘要。 */
+function mergeRequestHash(body: HandlerInput<typeof mergeCartEndpoint>['body']): string {
+  return createHash('sha256').update(JSON.stringify({
+    lines: body.lines.map(({ productId, weight, grind, pack, quantity, selected }) => ({
+      productId,
+      weight,
+      grind,
+      pack,
+      quantity,
+      selected,
+    })),
+    couponCode: normalizeCouponCode(body.couponCode),
+  })).digest('hex')
+}
+
 /**
- * `POST /v1/cart/merge`: in guest order, each line is added like `addCartLine` but never
- * fails. Quantities are capped at min(9, stock) (an existing line is never lowered);
- * unknown products, sold-out weights, products without stock and new lines beyond 50 are
- * skipped. A new line keeps the guest `selected`; a merged line is selected if either was.
- * A valid coupon replaces the member's; an invalid one is ignored.
+ * 把访客商品合并到会员购物车，返回购物车和实际合并、跳过的数量。
+ * 同一账户的相同请求标识只执行一次。重试返回首次数量和当前购物车。
+ * 有效优惠码替换会员优惠码，无法购买的商品行会被跳过。
  */
-export function mergeCart({ deps, user, body }: HandlerInput<typeof mergeCartEndpoint>): Promise<CartMergeResult> {
-  return deps.prisma.$transaction(async (tx) => {
-    await ensureCart(tx, user.id)
-    const items = await cartItems(tx, user.id)
-    const products = await productsById(tx, body.lines.map(line => line.productId))
-    const plan = planMerge(items, body.lines, products)
-    for (const [id, data] of plan.updates) {
-      await tx.cartItem.update({
-        where: { id },
-        data,
-      })
-    }
-    let position = nextPosition(items)
-    for (const line of plan.creates) {
-      await tx.cartItem.create({
-        data: { userId: user.id, ...line, position },
-      })
-      position++
-    }
-    const code = normalizeCouponCode(body.couponCode)
-    const coupon = code === null
-      ? null
-      : await findActiveCoupon(tx, code)
-    if (coupon) {
-      await tx.cart.update({
-        where: { userId: user.id },
-        data: { couponCode: coupon.code },
-      })
-    }
+export async function mergeCart({ deps, user, body }: HandlerInput<typeof mergeCartEndpoint>): Promise<CartMergeResult> {
+  const key = body.idempotencyKey
+  const requestHash = mergeRequestHash(body)
+  try {
+    return await deps.prisma.$transaction(async (tx) => {
+      if (key !== undefined) {
+        // 先写入请求记录，让 SQLite 在读取购物车前取得写锁。合并失败时记录也会回滚。
+        await tx.cartMerge.create({
+          data: {
+            userId: user.id,
+            idempotencyKey: key,
+            requestHash,
+            mergedCount: 0,
+            skippedCount: 0,
+          },
+        })
+      }
+      await ensureCart(tx, user.id)
+      const items = await cartItems(tx, user.id)
+      const products = await productsById(tx, body.lines.map(line => line.productId))
+      const plan = planMerge(items, body.lines, products)
+      for (const [id, data] of plan.updates) {
+        await tx.cartItem.update({
+          where: { id },
+          data,
+        })
+      }
+      let position = nextPosition(items)
+      for (const line of plan.creates) {
+        await tx.cartItem.create({
+          data: { userId: user.id, ...line, position },
+        })
+        position++
+      }
+      const code = normalizeCouponCode(body.couponCode)
+      const coupon = code === null
+        ? null
+        : await findActiveCoupon(tx, code)
+      if (coupon) {
+        await tx.cart.update({
+          where: { userId: user.id },
+          data: { couponCode: coupon.code },
+        })
+      }
+      if (key !== undefined) {
+        await tx.cartMerge.update({
+          where: {
+            userId_idempotencyKey: { userId: user.id, idempotencyKey: key },
+          },
+          data: { mergedCount: plan.mergedCount, skippedCount: plan.skippedCount },
+        })
+      }
+      return {
+        cart: await loadCart(tx, user.id),
+        mergedCount: plan.mergedCount,
+        skippedCount: plan.skippedCount,
+      }
+    })
+  }
+  catch (error) {
+    if (key === undefined || !(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002')
+      throw error
+    const previous = await deps.prisma.cartMerge.findUnique({
+      where: {
+        userId_idempotencyKey: { userId: user.id, idempotencyKey: key },
+      },
+    })
+    if (!previous)
+      throw error
+    if (previous.requestHash !== requestHash)
+      fail('validation_failed', { field: 'body.idempotencyKey' })
     return {
-      cart: await loadCart(tx, user.id),
-      mergedCount: plan.mergedCount,
-      skippedCount: plan.skippedCount,
+      cart: await loadCart(deps.prisma, user.id),
+      mergedCount: previous.mergedCount,
+      skippedCount: previous.skippedCount,
     }
-  })
+  }
 }
 
 /** Plans a merge of `guest` lines into the member's `items`, given their `products` (pure). */
