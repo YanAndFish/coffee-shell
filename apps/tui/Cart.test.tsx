@@ -438,3 +438,26 @@ test('鼠标追踪: the mouse moving over a row moves the cursor; off, it does n
   await app.hover('text:波奎特 瑰夏')
   await expectRow(app, '▶ [✓]', '「夜班」意式拼配')
 })
+
+test('a merge that fails at login: 购物车同步失败, the guest\'s lines not shown as the account\'s', async () => {
+  // `fixture:member-error`: the quote and signing in work, every member call answers 500.
+  const app = await guest(160, 50, 'fixture:member-error')
+  await app.keyboard.press('a')
+  await app.waitFor('text:已加入购物车')
+  await app.keyboard.press('2')
+  await app.waitFor('text:购物车 · 2 件')
+  await app.keyboard.press('c')
+  await app.waitFor('text:结算前请先登录')
+  await logInAsMember(app)
+  await app.waitFor('text:✗ 购物车同步失败')
+  // The toast queues behind `结算前请先登录`.
+  await app.waitUntil(() => shows(app, '购物车同步失败 · 在购物车按 ⏎ 重试'), { timeout: 8000 })
+  expect(app.texts()).not.toContain('已合并访客购物车 1 件')
+  expect(shows(app, '购物车 · 0 件')).toBe(true)
+  expect(shows(app, '耶加雪菲 孔加')).toBe(false)
+  // `c` checks out nothing; `⏎` tries the merge again (here it fails again).
+  await app.keyboard.press('c')
+  expect(app.texts()).not.toContain('请先选择收货地址')
+  await app.keyboard.press('enter')
+  await app.waitFor('text:✗ 购物车同步失败')
+})

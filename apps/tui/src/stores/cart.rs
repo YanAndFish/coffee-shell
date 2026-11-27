@@ -194,6 +194,25 @@ impl CartStore {
     self.session.is_member_untracked()
   }
 
+  /// Whether a member still has guest lines the account has not taken: the merge after
+  /// login failed, and the next load (`⏎ 重试`) or change merges them first (tracked).
+  pub fn merge_pending(&self) -> bool {
+    self.session.is_member() && self.guest.with(|guest| !guest.lines.is_empty())
+  }
+
+  fn merge_pending_untracked(&self) -> bool {
+    self.member() && self.guest.with_untracked(|guest| !guest.lines.is_empty())
+  }
+
+  /// Before a member change: merges the guest lines a failed merge left (the change would
+  /// answer a cart without them); its failure stops the change.
+  async fn settle_merge(self) -> Result<(), ApiFailure> {
+    if self.merge_pending_untracked() {
+      self.merge_guest().await?;
+    }
+    Ok(())
+  }
+
   // --- Reading ------------------------------------------------------------------------
 
   /// The cart's state (tracked): the member cart or the guest quote.
@@ -350,8 +369,15 @@ impl CartStore {
 
   // --- Loading ------------------------------------------------------------------------
 
-  /// Loads the cart: the member cart, or the guest quote. Await it in tests.
+  /// Loads the cart: the member cart (merging the guest lines a failed merge left), or the
+  /// guest quote. Await it in tests.
   pub async fn fetch(self) {
+    if self.merge_pending_untracked() {
+      if let Err(failure) = self.merge_guest().await {
+        self.session.report(&failure);
+      }
+      return;
+    }
     let client = self.session.client();
     let revision = self.cart.begin();
     let result = if self.member() {
@@ -439,6 +465,7 @@ impl CartStore {
   /// Adds `line` (quick add, the detail page's `a` / `b`): an equal SKU adds up.
   pub async fn add(self, line: GuestCartLine) -> Result<Cart, ApiFailure> {
     if self.member() {
+      self.settle_merge().await?;
       let client = self.session.client();
       let revision = self.cart.begin_quiet();
       let result = client.add_cart_line(&add_request(&line, None)).await;
@@ -619,6 +646,7 @@ impl CartStore {
       return Err(ApiFailure::of(ErrorCode::NotFound));
     };
     let result = if self.member() {
+      self.settle_merge().await?;
       let client = self.session.client();
       let revision = self.cart.begin_quiet();
       let request = add_request(&removed.line, Some(removed.index));
@@ -643,9 +671,13 @@ impl CartStore {
   pub async fn apply_coupon(self) -> Result<Cart, ApiFailure> {
     let code = self.coupon_input.get_untracked().trim().to_owned();
     let result = if self.member() {
+      let settled = self.settle_merge().await;
       let client = self.session.client();
       let revision = self.cart.begin_quiet();
-      let result = client.apply_coupon(&code).await;
+      let result = match settled {
+        Ok(()) => client.apply_coupon(&code).await,
+        Err(failure) => Err(failure),
+      };
       self.apply(revision, result)
     } else {
       let coupon = (!code.is_empty()).then(|| code.clone());
@@ -676,6 +708,7 @@ impl CartStore {
 
   /// Sets 本单寄往 (members).
   pub async fn set_address(self, address_id: u32) -> Result<Cart, ApiFailure> {
+    self.settle_merge().await?;
     let client = self.session.client();
     let revision = self.cart.begin_quiet();
     let result = client.set_cart_address(address_id).await;
@@ -684,11 +717,13 @@ impl CartStore {
 
   /// Right after login: merges the guest cart into the account (or loads the member cart
   /// when the guest had none). The units merged, for `已合并访客购物车 {n} 件` (0 = no
-  /// merge toast).
+  /// merge toast). The guest's quote never stands for the member cart: it goes at once, so
+  /// a failure leaves no cart on screen (`✗ 购物车同步失败 · ⏎ 重试`), and the guest lines
+  /// stay until a merge takes them ([`Self::merge_pending`]).
   pub async fn merge_guest(self) -> Result<u32, ApiFailure> {
     let guest = self.guest.get_untracked();
     let client = self.session.client();
-    let revision = self.cart.begin();
+    let revision = self.cart.begin_fresh();
     if guest.lines.is_empty() {
       let result = client.cart().await;
       let outcome = result.as_ref().map(|_| 0).map_err(Clone::clone);
@@ -807,6 +842,11 @@ mod tests {
   const GUEST_QUOTE: &str =
     include_str!("../../../../packages/contract/fixtures/v1/cart/guest-quote.json");
   const LOGIN: &str = include_str!("../../../../packages/contract/fixtures/v1/auth/login.json");
+  const MERGED: &str = include_str!("../../../../packages/contract/fixtures/v1/cart/merge.json");
+  const ADDRESS_SET: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/cart/address-set.json");
+  const INTERNAL_ERROR: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/errors/internal_error.json");
   const PRICE_CHANGED: &str =
     include_str!("../../../../packages/contract/fixtures/v1/errors/price_changed.json");
   const PINK: &str = "RT-PNK-250G-PO-STD";
@@ -1144,6 +1184,58 @@ mod tests {
       cart.begin_checkout();
       let _ = now_or_never(cart.place_order());
       assert_eq!(cart.attempt.get_untracked().1, first);
+    });
+  }
+
+  #[test]
+  fn a_failed_merge_keeps_the_guest_lines_and_the_next_load_or_change_merges_them() {
+    with_script(|script, session, cart| {
+      let add = Stepped::start(cart.add(line("yirga", 2)));
+      script.answer(0, 200, GUEST_QUOTE);
+      add.finish().unwrap();
+      assert_eq!(cart.item_count(), 2);
+      session.signed_in(serde_json::from_str(LOGIN).unwrap());
+
+      // The merge after login fails: no cart shows (not the guest's quote), the lines stay.
+      let merge = Stepped::start(cart.merge_guest());
+      assert_eq!(script.calls(), ["POST /cart/merge"]);
+      script.answer(0, 500, INTERNAL_ERROR);
+      assert!(merge.finish().is_err());
+      assert_eq!(cart.phase(), Phase::Failed);
+      assert_eq!(
+        cart.cart(),
+        None,
+        "the guest's quote is not the member cart"
+      );
+      assert_eq!(cart.item_count(), 0);
+      assert_eq!(cart.guest().lines, vec![line("yirga", 2)]);
+      assert!(cart.merge_pending());
+      assert_eq!(cart.checkout_check(), CheckoutCheck::NothingSelected);
+
+      // A change first merges (here 本单寄往 from the address book), and stops if that fails.
+      let address = Stepped::start(cart.set_address(1));
+      assert_eq!(script.calls(), ["POST /cart/merge"]);
+      script.answer(0, 500, INTERNAL_ERROR);
+      assert!(address.finish().is_err());
+      assert!(script.calls().is_empty(), "no address without the merge");
+      assert_eq!(cart.cart(), None);
+      assert!(cart.merge_pending());
+
+      // `⏎ 重试` (a load) merges them; then the change goes through on the merged cart.
+      let mut load = Stepped::start(cart.fetch());
+      assert_eq!(script.calls(), ["POST /cart/merge"]);
+      assert_eq!(script.body(0)["lines"].as_array().unwrap().len(), 1);
+      script.answer(0, 200, MERGED);
+      assert!(load.poll().is_some());
+      assert!(!cart.merge_pending());
+      assert_eq!(cart.guest(), GuestCart::default());
+      assert_eq!(cart.phase(), Phase::Ready);
+      assert_eq!(cart.item_count(), 3, "the merged member cart");
+      let address = Stepped::start(cart.set_address(1));
+      assert_eq!(script.calls(), ["PUT /cart/address"]);
+      script.answer(0, 200, ADDRESS_SET);
+      address.finish().unwrap();
+      assert!(cart.cart().is_some_and(|c| c.address.is_some()));
     });
   }
 }

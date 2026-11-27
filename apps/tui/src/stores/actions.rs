@@ -156,15 +156,25 @@ pub fn leave_splash(stores: &Stores) {
   }
 }
 
+/// What a sign-in did with the cart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CartSync {
+  /// Merged (the units merged; 0 when the guest had none and the member cart loaded).
+  Merged(u32),
+  /// The merge (or the member cart's load) failed: the guest lines are kept, and the cart
+  /// says `✗ 购物车同步失败` with `⏎ 重试`, which merges them.
+  Failed,
+}
+
 /// After any sign-in: merge the guest cart (or load the member cart), load addresses and
-/// settings; the profile and orders reload on their next visit. The units merged, or `None`
-/// when the session ended on the way (the expiry flow already went to the login page:
-/// the caller must not navigate or greet).
-async fn sync_member(stores: Stores) -> Option<u32> {
-  let merged = match stores.cart.merge_guest().await {
-    Ok(merged) => merged,
+/// settings; the profile and orders reload on their next visit. What became of the cart, or
+/// `None` when the session ended on the way (the expiry flow already went to the login
+/// page: the caller must not navigate or greet).
+async fn sync_member(stores: Stores) -> Option<CartSync> {
+  let cart = match stores.cart.merge_guest().await {
+    Ok(merged) => CartSync::Merged(merged),
     Err(failure) if session_expired(&stores, &failure) => return None,
-    Err(_) => 0,
+    Err(_) => CartSync::Failed,
   };
   stores.addresses.fetch().await;
   stores.settings.fetch().await;
@@ -174,8 +184,11 @@ async fn sync_member(stores: Stores) -> Option<u32> {
     // A later load saw the session end: the shell's expiry flow goes to the login page.
     return None;
   }
-  Some(merged)
+  Some(cart)
 }
+
+/// The sign-in toast's line when the cart did not sync (the guest lines are kept).
+const CART_SYNC_FAILED: &str = "购物车同步失败 · 在购物车按 ⏎ 重试";
 
 /// `g`: browse as a guest (`以访客身份浏览` / `结算前需要登录`).
 pub fn continue_as_guest(stores: &Stores) {
@@ -210,7 +223,7 @@ pub fn submit_auth(stores: &Stores) {
     let name = auth.user.username.clone();
     stores.session.signed_in(auth);
     stores.session.auth_step(revision, super::AuthStep::Sync);
-    let Some(merged) = sync_member(stores).await else {
+    let Some(cart) = sync_member(stores).await else {
       // Signed in, then expired at once: the login page says `登录已失效`; stay there.
       return;
     };
@@ -222,20 +235,31 @@ pub fn submit_auth(stores: &Stores) {
       next
     };
     stores.router.go(next);
-    match mode {
-      LoginMode::Register => {
+    match (mode, cart) {
+      // Signed in, but the cart is not the account's yet: say so, never `已同步`.
+      (LoginMode::Register, CartSync::Failed) => {
+        stores
+          .toasts
+          .warn(format!("注册成功，欢迎 {name}"), CART_SYNC_FAILED);
+      }
+      (LoginMode::Login, CartSync::Failed) => {
+        stores
+          .toasts
+          .warn(format!("欢迎回来，{name}"), CART_SYNC_FAILED);
+      }
+      (LoginMode::Register, CartSync::Merged(_)) => {
         stores.toasts.ok(
           format!("注册成功，欢迎 {name}"),
           "已为你登录 · 购物车已同步",
         );
       }
-      LoginMode::Login if merged > 0 => {
+      (LoginMode::Login, CartSync::Merged(merged)) if merged > 0 => {
         stores.toasts.ok(
           format!("欢迎回来，{name}"),
           format!("已合并访客购物车 {merged} 件"),
         );
       }
-      LoginMode::Login => {
+      (LoginMode::Login, CartSync::Merged(_)) => {
         let items = nsh_core::prelude::untracked(|| stores.cart.item_count());
         let addresses = nsh_core::prelude::untracked(|| stores.addresses.count());
         stores.toasts.ok(
@@ -755,6 +779,47 @@ mod flows {
       assert_eq!(key(&stores, "enter"), Some("cart.continue"));
       assert_eq!(stores.router.top(), Route::Catalog);
       assert!(!stores.cart.has_receipt());
+    });
+  }
+
+  #[test]
+  fn a_merge_that_fails_at_login_says_so_and_keeps_the_guest_lines() {
+    // `fixture:member-error`: signing in and the quote work, every member call answers 500.
+    with_stores(FixtureSet::MemberError, None, (100, 30), |stores| {
+      start(&stores);
+      assert_eq!(key(&stores, "g"), Some("login.guest"));
+      stores.catalog.ensure_loaded();
+      assert_eq!(key(&stores, "a"), Some("catalog.add"));
+      assert_eq!(stores.cart.item_count(), 2);
+      assert_eq!(key(&stores, "2"), Some("nav.cart"));
+      assert_eq!(key(&stores, "c"), Some("cart.checkout"));
+      assert_eq!(stores.router.top(), Route::Login, "the login gate");
+
+      fill_login(&stores, "林晓", "secret1");
+      assert_eq!(key(&stores, "enter"), Some("login.submit"));
+      assert!(stores.session.is_member());
+      assert_eq!(stores.router.top(), Route::Cart);
+      assert_eq!(
+        last_toast(&stores),
+        "欢迎回来，林晓 / 购物车同步失败 · 在购物车按 ⏎ 重试",
+        "never `已同步` or `已合并`"
+      );
+      assert_eq!(
+        stores.cart.cart(),
+        None,
+        "no guest lines shown as the account's"
+      );
+      assert_eq!(
+        stores.cart.guest().lines.len(),
+        1,
+        "the guest lines are kept"
+      );
+      assert!(stores.cart.merge_pending());
+      // `c` cannot check out a cart that is not there; `⏎` retries the merge.
+      assert_eq!(key(&stores, "c"), None);
+      assert_eq!(key(&stores, "enter"), Some("cart.retry"));
+      assert_eq!(stores.cart.phase(), Phase::Failed);
+      assert_eq!(stores.cart.guest().lines.len(), 1);
     });
   }
 
