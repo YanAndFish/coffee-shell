@@ -23,7 +23,6 @@
 // process group, never blocking this process: Ctrl+C, SIGTERM or SIGHUP at any moment stops
 // whatever is running (the whole group, so cargo's rustc jobs and pnpm's node too) and exits.
 
-import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
@@ -31,6 +30,7 @@ import { connect } from 'node:net'
 import { dirname, join, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { createInterface } from 'node:readline'
+import { text } from 'node:stream/consumers'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
@@ -236,18 +236,18 @@ async function checkGatewayAddress() {
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  const chunks = []
-  const summary = []
-  child.stdout.on('data', chunk => summary.push(chunk))
-  child.stderr.on('data', chunk => chunks.push(chunk))
-  const { code, error } = await done
+  const [{ code, error }, summary, warnings] = await Promise.all([
+    done,
+    text(child.stdout),
+    text(child.stderr),
+  ])
   await unlessStopping()
-  const said = Buffer.concat(chunks).toString('utf8').trim()
+  const said = warnings.trim()
   if (error || code !== 0)
     fail(`${gatewayConfig} does not check out (tty-gateway --check):`, error?.message ?? said)
   for (const line of said.split('\n').filter(Boolean))
     log(paint('33', `! ${line}`))
-  const address = /^listen: (\S+)$/m.exec(Buffer.concat(summary).toString('utf8'))?.[1]
+  const address = /^listen: (\S+)$/m.exec(summary)?.[1]
   if (!address)
     fail('网关的配置检查结果缺少监听地址。', '请重新运行 pnpm dev 以构建网关。')
   return address
@@ -345,9 +345,10 @@ async function cargoTargetDir() {
   ], {
     stdio: ['ignore', 'pipe', 'ignore'],
   })
-  const chunks = []
-  child.stdout.on('data', chunk => chunks.push(chunk))
-  const { code, error } = await done
+  const [{ code, error }, metadata] = await Promise.all([
+    done,
+    text(child.stdout),
+  ])
   await unlessStopping()
   if (error || code !== 0) {
     fail(
@@ -355,7 +356,7 @@ async function cargoTargetDir() {
       'Install Rust with rustup; rust-toolchain.toml pins the version.',
     )
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')).target_directory
+  return JSON.parse(metadata).target_directory
 }
 
 function listening(host, port) {
