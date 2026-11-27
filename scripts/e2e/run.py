@@ -97,29 +97,33 @@ def run_flow(name: str, out: Path, work: Path, template: Path | None, bins: Path
 
 
 MARKER = ".e2e-report"
+MARKER_TEXT = (b"Written by scripts/e2e/run.py: the next run here replaces its "
+               b"work/, flow and run-N/ directories and keeps everything else.\n")
 RUN_DIR = re.compile(r"run-\d+")
 
 
 def own_entry(name: str) -> bool:
-  """Whether `name` is something a run writes at the top of its output directory: the
-  marker, `work/`, a flow's directory or a `--repeat` run's `run-N/`."""
-  return name in (MARKER, "work") or name in FLOWS or bool(RUN_DIR.fullmatch(name))
+  """判断顶层条目是否属于每次运行产生的输出。"""
+  return name == "work" or name in FLOWS or bool(RUN_DIR.fullmatch(name))
 
 
 def prepare_out(out: Path) -> None:
-  """Makes `out` ready for a new report. A missing or empty directory is used as it is; an
-  earlier report (it has the marker, or holds only what a run writes) loses what the earlier
-  run wrote, and keeps everything else. Any other directory is refused: nothing in it is
-  deleted. Raises ValueError with the reason."""
+  """在空目录中创建报告标记，或清理已标记报告中的运行输出。"""
   if out.exists() and not out.is_dir():
     raise ValueError(f"--out {out} is not a directory")
   out.mkdir(parents=True, exist_ok=True)
   names = sorted(path.name for path in out.iterdir())
-  foreign = [name for name in names if not own_entry(name)]
-  if foreign and MARKER not in names:
-    shown = ", ".join(foreign[:5]) + (", …" if len(foreign) > 5 else "")
-    raise ValueError(f"--out {out} is not empty and not an e2e report ({shown}); "
-                     "give an empty or new directory")
+  marker = out / MARKER
+  if not names:
+    with marker.open("xb") as file:
+      file.write(MARKER_TEXT)
+    return
+  marked = False
+  if not marker.is_symlink() and marker.is_file():
+    with marker.open("rb") as file:
+      marked = file.read(len(MARKER_TEXT) + 1) == MARKER_TEXT
+  if not marked:
+    raise ValueError(f"--out {out} 已有文件，且缺少有效的报告标记。请选择空目录或新路径。")
   for name in names:
     if own_entry(name):
       path = out / name
@@ -127,8 +131,6 @@ def prepare_out(out: Path) -> None:
         shutil.rmtree(path)
       else:
         path.unlink()
-  (out / MARKER).write_text("Written by scripts/e2e/run.py: the next run here replaces its "
-                            "work/, flow and run-N/ directories and keeps everything else.\n")
 
 
 def main() -> int:

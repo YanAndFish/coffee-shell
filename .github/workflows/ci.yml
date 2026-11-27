@@ -83,6 +83,8 @@ jobs:
         run: cargo build --locked -p coffee-tui -p tty-gateway
       - name: Check the shop's gateway configuration
         run: target/debug/tty-gateway --check --config deploy/gateway.toml
+      - name: Check report directory handling
+        run: python3 -m unittest discover -s scripts/e2e
       - name: Run the flows (fresh database each)
         run: python3 scripts/e2e/run.py
         env:
