@@ -84,29 +84,29 @@ the image (`docker run --rm roast-tty-ssh --check`). Unknown keys are errors. Du
 `"15m"`, `"2h"` or `"0"`. Relative paths (a `command` with a `/`, `cwd`) resolve against the gateway's
 working directory when the file is read; a relative `host_key` is relative to it too.
 
-| Key                                            | Default                         | Meaning                                                                                        |
-| ---------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `server.listen`                                | `127.0.0.1:2222`                | listen address (`TTY_GATEWAY_ADDR` overrides it; needs a restart)                              |
-| `server.host_key`                              | `.data/ssh_host_ed25519_key`    | ed25519 host key, made (0600) on first run (`TTY_GATEWAY_HOST_KEY`; needs a restart)           |
-| `server.server_id`                             | `SSH-2.0-tty_gateway`           | the SSH version line (the shop: `SSH-2.0-ROAST_TTY`)                                           |
-| `server.banner`                                | none                            | the authentication banner, the same for every route (sent before the user is known)            |
-| `server.default_route`                         | the only route                  | the route of every user name no route lists; needed with two routes or more                    |
-| `server.shutdown_grace`                        | `2s`                            | on SIGTERM / SIGINT, how long sessions get after the hang-up before they are killed            |
-| `limits.max_sessions`                          | `64`                            | concurrent sessions in all                                                                     |
-| `limits.max_sessions_per_ip`                   | `8`                             | concurrent sessions per client address (twice as many connections may be open)                 |
-| `limits.connections_per_minute`                | `30`                            | new connections per client address per minute, in bursts of as many (`0`: off)                 |
-| `limits.auth_timeout`                          | `30s`                           | from accept to a running session (handshake, login, shell request); at least `1s`              |
-| `limits.idle_timeout`                          | `15m`                           | no input, from the session's first output, before it closes (`0`: never; status 124)           |
-| `limits.max_session_time`                      | `0` (never)                     | a session's longest life from its start; typing does not extend it (status 124)                |
-| `messages.*`                                   | neutral English                 | what clients are told (below)                                                                  |
-| `routes.NAME.users`                            | `[NAME]`                        | the SSH user names of this route (exact; one name in one route only)                           |
-| `routes.NAME.command`                          | required                        | the program and its arguments; a bare name is looked for next to `tty-gateway`, then on `PATH` |
-| `routes.NAME.cwd`                              | the temporary directory         | the program's working directory                                                                |
-| `routes.NAME.accept_env`                       | `["LANG", "LC_*", "COLORTERM"]` | what the client may send into a session (`ssh -o SendEnv`); never a name the route sets        |
-| `routes.NAME.env`                              | none                            | the session's environment (below)                                                              |
-| `routes.NAME.idle_timeout`, `max_session_time` | `[limits]`                      | this route's own                                                                               |
-| `routes.NAME.max_sessions`                     | none                            | sessions on this route at once, besides the global caps (`full_route` when reached)            |
-| `routes.NAME.messages.*`                       | `[messages]`                    | this route's own wording                                                                       |
+| Key                                            | Default                         | Meaning                                                                                                                                                |
+| ---------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server.listen`                                | `127.0.0.1:2222`                | listen address (`TTY_GATEWAY_ADDR` overrides it; needs a restart)                                                                                      |
+| `server.host_key`                              | `.data/ssh_host_ed25519_key`    | ed25519 host key, made (0600) on first run (`TTY_GATEWAY_HOST_KEY`; needs a restart)                                                                   |
+| `server.server_id`                             | `SSH-2.0-tty_gateway`           | the SSH version line (the shop: `SSH-2.0-ROAST_TTY`)                                                                                                   |
+| `server.banner`                                | none                            | the authentication banner, the same for every route (sent before the user is known)                                                                    |
+| `server.default_route`                         | the only route                  | the route of every user name no route lists; needed with two routes or more                                                                            |
+| `server.shutdown_grace`                        | `2s`                            | on SIGTERM / SIGINT, how long sessions get after the hang-up before they are killed                                                                    |
+| `limits.max_sessions`                          | `64`                            | concurrent sessions in all                                                                                                                             |
+| `limits.max_sessions_per_ip`                   | `8`                             | concurrent sessions per client address (twice as many connections may be open)                                                                         |
+| `limits.connections_per_minute`                | `30`                            | new connections per client address per minute, in bursts of as many (`0`: off)                                                                         |
+| `limits.auth_timeout`                          | `30s`                           | from accept to a running session (handshake, login, shell request); at least `1s`                                                                      |
+| `limits.idle_timeout`                          | `15m`                           | no input, from the session's first output, before it closes (`0`: never; status 124)                                                                   |
+| `limits.max_session_time`                      | `0` (never)                     | a session's longest life from its start; typing does not extend it (status 124)                                                                        |
+| `messages.*`                                   | neutral English                 | what clients are told (below)                                                                                                                          |
+| `routes.NAME.users`                            | `[NAME]`                        | the SSH user names of this route (exact; one name in one route only)                                                                                   |
+| `routes.NAME.command`                          | required                        | the program and its arguments; a bare name is looked for next to `tty-gateway`, then on `PATH` (a relative entry from the gateway's working directory) |
+| `routes.NAME.cwd`                              | the temporary directory         | the program's working directory                                                                                                                        |
+| `routes.NAME.accept_env`                       | `["LANG", "LC_*", "COLORTERM"]` | what the client may send into a session (`ssh -o SendEnv`); never a name the route sets                                                                |
+| `routes.NAME.env`                              | none                            | the session's environment (below)                                                                                                                      |
+| `routes.NAME.idle_timeout`, `max_session_time` | `[limits]`                      | this route's own                                                                                                                                       |
+| `routes.NAME.max_sessions`                     | none                            | sessions on this route at once, besides the global caps (`full_route` when reached)                                                                    |
+| `routes.NAME.messages.*`                       | `[messages]`                    | this route's own wording                                                                                                                               |
 
 The messages: `no_pty` (a shell without a PTY), `unavailable` (the program cannot start), `crashed` (`{code}`: its
 non-zero exit status), `idle` (`{minutes}`), `time_limit`, `full`, `full_per_ip`, `full_route` (`{max}`: the cap

@@ -190,24 +190,37 @@ pub struct CommandSpec {
 
 impl CommandSpec {
   /// The file to run now: a path as given; a bare name next to the gateway's executable,
-  /// else the first executable of that name on `PATH`.
+  /// else the first executable of that name on `PATH`. A relative `PATH` entry is taken
+  /// from the gateway's working directory, and the file found is absolute: the program
+  /// starts in the route's `cwd`, where the same relative path would name another file.
   pub fn resolve(&self) -> Option<PathBuf> {
     resolve_program(
       &self.program,
       self.exe_dir.as_deref(),
       std::env::var_os("PATH").as_deref(),
+      std::env::current_dir().ok().as_deref(),
     )
   }
 }
 
+/// [`CommandSpec::resolve`] with the gateway's `PATH` and working directory (`base`, for
+/// relative `PATH` entries; without it they are skipped).
 fn resolve_program(
   program: &Path,
   exe_dir: Option<&Path>,
   path: Option<&std::ffi::OsStr>,
+  base: Option<&Path>,
 ) -> Option<PathBuf> {
   if program.components().count() != 1 || program.is_absolute() {
     return Some(program.to_owned());
   }
+  let anchored = |dir: PathBuf| {
+    if dir.is_absolute() {
+      Some(dir)
+    } else {
+      base.map(|base| base.join(dir))
+    }
+  };
   let executable = |candidate: &Path| {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(candidate)
@@ -221,6 +234,7 @@ fn resolve_program(
         .into_iter()
         .flat_map(std::env::split_paths)
         .filter(|dir| !dir.as_os_str().is_empty())
+        .filter_map(anchored)
         .map(|dir| dir.join(program)),
     )
     .find(|candidate| executable(candidate))
@@ -1364,12 +1378,22 @@ command = ["/bin/cat"]
     make(&on_path.join("only"), 0o755);
     make(&exe_dir.join("plain"), 0o644);
     let path = std::env::join_paths([&on_path]).unwrap();
-    let resolve = |name: &str| resolve_program(Path::new(name), Some(&exe_dir), Some(&path));
+    let resolve = |name: &str| resolve_program(Path::new(name), Some(&exe_dir), Some(&path), None);
     assert_eq!(resolve("both"), Some(exe_dir.join("both")));
     assert_eq!(resolve("only"), Some(on_path.join("only")));
     assert_eq!(resolve("plain"), None, "not executable");
     assert_eq!(resolve("nothing"), None);
     assert_eq!(resolve("/bin/sh"), Some(PathBuf::from("/bin/sh")));
+    // A relative `PATH` entry is taken from the gateway's working directory, and the file
+    // found is absolute (the program starts in the route's `cwd`); without one it is skipped.
+    let relative = std::env::join_paths([Path::new("path")]).unwrap();
+    let found = resolve_program(Path::new("only"), None, Some(&relative), Some(&dir));
+    assert_eq!(found, Some(on_path.join("only")));
+    assert!(found.unwrap().is_absolute());
+    assert_eq!(
+      resolve_program(Path::new("only"), None, Some(&relative), None),
+      None
+    );
     std::fs::remove_dir_all(&dir).unwrap();
   }
 }
