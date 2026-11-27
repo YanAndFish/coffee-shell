@@ -550,6 +550,7 @@ pub fn set_default_address(stores: &Stores, id: u32) {
       }
       Err(failure) => failed(&stores, &failure),
     }
+    stores.addresses.refresh_after_changes().await;
   });
 }
 
@@ -561,15 +562,21 @@ pub fn delete_address(stores: &Stores, id: u32) {
   };
   let stores = *stores;
   stores.spawn(async move {
-    match stores.addresses.delete(id).await {
+    let refresh_cart = match stores.addresses.delete(id).await {
       Ok(_) => {
         stores.toasts.warn(
           "已删除地址",
           format!("{} · {}", address.recipient, address.region),
         );
-        stores.cart.fetch().await;
+        true
       }
-      Err(failure) => failed(&stores, &failure),
+      Err(failure) => {
+        failed(&stores, &failure);
+        false
+      }
+    };
+    if stores.addresses.refresh_after_changes().await && refresh_cart {
+      stores.cart.fetch().await;
     }
   });
 }
@@ -600,7 +607,7 @@ pub fn save_address(stores: &Stores) {
 
 /// 保存地址并刷新相关数据。仅当前草稿的成功结果会关闭弹窗、显示提示。
 async fn save_address_draft(stores: Stores) {
-  match stores.addresses.save().await {
+  let refresh_cart = match stores.addresses.save().await {
     Ok(Some(saved)) => {
       if saved.current_dialog {
         stores.ui.close_if(Overlay::AddressDialog);
@@ -615,12 +622,16 @@ async fn save_address_draft(stores: Stores) {
         );
       }
       stores.profile.invalidate();
-      stores.cart.fetch().await;
+      true
     }
-    Ok(None) => {}
+    Ok(None) => return,
     Err(failure) => {
       session_expired(&stores, &failure);
+      false
     }
+  };
+  if stores.addresses.refresh_after_changes().await && refresh_cart {
+    stores.cart.fetch().await;
   }
 }
 
@@ -776,48 +787,210 @@ mod address_saves {
       assert_eq!(stores.ui.overlay(), None);
       assert_eq!(stores.addresses.dialog(), None);
 
-      script.answer(0, 200, SAVED);
+      let mut saved: serde_json::Value = serde_json::from_str(SAVED).unwrap();
+      let updated: serde_json::Value = serde_json::from_str(UPDATED).unwrap();
+      saved["book"]["items"][1] = updated["address"].clone();
+      script.answer(0, 200, saved.to_string());
       let mut old_save = old_save;
       assert!(old_save.poll().is_none());
-      assert_eq!(stores.addresses.state(), book);
+      assert_eq!(stores.addresses.state().data(), book.data());
       assert_eq!(stores.addresses.cursor(), AddressCursor::Card(2));
       assert_eq!(stores.addresses.dialog(), None);
       assert_eq!(stores.toasts.queue(), toasts);
+      assert_eq!(script.calls(), ["GET /addresses"]);
+      script.answer(0, 200, saved["book"].to_string());
+      assert!(old_save.poll().is_none());
       script.answer(0, 200, CART);
       old_save.finish();
     });
   }
 
   #[test]
-  fn 退出登录前的保存响应不会改变新会话() {
-    for success in [false, true] {
+  fn 后一次保存先失败时旧保存成功后刷新地址本() {
+    for refresh_fails in [false, true] {
       with_script(|script, stores| {
         new_address(&stores);
-        let save = Stepped::start(save_address_draft(stores));
-        sign_out_locally(&stores);
-        stores
-          .session
-          .signed_in(serde_json::from_str(LOGIN).unwrap());
-        new_address(&stores);
-        stores
-          .addresses
-          .edit(|input| input.recipient = "另一次登录的草稿".into());
+        let mut old_save = Stepped::start(save_address_draft(stores));
+        cancel_address(&stores);
+        edit_address(&stores, 2);
+        let current_save = Stepped::start(save_address_draft(stores));
+
+        script.answer(1, 422, PHONE_ERROR);
+        current_save.finish();
         let draft = stores.addresses.dialog();
-        if success {
-          script.answer(0, 200, SAVED);
+        let focus = stores.addresses.dialog_focus();
+        script.answer(0, 200, SAVED);
+        assert!(old_save.poll().is_none(), "保存冲突后需要补读地址本");
+        assert_eq!(script.calls(), ["GET /addresses"]);
+        let saved: serde_json::Value = serde_json::from_str(SAVED).unwrap();
+        if refresh_fails {
+          script.drop_connection(0);
+          assert!(old_save.poll().is_none());
+          assert_eq!(stores.addresses.phase(), Phase::Failed);
+          assert!(stores.addresses.failure().unwrap().is_network());
+          assert_eq!(stores.addresses.count(), 3);
+          let retry = Stepped::start(stores.addresses.fetch());
+          script.answer(1, 200, saved["book"].to_string());
+          retry.finish();
         } else {
-          script.answer(0, 401, EXPIRED);
+          script.answer(0, 200, saved["book"].to_string());
+          assert!(old_save.poll().is_none());
         }
-        save.finish();
-        assert!(stores.session.is_member());
-        assert_eq!(stores.addresses.phase(), Phase::Idle);
+        script.answer(0, 200, CART);
+        old_save.finish();
+
+        assert_eq!(stores.addresses.count(), 4);
+        assert_eq!(stores.addresses.cursor(), AddressCursor::Card(1));
         assert_eq!(stores.addresses.dialog(), draft);
+        assert_eq!(stores.addresses.dialog_focus(), focus);
         assert_eq!(stores.ui.overlay(), Some(Overlay::AddressDialog));
         assert!(stores.toasts.queue().is_empty());
         assert!(script.calls().is_empty());
-        assert_eq!(stores.cart.phase(), Phase::Idle);
-        assert_eq!(stores.profile.phase(), Phase::Idle);
       });
+    }
+  }
+
+  #[test]
+  fn 旧保存成功后等其他地址修改结束再补读地址本() {
+    for deleting in [false, true] {
+      with_script(|script, stores| {
+        new_address(&stores);
+        let mut save = Stepped::start(save_address_draft(stores));
+        cancel_address(&stores);
+        let mut change = Stepped::start(async move {
+          if deleting {
+            stores.addresses.delete(1).await.unwrap();
+          } else {
+            stores.addresses.set_default(3).await.unwrap();
+          }
+          stores.addresses.refresh_after_changes().await;
+        });
+        let changed = if deleting {
+          include_str!("../../../../packages/contract/fixtures/v1/addresses/deleted-default.json")
+        } else {
+          include_str!("../../../../packages/contract/fixtures/v1/addresses/default-moved.json")
+        };
+        let mut expected: serde_json::Value = serde_json::from_str(changed).unwrap();
+        let mut saved: serde_json::Value = serde_json::from_str(SAVED).unwrap();
+        expected["items"]
+          .as_array_mut()
+          .unwrap()
+          .push(saved["address"].clone());
+        saved["book"] = expected.clone();
+        script.answer(0, 200, saved.to_string());
+        assert!(save.poll().is_none());
+        assert!(!script.calls().iter().any(|call| call == "GET /addresses"));
+        script.answer(1, 200, CART);
+        save.finish();
+
+        script.answer(0, 200, changed);
+        assert!(change.poll().is_none());
+        assert_eq!(script.calls(), ["GET /addresses"]);
+        script.answer(0, 200, expected.to_string());
+        change.finish();
+        let expected: coffee_api::AddressList = serde_json::from_value(expected).unwrap();
+        assert_eq!(stores.addresses.state().data(), Some(&expected));
+        assert!(script.calls().is_empty());
+      });
+    }
+  }
+
+  #[test]
+  fn 补读地址本期间的新保存会丢弃旧补读结果() {
+    for success in [false, true] {
+      with_script(|script, stores| {
+        new_address(&stores);
+        let mut old_save = Stepped::start(save_address_draft(stores));
+        cancel_address(&stores);
+        edit_address(&stores, 2);
+        let current_save = Stepped::start(save_address_draft(stores));
+        script.answer(1, 422, PHONE_ERROR);
+        current_save.finish();
+        script.answer(0, 200, SAVED);
+        assert!(old_save.poll().is_none());
+        let mut next_save = Stepped::start(save_address_draft(stores));
+        script.answer(
+          1,
+          if success { 200 } else { 422 },
+          if success { UPDATED } else { PHONE_ERROR },
+        );
+        assert!(next_save.poll().is_none());
+        new_address(&stores);
+        stores
+          .addresses
+          .edit(|input| input.recipient = "刚打开的草稿".into());
+        let draft = stores.addresses.dialog();
+        let book = stores.addresses.state();
+        script.answer(0, 200, BOOK);
+        assert!(old_save.poll().is_none());
+        assert_eq!(stores.addresses.state(), book);
+        assert_eq!(stores.addresses.dialog(), draft);
+
+        let mut saved: serde_json::Value = serde_json::from_str(SAVED).unwrap();
+        if success {
+          let updated: serde_json::Value = serde_json::from_str(UPDATED).unwrap();
+          saved["book"]["items"][1] = updated["address"].clone();
+        }
+        script.answer(0, 200, saved["book"].to_string());
+        if success {
+          assert!(next_save.poll().is_none());
+          script.answer(1, 200, CART);
+          next_save.finish();
+        } else {
+          next_save.finish();
+        }
+        script.answer(0, 200, CART);
+        old_save.finish();
+        assert_eq!(stores.addresses.count(), 4);
+        assert_eq!(stores.addresses.dialog(), draft);
+        assert_eq!(stores.ui.overlay(), Some(Overlay::AddressDialog));
+        assert!(script.calls().is_empty());
+      });
+    }
+  }
+
+  #[test]
+  fn 退出登录前的地址请求不会改变新会话() {
+    for refreshing in [false, true] {
+      for success in [false, true] {
+        with_script(|script, stores| {
+          new_address(&stores);
+          let mut save = Stepped::start(save_address_draft(stores));
+          if refreshing {
+            cancel_address(&stores);
+            edit_address(&stores, 2);
+            let current_save = Stepped::start(save_address_draft(stores));
+            script.answer(1, 422, PHONE_ERROR);
+            current_save.finish();
+            script.answer(0, 200, SAVED);
+            assert!(save.poll().is_none());
+            assert_eq!(script.calls(), ["GET /addresses"]);
+          }
+          sign_out_locally(&stores);
+          stores
+            .session
+            .signed_in(serde_json::from_str(LOGIN).unwrap());
+          new_address(&stores);
+          stores
+            .addresses
+            .edit(|input| input.recipient = "另一次登录的草稿".into());
+          let draft = stores.addresses.dialog();
+          if success {
+            script.answer(0, 200, if refreshing { BOOK } else { SAVED });
+          } else {
+            script.answer(0, 401, EXPIRED);
+          }
+          save.finish();
+          assert!(stores.session.is_member());
+          assert_eq!(stores.addresses.phase(), Phase::Idle);
+          assert_eq!(stores.addresses.dialog(), draft);
+          assert_eq!(stores.ui.overlay(), Some(Overlay::AddressDialog));
+          assert!(stores.toasts.queue().is_empty());
+          assert!(script.calls().is_empty());
+          assert_eq!(stores.cart.phase(), Phase::Idle);
+          assert_eq!(stores.profile.phase(), Phase::Idle);
+        });
+      }
     }
   }
 }
