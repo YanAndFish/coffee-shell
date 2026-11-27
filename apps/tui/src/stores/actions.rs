@@ -423,9 +423,10 @@ pub fn undo_remove(stores: &Stores) {
   let stores = *stores;
   stores.spawn(async move {
     match stores.cart.restore().await {
-      Ok(name) => {
+      Ok(Some(name)) => {
         stores.toasts.ok("已恢复", name);
       }
+      Ok(None) => {}
       Err(failure) => failed(&stores, &failure),
     }
   });
