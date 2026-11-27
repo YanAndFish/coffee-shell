@@ -11,9 +11,9 @@
 // Both processes share a random `COFFEE_INTERNAL_KEY` made for this run only (never printed);
 // the gateway's configuration hands it to the shop's sessions only, with COFFEE_API_URL.
 // Options: `--skip-build` reuses the binaries already in Cargo's target directory.
-// Environment: HOST, PORT (backend, default 127.0.0.1:3000); TTY_GATEWAY_ADDR (default
-// 127.0.0.1:2222), TTY_GATEWAY_HOST_KEY (default .data/ssh_host_ed25519_key) and
-// TTY_GATEWAY_CONFIG (default deploy/gateway.toml), all three passed to the gateway;
+// Environment: HOST, PORT (backend, default 127.0.0.1:3000);
+// TTY_GATEWAY_CONFIG selects the file (default deploy/gateway.toml). TTY_GATEWAY_ADDR
+// and TTY_GATEWAY_HOST_KEY override the file when set.
 // COFFEE_COLORS (passed on to every session); COFFEE_API_URL (the shop's sessions use it
 // instead of the backend started here, e.g. `fixture:member`; the readiness check still asks
 // that backend). The names COFFEE_SSH_ADDR and
@@ -26,7 +26,7 @@
 import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { dirname, join, relative, resolve } from 'node:path'
 import process from 'node:process'
@@ -153,10 +153,6 @@ for (const [old, now] of [
   if (process.env[old])
     log(paint('33', `! ${old} is no longer read: set ${now} instead.`))
 }
-const sshAddr = process.env.TTY_GATEWAY_ADDR || '127.0.0.1:2222'
-const sshPort = Number(sshAddr.slice(sshAddr.lastIndexOf(':') + 1))
-const sshHost = sshAddr.slice(0, sshAddr.lastIndexOf(':')).replace(/^\[|\]$/g, '')
-const hostKey = resolve(root, process.env.TTY_GATEWAY_HOST_KEY || '.data/ssh_host_ed25519_key')
 const gatewayConfig = resolve(root, process.env.TTY_GATEWAY_CONFIG || 'deploy/gateway.toml')
 const internalKey = randomBytes(24).toString('base64url')
 
@@ -183,23 +179,8 @@ const exe = process.platform === 'win32'
 const tuiBin = join(targetDir, 'debug', `coffee-tui${exe}`)
 const gatewayBin = join(targetDir, 'debug', `tty-gateway${exe}`)
 
-for (const [port, host, what, variable] of [
-  [
-    apiPort,
-    apiHost,
-    'the backend',
-    'PORT',
-  ],
-  [
-    sshPort,
-    sshHost,
-    'tty-gateway',
-    'TTY_GATEWAY_ADDR',
-  ],
-]) {
-  if (await listening(host, port))
-    fail(`${host}:${port} is already in use, so ${what} cannot listen there.`, `Stop what holds it or set ${variable}.`)
-}
+if (await listening(apiHost, apiPort))
+  fail(`${apiUrl} is already in use, so the backend cannot listen there.`, 'Stop what holds it or set PORT.')
 await unlessStopping()
 
 // --- Build ---------------------------------------------------------------------------------
@@ -226,20 +207,24 @@ else {
     fail('cargo build failed (see above).')
 }
 
-mkdirSync(dirname(hostKey), { recursive: true })
-
 // The gateway's environment: the configuration reads COFFEE_API_URL and COFFEE_INTERNAL_KEY
 // (`${env:…}`) for the shop's sessions; `coffee-tui` is found next to `tty-gateway`.
 const gatewayEnv = {
-  TTY_GATEWAY_ADDR: sshAddr,
-  TTY_GATEWAY_HOST_KEY: hostKey,
   COFFEE_API_URL: shopApiUrl,
   COFFEE_INTERNAL_KEY: internalKey,
 }
 
 // --- Check the gateway's configuration -----------------------------------------------------
 
-{
+const sshAddr = await checkGatewayAddress()
+const sshPort = Number(sshAddr.slice(sshAddr.lastIndexOf(':') + 1))
+const sshHost = sshAddr.slice(0, sshAddr.lastIndexOf(':')).replace(/^\[|\]$/g, '')
+if (await listening(sshHost, sshPort))
+  fail(`${sshAddr} is already in use, so tty-gateway cannot listen there.`, 'Stop what holds it or set TTY_GATEWAY_ADDR.')
+await unlessStopping()
+
+/** 用网关检查配置，返回应用环境变量后实际使用的监听地址。 */
+async function checkGatewayAddress() {
   const { child, done } = launch('check', gatewayBin, [
     '--check',
     '--config',
@@ -249,9 +234,11 @@ const gatewayEnv = {
       ...process.env,
       ...gatewayEnv,
     },
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
   const chunks = []
+  const summary = []
+  child.stdout.on('data', chunk => summary.push(chunk))
   child.stderr.on('data', chunk => chunks.push(chunk))
   const { code, error } = await done
   await unlessStopping()
@@ -260,6 +247,10 @@ const gatewayEnv = {
     fail(`${gatewayConfig} does not check out (tty-gateway --check):`, error?.message ?? said)
   for (const line of said.split('\n').filter(Boolean))
     log(paint('33', `! ${line}`))
+  const address = /^listen: (\S+)$/m.exec(Buffer.concat(summary).toString('utf8'))?.[1]
+  if (!address)
+    fail('网关的配置检查结果缺少监听地址。', '请重新运行 pnpm dev 以构建网关。')
+  return address
 }
 
 // --- Run -----------------------------------------------------------------------------------
@@ -336,7 +327,7 @@ async function run() {
     : sshHost
   console.log('')
   log(paint('1;32', `✓ ready — connect with:  ssh -p ${sshPort} ${local}`))
-  log(`  the shop: any user name but gallery, no password (or \`pnpm ssh\`)`)
+  log('  the shop: any user name but gallery, no password')
   log(`  the UI gallery:  ssh -p ${sshPort} gallery@${local}`)
   log('  Ctrl+C here stops both.')
   console.log('')
