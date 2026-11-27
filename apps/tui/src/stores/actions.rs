@@ -586,7 +586,7 @@ pub fn edit_address(stores: &Stores, id: u32) {
   stores.ui.open(Overlay::AddressDialog);
 }
 
-/// Esc in the address dialog: closes it, nothing saved.
+/// 关闭地址弹窗。已经发出的保存请求会在后台完成。
 pub fn cancel_address(stores: &Stores) {
   stores.addresses.close_dialog();
   stores.ui.close_if(Overlay::AddressDialog);
@@ -595,27 +595,231 @@ pub fn cancel_address(stores: &Stores) {
 /// `⏎` in the address dialog: saves (`已新增地址` / `地址已更新` + `{地区} {详细地址}`); a
 /// field error stays in the dialog.
 pub fn save_address(stores: &Stores) {
-  let stores = *stores;
-  stores.spawn(async move {
-    match stores.addresses.save().await {
-      Ok((address, new)) => {
+  stores.spawn(save_address_draft(*stores));
+}
+
+/// 保存地址并刷新相关数据。仅当前草稿的成功结果会关闭弹窗、显示提示。
+async fn save_address_draft(stores: Stores) {
+  match stores.addresses.save().await {
+    Ok(Some(saved)) => {
+      if saved.current_dialog {
         stores.ui.close_if(Overlay::AddressDialog);
-        let title = if new {
+        let title = if saved.created {
           "已新增地址"
         } else {
           "地址已更新"
         };
-        stores
-          .toasts
-          .ok(title, format!("{} {}", address.region, address.detail));
-        stores.profile.invalidate();
-        stores.cart.fetch().await;
+        stores.toasts.ok(
+          title,
+          format!("{} {}", saved.address.region, saved.address.detail),
+        );
       }
-      Err(failure) => {
-        session_expired(&stores, &failure);
-      }
+      stores.profile.invalidate();
+      stores.cart.fetch().await;
     }
-  });
+    Ok(None) => {}
+    Err(failure) => {
+      session_expired(&stores, &failure);
+    }
+  }
+}
+
+#[cfg(test)]
+mod address_saves {
+  use nsh_core::element::{Runtime, create_root};
+
+  use super::*;
+  use crate::{
+    api::{ApiClient, Script, Stepped, Transport},
+    stores::{AddressCursor, AddressField, Phase, SessionStore, addresses::DialogStop},
+    ui::Viewport,
+  };
+
+  const LOGIN: &str = include_str!("../../../../packages/contract/fixtures/v1/auth/login.json");
+  const BOOK: &str = include_str!("../../../../packages/contract/fixtures/v1/addresses/list.json");
+  const SAVED: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/addresses/saved-no-phone.json");
+  const UPDATED: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/addresses/updated.json");
+  const CART: &str = include_str!("../../../../packages/contract/fixtures/v1/cart/cart.json");
+  const PROFILE: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/profile/profile.json");
+  const PHONE_ERROR: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/errors/phone_invalid.json");
+  const EXPIRED: &str =
+    include_str!("../../../../packages/contract/fixtures/v1/errors/session_expired.json");
+
+  /// 创建已加载地址本、购物车和个人资料的会员，测试自行决定请求的响应顺序。
+  fn with_script(test: impl FnOnce(Script, Stores)) {
+    let runtime = Runtime::default();
+    let _entered = runtime.enter();
+    let script = Script::default();
+    let (owner, stores) = create_root(|| {
+      let client = ApiClient::new(Transport::Script(script.clone()), None);
+      let session = SessionStore::with_client(client);
+      session.signed_in(serde_json::from_str(LOGIN).unwrap());
+      Stores::new(session, || Viewport::new(130, 40))
+    });
+    let load = Stepped::start(stores.addresses.fetch());
+    script.answer(0, 200, BOOK);
+    load.finish();
+    let load = Stepped::start(stores.cart.fetch());
+    script.answer(0, 200, CART);
+    load.finish();
+    let load = Stepped::start(stores.profile.fetch());
+    script.answer(0, 200, PROFILE);
+    load.finish();
+    stores.router.replace(Route::Addresses);
+    test(script, stores);
+    owner.dispose();
+  }
+
+  #[test]
+  fn 旧草稿保存成功时保留后来打开的草稿() {
+    for editing in [false, true] {
+      with_script(|script, stores| {
+        new_address(&stores);
+        let mut save = Stepped::start(save_address_draft(stores));
+        cancel_address(&stores);
+        stores.addresses.select(AddressCursor::Card(2));
+        if editing {
+          edit_address(&stores, 2);
+        } else {
+          new_address(&stores);
+        }
+        stores
+          .addresses
+          .edit(|input| input.recipient = "第二份草稿".into());
+        stores
+          .addresses
+          .focus_dialog(DialogStop::Field(AddressField::Detail));
+        let draft = stores.addresses.dialog();
+        let cart = stores.cart.cart();
+
+        script.answer(0, 200, SAVED);
+        assert!(save.poll().is_none(), "成功结果会刷新购物车");
+        assert_eq!(stores.addresses.count(), 4);
+        assert_eq!(stores.addresses.cursor(), AddressCursor::Card(2));
+        assert_eq!(stores.addresses.dialog(), draft);
+        assert_eq!(
+          stores.addresses.dialog_focus(),
+          DialogStop::Field(AddressField::Detail)
+        );
+        assert_eq!(stores.ui.overlay(), Some(Overlay::AddressDialog));
+        assert!(stores.toasts.queue().is_empty());
+        assert_eq!(stores.profile.phase(), Phase::Idle);
+        assert_eq!(stores.cart.cart(), cart);
+        assert_eq!(script.calls(), ["GET /cart"]);
+        script.answer(0, 200, CART);
+        save.finish();
+      });
+    }
+  }
+
+  #[test]
+  fn 旧草稿保存失败时保留新草稿的保存状态() {
+    for network in [false, true] {
+      with_script(|script, stores| {
+        new_address(&stores);
+        let old_save = Stepped::start(save_address_draft(stores));
+        cancel_address(&stores);
+        edit_address(&stores, 2);
+        let current_save = Stepped::start(save_address_draft(stores));
+        stores.addresses.focus_dialog(DialogStop::Save);
+        let draft = stores.addresses.dialog();
+        assert!(stores.addresses.saving());
+        if network {
+          script.drop_connection(0);
+        } else {
+          script.answer(0, 422, PHONE_ERROR);
+        }
+        old_save.finish();
+        assert_eq!(stores.addresses.dialog(), draft);
+        assert_eq!(stores.addresses.dialog_focus(), DialogStop::Save);
+        assert!(stores.busy());
+        assert_eq!(stores.ui.overlay(), Some(Overlay::AddressDialog));
+        assert!(stores.toasts.queue().is_empty());
+        assert_eq!(stores.profile.phase(), Phase::Ready);
+        assert_eq!(script.calls(), ["PUT /addresses/2"]);
+
+        script.answer(0, 422, PHONE_ERROR);
+        current_save.finish();
+        assert!(!stores.addresses.saving());
+        assert_eq!(
+          stores.addresses.dialog_focus(),
+          DialogStop::Field(AddressField::Phone)
+        );
+        assert_eq!(
+          stores.addresses.dialog().unwrap().error.unwrap().message,
+          "手机号应为 11 位数字"
+        );
+      });
+    }
+  }
+
+  #[test]
+  fn 后一次保存先成功时旧响应不会覆盖地址本和光标() {
+    with_script(|script, stores| {
+      new_address(&stores);
+      let old_save = Stepped::start(save_address_draft(stores));
+      cancel_address(&stores);
+      edit_address(&stores, 2);
+      let mut current_save = Stepped::start(save_address_draft(stores));
+      script.answer(1, 200, UPDATED);
+      assert!(current_save.poll().is_none());
+      script.answer(1, 200, CART);
+      current_save.finish();
+      let book = stores.addresses.state();
+      let toasts = stores.toasts.queue();
+      assert_eq!(toasts.len(), 1);
+      assert_eq!(toasts[0].title.as_ref(), "地址已更新");
+      assert_eq!(stores.ui.overlay(), None);
+      assert_eq!(stores.addresses.dialog(), None);
+
+      script.answer(0, 200, SAVED);
+      let mut old_save = old_save;
+      assert!(old_save.poll().is_none());
+      assert_eq!(stores.addresses.state(), book);
+      assert_eq!(stores.addresses.cursor(), AddressCursor::Card(2));
+      assert_eq!(stores.addresses.dialog(), None);
+      assert_eq!(stores.toasts.queue(), toasts);
+      script.answer(0, 200, CART);
+      old_save.finish();
+    });
+  }
+
+  #[test]
+  fn 退出登录前的保存响应不会改变新会话() {
+    for success in [false, true] {
+      with_script(|script, stores| {
+        new_address(&stores);
+        let save = Stepped::start(save_address_draft(stores));
+        sign_out_locally(&stores);
+        stores
+          .session
+          .signed_in(serde_json::from_str(LOGIN).unwrap());
+        new_address(&stores);
+        stores
+          .addresses
+          .edit(|input| input.recipient = "另一次登录的草稿".into());
+        let draft = stores.addresses.dialog();
+        if success {
+          script.answer(0, 200, SAVED);
+        } else {
+          script.answer(0, 401, EXPIRED);
+        }
+        save.finish();
+        assert!(stores.session.is_member());
+        assert_eq!(stores.addresses.phase(), Phase::Idle);
+        assert_eq!(stores.addresses.dialog(), draft);
+        assert_eq!(stores.ui.overlay(), Some(Overlay::AddressDialog));
+        assert!(stores.toasts.queue().is_empty());
+        assert!(script.calls().is_empty());
+        assert_eq!(stores.cart.phase(), Phase::Idle);
+        assert_eq!(stores.profile.phase(), Phase::Idle);
+      });
+    }
+  }
 }
 
 // --- Settings ---------------------------------------------------------------------------
